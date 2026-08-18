@@ -97,9 +97,10 @@ Use these because:
   takes one `getStops=2` call plus one `schedule=4` call *per route per stop*.
 - **Better predictions.** TripUpdates gives every upcoming arrival for every
   active trip in one request. `mapGetData.php?eta=3` gives one stop at a time.
-- **CORS-open.** `access-control-allow-origin: *`, so a browser frontend can hit
-  it directly with no proxy. (The private endpoints send this too, so it is not
-  a point of difference — just don't build a proxy you don't need for either.)
+- **The realtime feeds are CORS-open.** VehiclePositions, TripUpdates and
+  ServiceAlerts all send `access-control-allow-origin: *`, so a browser can poll
+  them directly. **The static zip does not** — see the CORS section below before
+  planning a browser-only architecture.
 
 The private JSON is still worth keeping for three things, and this module uses it
 only for those:
@@ -313,3 +314,35 @@ npm test
 ```
 
 Run that when a test fails *because the data changed*, never to make a failing test pass. Inspect the diff first.
+
+
+## CORS: the static feed is the exception
+
+Measured per endpoint, with `Origin: http://localhost:5173`:
+
+| Endpoint | `access-control-allow-origin` |
+|---|---|
+| `realtime/vehiclePositions` | `*` |
+| `realtime/tripUpdates` | `*` |
+| `realtime/serviceAlerts` | `*` |
+| `google_transit.zip` | **absent** |
+
+So a browser can poll live data directly but **cannot fetch the timetable**. Three ways around it, in order of laziness:
+
+1. **Dev:** the Vite proxy at `/passio-gtfs` (already configured in `vite.config.ts`).
+2. **Production:** any one-line reverse proxy, or a scheduled job that copies the zip somewhere you control. The feed changes about once a month, so this need not be live.
+3. **Bundle it at build time** and re-deploy monthly. Watch `feed_end_date` — a stale timetable fails quietly, which is the worst way to fail.
+
+One related trap: do **not** set a `User-Agent` header on browser fetches. It is a forbidden header, and merely requesting it makes the call non-simple, triggering a CORS preflight that passio3.com does not answer — so the request fails even against the endpoints that are CORS-open. `httpGetBytes` sets it only under Node.
+
+## Debug map
+
+A deliberately bare map for seeing what the feeds actually contain — route shapes, all 70 stops, live buses, and what the router picks. Not the real UI.
+
+```bash
+npm run dev      # http://localhost:5173
+```
+
+Click once for origin, once for destination, once more to reset. Ranked itineraries appear top-left; the chosen route is drawn dark over the map.
+
+`0 bus(es) live` is frequently correct rather than broken — Passio reports zero vehicles whenever none are broadcasting GPS, including mid-evening while scheduled service is still running.
