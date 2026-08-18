@@ -3,3 +3,8 @@ __pycache__/
 .venv/
 node_modules/
 dist/
+
+# local tooling, not project files
+mcp.json
+.cgcignore
+*.tsbuildinfo
