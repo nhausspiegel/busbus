@@ -61,6 +61,11 @@ export default function DebugMap() {
   const [pts, setPts] = useState<LatLng[]>([]);
   const [its, setIts] = useState<Itinerary[] | null>(null);
   const [status, setStatus] = useState("loading GTFS…");
+  // Routes with a vehicle actually reporting. Brown's GTFS calendar marks every
+  // route as running every day for three years, and Passio's `outdated` flag
+  // says the Evening routes are active even in summer when they are not -- so
+  // live activity is the only trustworthy signal that a route really runs.
+  const liveRoutes = new Set(buses.map((b) => b.routeId).filter(Boolean));
 
   // map init
   useEffect(() => {
@@ -204,7 +209,12 @@ export default function DebugMap() {
                   display: "inline-block", width: 10, height: 10, borderRadius: 3, marginRight: 6,
                   background: feed?.routes.get(r.routeId)?.color ?? "#888",
                 }} />
-                {feed?.routes.get(r.routeId)?.name ?? r.routeId} {r.live ? "· live" : "· scheduled"}
+                {feed?.routes.get(r.routeId)?.name ?? r.routeId}{" "}
+                {r.live
+                  ? "· live"
+                  : liveRoutes.size > 0 && !liveRoutes.has(r.routeId)
+                    ? "· TIMETABLE ONLY — no bus reporting on this route"
+                    : "· scheduled"}
                 <div style={{ color: "#555", marginLeft: 16 }}>
                   {clock(r.departTime)} {feed?.stops.get(r.boardStopId)?.name}<br />
                   {clock(r.arriveTime)} {feed?.stops.get(r.alightStopId)?.name}

@@ -5,11 +5,13 @@ export const GTFS_BASE = `https://passio3.com/${SYSTEM_SLUG}/passioTransit/gtfs`
 /** Whether we are running outside a browser (scripts, tests). */
 export const IS_NODE = typeof window === "undefined";
 
-/** The static zip is the one feed that sends NO CORS header, so a browser has
- *  to reach it through a proxy. Node talks to Passio directly. */
+/** The static zip is the one Passio feed that sends NO CORS header, so a
+ *  browser cannot fetch it from passio3.com at all. The build ships a copy in
+ *  public/gtfs/ and the browser reads that from our own origin; Node talks to
+ *  Passio directly. Refresh the copy with scripts/refresh-fixtures.sh. */
 export const GTFS_STATIC_URL = IS_NODE
   ? `${GTFS_BASE}/google_transit.zip`
-  : "/passio-gtfs/google_transit.zip";
+  : `${import.meta.env.BASE_URL}gtfs/google_transit.zip`;
 export const GTFS_TRIP_UPDATES_URL = `${GTFS_BASE}/realtime/tripUpdates`;
 export const GTFS_VEHICLES_URL = `${GTFS_BASE}/realtime/vehiclePositions`;
 export const GTFS_ALERTS_URL = `${GTFS_BASE}/realtime/serviceAlerts`;
