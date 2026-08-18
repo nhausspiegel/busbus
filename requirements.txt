@@ -1,0 +1,2 @@
+gtfs-realtime-bindings>=1.0
+websockets>=12  # optional: only needed for busbus.stream()
