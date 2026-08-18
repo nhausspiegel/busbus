@@ -61,6 +61,7 @@ export default function DebugMap() {
   const [pts, setPts] = useState<LatLng[]>([]);
   const [its, setIts] = useState<Itinerary[] | null>(null);
   const [status, setStatus] = useState("loading GTFS…");
+  const [styleReady, setStyleReady] = useState(false);
   // Routes with a vehicle actually reporting. Brown's GTFS calendar marks every
   // route as running every day for three years, and Passio's `outdated` flag
   // says the Evening routes are active even in summer when they are not -- so
@@ -72,6 +73,7 @@ export default function DebugMap() {
     if (!mapDiv.current || map.current) return;
     const m = new maplibregl.Map({ container: mapDiv.current, style: OSM_STYLE, center: BROWN, zoom: 14 });
     m.addControl(new maplibregl.NavigationControl(), "top-right");
+    m.on("load", () => setStyleReady(true));
     m.on("click", (e: maplibregl.MapMouseEvent) => setPts((p) => (p.length >= 2 ? [] : [...p, { lat: e.lngLat.lat, lng: e.lngLat.lng }])));
     map.current = m;
 
@@ -83,43 +85,45 @@ export default function DebugMap() {
     return () => { ro.disconnect(); m.remove(); map.current = null; };
   }, []);
 
-  // load static feed, draw routes + stops
+  // load static feed
   useEffect(() => {
-    fetchStaticFeed().then((f) => {
-      setFeed(f);
-      const m = map.current;
-      if (!m) return;
-      const draw = () => {
-        for (const r of f.routes.values()) {
-          if (!ACTIVE.has(r.id) || r.shape.length < 2) continue;
-          const id = `route-${r.id}`;
-          if (m.getSource(id)) continue;
-          m.addSource(id, {
-            type: "geojson",
-            data: { type: "Feature", properties: {},
-              geometry: { type: "LineString", coordinates: r.shape.map((p) => [p.lng, p.lat]) } },
-          });
-          m.addLayer({ id, type: "line", source: id,
-            paint: { "line-color": r.color, "line-width": 4, "line-opacity": 0.75 } });
-        }
-        const feats = [...f.stops.values()].map((s) => ({
+    fetchStaticFeed().then(setFeed).catch((e) => setStatus(`GTFS failed: ${e.message}`));
+  }, []);
+
+  // draw routes + stops once BOTH the feed and the map style are ready.
+  // Waiting on m.on("load") from inside the fetch callback is a race: in
+  // production the bundled feed resolves before the style, the listener is
+  // attached after "load" already fired, and nothing ever draws.
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !feed || !styleReady) return;
+    for (const r of feed.routes.values()) {
+      if (!ACTIVE.has(r.id) || r.shape.length < 2) continue;
+      const id = `route-${r.id}`;
+      if (m.getSource(id)) continue;
+      m.addSource(id, {
+        type: "geojson",
+        data: { type: "Feature", properties: {},
+          geometry: { type: "LineString", coordinates: r.shape.map((p) => [p.lng, p.lat]) } },
+      });
+      m.addLayer({ id, type: "line", source: id,
+        paint: { "line-color": r.color, "line-width": 4, "line-opacity": 0.75 } });
+    }
+    if (!m.getSource("stops")) {
+      m.addSource("stops", { type: "geojson", data: { type: "FeatureCollection",
+        features: [...feed.stops.values()].map((s) => ({
           type: "Feature" as const, properties: { name: s.name },
           geometry: { type: "Point" as const, coordinates: [s.lng, s.lat] },
-        }));
-        if (!m.getSource("stops")) {
-          m.addSource("stops", { type: "geojson", data: { type: "FeatureCollection", features: feats } });
-          m.addLayer({ id: "stops", type: "circle", source: "stops",
-            paint: { "circle-radius": 4, "circle-color": "#fff", "circle-stroke-color": "#333", "circle-stroke-width": 2 } });
-          m.on("click", "stops", (e: maplibregl.MapLayerMouseEvent) => {
-            const p = e.features?.[0];
-            if (p) new maplibregl.Popup().setLngLat(e.lngLat).setText(String(p.properties?.["name"])).addTo(m);
-          });
-        }
-        setStatus(`${[...f.routes.values()].filter((r) => ACTIVE.has(r.id)).length} routes, ${f.stops.size} stops`);
-      };
-      m.isStyleLoaded() ? draw() : m.on("load", draw);
-    }).catch((e) => setStatus(`GTFS failed: ${e.message}`));
-  }, []);
+        })) } });
+      m.addLayer({ id: "stops", type: "circle", source: "stops",
+        paint: { "circle-radius": 4, "circle-color": "#fff", "circle-stroke-color": "#333", "circle-stroke-width": 2 } });
+      m.on("click", "stops", (e: maplibregl.MapLayerMouseEvent) => {
+        const f = e.features?.[0];
+        if (f) new maplibregl.Popup().setLngLat(e.lngLat).setText(String(f.properties?.["name"])).addTo(m);
+      });
+    }
+    setStatus(`${[...feed.routes.values()].filter((r) => ACTIVE.has(r.id)).length} routes, ${feed.stops.size} stops`);
+  }, [feed, styleReady]);
 
   // live buses, polled
   useEffect(() => {
