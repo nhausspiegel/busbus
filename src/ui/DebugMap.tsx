@@ -13,6 +13,15 @@ import { GTFS_VEHICLES_URL, httpGetBytes } from "../data/passio";
 import GtfsRealtimeBindings from "gtfs-realtime-bindings";
 import type { StaticFeed, LatLng, Itinerary } from "../data/types";
 
+// MapLibre's worker is a separate ES module that imports a sibling
+// (./maplibre-gl-shared.mjs). Rollup cannot see the worker at all -- MapLibre
+// builds the path from a runtime string -- and Vite's ?url import would copy
+// the worker without its sibling. Either way the worker 404s, the style never
+// initialises, and the map renders raster tiles over a completely empty
+// vector layer stack. scripts/copy-maplibre-worker.sh puts both files in
+// public/maplibre/ so their relative import survives.
+maplibregl.setWorkerUrl(`${import.meta.env.BASE_URL}maplibre/maplibre-gl-worker.mjs`);
+
 const ACTIVE = new Set(["3302", "3469", "3470", "22427", "62487"]);
 const BROWN: [number, number] = [-71.4015, 41.8265];
 
@@ -74,6 +83,9 @@ export default function DebugMap() {
     const m = new maplibregl.Map({ container: mapDiv.current, style: OSM_STYLE, center: BROWN, zoom: 14 });
     m.addControl(new maplibregl.NavigationControl(), "top-right");
     m.on("load", () => setStyleReady(true));
+    // Surface map errors. Without this MapLibre fails silently: a broken
+    // worker leaves the style uninitialised and the map simply stays blank.
+    m.on("error", (ev) => console.error("MAPLIBRE ERROR:", ev.error?.message ?? ev));
     m.on("click", (e: maplibregl.MapMouseEvent) => setPts((p) => (p.length >= 2 ? [] : [...p, { lat: e.lngLat.lat, lng: e.lngLat.lng }])));
     map.current = m;
 

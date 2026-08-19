@@ -3,9 +3,10 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  // MapLibre ships its own web worker; the dep optimizer mangles it and the
-  // map silently fails to render. Excluding it is the documented fix.
-  optimizeDeps: { exclude: ["maplibre-gl"] },
+  // Do NOT add optimizeDeps.exclude for maplibre-gl. It silences a harmless
+  // dev warning but stops Rollup emitting maplibre-gl-worker.mjs, so the
+  // production build serves index.html in its place, GeoJSON never parses,
+  // and vector layers vanish while raster tiles still draw.
   // GitHub Pages serves the site under /<repo>/, not the domain root.
   base: process.env["GITHUB_ACTIONS"] ? "/busbus/" : "/",
   server: { port: 5173, strictPort: true },

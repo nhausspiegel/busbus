@@ -6,7 +6,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "predev": "./scripts/copy-maplibre-worker.sh",
+    "prebuild": "./scripts/copy-maplibre-worker.sh"
   },
   "dependencies": {
     "fflate": "^0.8.2",
