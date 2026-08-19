@@ -51,9 +51,14 @@ export function planWithTransfers(
           walkFromOrigin: new Map([[mid.stopId, 0]]),
           now: arriveMid + MIN_TRANSFER_SECONDS,
           maxResults: 1,
+          // The second leg must be an actual ride. Inheriting the direct-walk
+          // option here would let planTrips answer with a walk-only itinerary,
+          // whose rides[] is empty -- which is not a transfer, and reading
+          // rides[0] off it throws.
+          directWalkSeconds: undefined,
         });
         const best = second[0];
-        if (!best) continue;
+        if (!best || best.rides.length === 0) continue;
         if (best.rides[0]!.routeId === dep.routeId) continue;  // same route isn't a transfer
 
         const leg1: RideLeg = {
@@ -77,7 +82,9 @@ export function planWithTransfers(
     }
   }
 
-  const bestDirect = direct[0];
+  // Compare transfers against the best option that actually rides a bus; the
+  // walk-only entry is not something a transfer can improve on.
+  const bestDirect = direct.find((d) => d.rides.length > 0);
   const worthwhile = twoLeg.filter((t) => !bestDirect || t.arriveTime < bestDirect.arriveTime);
 
   return [...direct, ...worthwhile]

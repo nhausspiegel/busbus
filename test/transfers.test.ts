@@ -74,6 +74,20 @@ describe("planWithTransfers", () => {
     expect(planWithTransfers(opts(f))).toHaveLength(0);
   });
 
+  it("does not crash when a direct walk is offered alongside transfers", () => {
+    // The second-leg search used to inherit directWalkSeconds and could answer
+    // with a walk-only itinerary; reading rides[0] off it threw, and the UI
+    // reported "no route" for every search.
+    const f = twoLegFixture();
+    expect(() => planWithTransfers({ ...opts(f), directWalkSeconds: 900 })).not.toThrow();
+  });
+
+  it("still ranks a short walk above a two-leg transfer", () => {
+    const f = twoLegFixture();
+    const got = planWithTransfers({ ...opts(f), directWalkSeconds: 240 });
+    expect(got[0]!.rides).toHaveLength(0);
+  });
+
   it("degrades to direct-only when maxTransfers is 0", () => {
     const f = twoLegFixture();
     expect(planWithTransfers({ ...opts(f), maxTransfers: 0 })).toEqual([]);

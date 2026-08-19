@@ -17,6 +17,23 @@ function RouteChip({ feed, routeId }: { feed: StaticFeed | null; routeId: string
   );
 }
 
+function WalkChip({ minutes }: { minutes: number }) {
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13,
+      background: "var(--paper)", border: "1px solid var(--hairline)",
+      borderRadius: 999, padding: "3px 10px 3px 7px", whiteSpace: "nowrap",
+    }}>
+      <svg width="11" height="13" viewBox="0 0 11 13" fill="none" aria-hidden="true"
+           stroke="var(--ink)" strokeWidth="1.6" strokeLinecap="round">
+        <circle cx="6.4" cy="2" r="1.6" fill="var(--ink)" stroke="none" />
+        <path d="M6.6 4.6 4.8 7.2l2 1.9.7 3.1M4.8 7.2 2.6 9.1M6.8 6.1l2.3.9" />
+      </svg>
+      Walk {minutes} min
+    </span>
+  );
+}
+
 export function ItineraryList({
   itineraries, feed, now, onSelect,
 }: {
@@ -35,8 +52,10 @@ export function ItineraryList({
                        background: "transparent", padding: "13px 0", cursor: "pointer" }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {it.rides.map((r, i) => <RouteChip key={i} feed={feed} routeId={r.routeId} />)}
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                  {it.rides.length === 0
+                    ? <WalkChip minutes={durationMins(it.totalWalkSeconds)} />
+                    : it.rides.map((r, i) => <RouteChip key={i} feed={feed} routeId={r.routeId} />)}
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
                   <div className="eyebrow" style={{ fontSize: 10 }}>arrive</div>
@@ -47,10 +66,14 @@ export function ItineraryList({
                 </div>
               </div>
               <div style={{ marginTop: 7, fontSize: 13, color: "var(--muted)" }}>
-                {leaveIn === 0 ? "Leave now" : `Leave in ${leaveIn} min`}
-                {" · "}{durationMins(it.totalWalkSeconds)} min walking
-                {" · "}{it.transfers === 0 ? "direct" : `${it.transfers} transfer`}
-                {!it.allLive && " · scheduled"}
+                {it.rides.length === 0
+                  ? "Leave now · no waiting"
+                  : <>
+                      {leaveIn === 0 ? "Leave now" : `Leave in ${leaveIn} min`}
+                      {" · "}{durationMins(it.totalWalkSeconds)} min walking
+                      {" · "}{it.transfers === 0 ? "direct" : `${it.transfers} transfer`}
+                      {!it.allLive && " · scheduled"}
+                    </>}
               </div>
             </button>
           </li>
@@ -81,11 +104,20 @@ export function ItineraryDetail({
       </h2>
 
       <ol style={{ listStyle: "none", margin: 0, padding: 0 }}>
+        {itinerary.rides.length === 0 ? (
+          <Step
+            dot="walk"
+            title={`Walk ${durationMins(itinerary.totalWalkSeconds)} min`}
+            detail="straight to your destination"
+            note="Faster than waiting for a shuttle"
+          />
+        ) : (
         <Step
           dot="walk"
           title={`Walk ${durationMins(itinerary.walkToStop.seconds)} min`}
           detail={`to ${nameOf(itinerary.rides[0]?.boardStopId ?? "")}`}
         />
+        )}
         {itinerary.rides.map((r, i) => (
           <Step
             key={i}
@@ -96,11 +128,13 @@ export function ItineraryDetail({
             note={`${r.numStops} stop${r.numStops === 1 ? "" : "s"}${r.live ? " · live" : " · scheduled"}`}
           />
         ))}
-        <Step
-          dot="walk"
-          title={`Walk ${durationMins(itinerary.walkFromStop.seconds)} min`}
-          detail="to your destination"
-        />
+        {itinerary.rides.length > 0 && (
+          <Step
+            dot="walk"
+            title={`Walk ${durationMins(itinerary.walkFromStop.seconds)} min`}
+            detail="to your destination"
+          />
+        )}
       </ol>
 
       {!itinerary.allLive && (

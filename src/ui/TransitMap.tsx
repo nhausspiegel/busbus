@@ -176,10 +176,14 @@ export function TransitMap({
     const m = map.current;
     if (!m || !ready || !m.isStyleLoaded()) return;
 
-    for (const id of OVERLAY_LAYERS) {
-      if (m.getLayer(id)) m.removeLayer(id);
-      if (m.getSource(id)) m.removeSource(id);
-    }
+    // MapLibre throws if the style is mid-reload, and an exception escaping an
+    // effect unmounts the whole app -- a blank screen instead of a map.
+    try {
+      for (const id of OVERLAY_LAYERS) {
+        if (m.getLayer(id)) m.removeLayer(id);
+        if (m.getSource(id)) m.removeSource(id);
+      }
+    } catch { return; }
     if (!overlay) return;
 
     const line = (id: string, coords: LatLng[][], paint: maplibregl.LineLayerSpecification["paint"]) => {
@@ -197,12 +201,14 @@ export function TransitMap({
     for (const r of feed?.routes.values() ?? [])
       if (m.getLayer(`route-${r.id}`)) m.setPaintProperty(`route-${r.id}`, "line-opacity", 0.25);
 
-    line("itin-ride-case", overlay.rides.map((r) => r.path),
-      { "line-color": "#fff", "line-width": 11 });
-    overlay.rides.forEach((r, i) => line(`itin-ride-${i}`, [r.path],
-      { "line-color": r.color, "line-width": 6 }));
-    line("itin-walk", overlay.walks,
-      { "line-color": "#241C17", "line-width": 4, "line-dasharray": [0.4, 1.8] });
+    try {
+      line("itin-ride-case", overlay.rides.map((r) => r.path),
+        { "line-color": "#fff", "line-width": 11 });
+      overlay.rides.forEach((r, i) => line(`itin-ride-${i}`, [r.path],
+        { "line-color": r.color, "line-width": 6 }));
+      line("itin-walk", overlay.walks,
+        { "line-color": "#241C17", "line-width": 4, "line-dasharray": [0.4, 1.8] });
+    } catch { /* style churn; the next render redraws */ }
 
     return () => {
       for (const r of feed?.routes.values() ?? [])

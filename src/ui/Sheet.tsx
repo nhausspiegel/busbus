@@ -35,26 +35,28 @@ export function Sheet({
     const startH = HEIGHT[detent] * vh;
     let dragging = false;
 
+    // Track the live height here rather than reading it back out of state, so
+    // the release handler never has to call the parent from inside a state
+    // updater -- updaters must be pure, and React warns loudly when they are not.
+    let liveH = startH;
     const move = (ev: PointerEvent) => {
       const delta = startY - ev.clientY;
       if (!dragging && Math.abs(delta) < DRAG_THRESHOLD_PX) return;  // still a tap
       dragging = true;
-      setDragPx(Math.min(Math.max(startH + delta, 90), vh * 0.95));
+      liveH = Math.min(Math.max(startH + delta, 90), vh * 0.95);
+      setDragPx(liveH);
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
+      setDragPx(null);                    // always release, so it cannot stick
       if (!dragging) return;              // a tap: onClick cycles instead
-      const frac = (startH + 0) / vh;
-      setDragPx((px) => {
-        const f = px === null ? frac : px / vh;
-        let best = ORDER[0]!;
-        for (const d of ORDER)
-          if (Math.abs(HEIGHT[d] - f) < Math.abs(HEIGHT[best] - f)) best = d;
-        onDetentChange(best);
-        return null;                      // always release, so it cannot stick
-      });
+      const f = liveH / vh;
+      let best = ORDER[0]!;
+      for (const d of ORDER)
+        if (Math.abs(HEIGHT[d] - f) < Math.abs(HEIGHT[best] - f)) best = d;
+      onDetentChange(best);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);

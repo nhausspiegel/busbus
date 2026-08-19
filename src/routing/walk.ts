@@ -29,6 +29,36 @@ export function nearestStops(from: LatLng, stops: Stop[], k: number): Stop[] {
     .map((x) => x.s);
 }
 
+/** Walking seconds for every source/target pair, in a single request.
+ *
+ *  Valhalla here is FOSSGIS's community instance. Firing three parallel
+ *  requests per search got them throttled, and a throttled response carries no
+ *  CORS headers, so the browser reports it as a CORS failure rather than a rate
+ *  limit -- which is a genuinely confusing way to learn you are being rude.
+ *  One request answers the whole search. */
+export async function walkMatrixMulti(
+  sources: LatLng[], targets: LatLng[],
+): Promise<(number | null)[][]> {
+  if (sources.length === 0 || targets.length === 0) return [];
+  const res = await fetch(`${VALHALLA}/sources_to_targets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sources: sources.map((p) => ({ lat: p.lat, lon: p.lng })),
+      targets: targets.map((p) => ({ lat: p.lat, lon: p.lng })),
+      costing: "pedestrian",
+    }),
+  });
+  if (!res.ok) throw new Error(`valhalla matrix -> HTTP ${res.status}`);
+  const data = await res.json();
+  const rows = data?.sources_to_targets ?? [];
+  return sources.map((_, i) =>
+    targets.map((__, j) => {
+      const t = rows[i]?.[j]?.time;
+      return typeof t === "number" ? t : null;
+    }));
+}
+
 /** Real pedestrian walking seconds from one point to many stops, in ONE call.
  *
  *  Valhalla is used rather than OSRM's public demo: that server has no foot
@@ -54,6 +84,24 @@ export async function walkMatrix(from: LatLng, to: Stop[]): Promise<Map<string, 
     if (stop && typeof cell?.time === "number") out.set(stop.id, cell.time);
   });
   return out;
+}
+
+/** Walking seconds between two points. Used to decide whether the rider
+ *  should simply walk instead of waiting for a shuttle. */
+export async function walkSeconds(from: LatLng, to: LatLng): Promise<number | null> {
+  const res = await fetch(`${VALHALLA}/sources_to_targets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sources: [{ lat: from.lat, lon: from.lng }],
+      targets: [{ lat: to.lat, lon: to.lng }],
+      costing: "pedestrian",
+    }),
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  const t = data?.sources_to_targets?.[0]?.[0]?.time;
+  return typeof t === "number" ? t : null;
 }
 
 /** Sidewalk-following polyline for drawing one walking leg. */
