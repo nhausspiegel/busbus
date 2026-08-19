@@ -24,6 +24,25 @@
   --safe-t: env(safe-area-inset-top, 0px);
 }
 
+/* Dark mode follows the system. A transit app is used outdoors at night more
+ * than most, and a white sheet at a bus stop at 11pm is genuinely unpleasant. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink:          #F0E9E3;
+    --ink-soft:     #C6BAB1;
+    --muted:        #9A8D84;
+    --paper:        #15110F;
+    --raised:       #211B18;
+    --hairline:     #362E29;
+    --accent:       #FF6B7A;   /* lifted for contrast on dark; #C8102E fails it */
+    --accent-wash:  #2E1A1E;
+    --warn-bg:      #2A2115;
+    --warn-line:    #6B5222;
+    --warn-ink:     #E8C48A;
+    --shadow: 0 -1px 3px rgb(0 0 0 / 40%), 0 -8px 28px rgb(0 0 0 / 55%);
+  }
+}
+
 html, body, #root { margin: 0; padding: 0; height: 100%; width: 100%; }
 
 body {
@@ -66,6 +85,10 @@ body {
   color: transparent;
   -webkit-text-stroke: 1.5px var(--ink-soft);
 }
+
+/* Native controls (the time picker) must follow the theme too, or they render
+ * as a white box in a dark sheet. */
+:root { color-scheme: light dark; }
 
 .pulse {
   display: inline-block; width: 7px; height: 7px; border-radius: 50%;

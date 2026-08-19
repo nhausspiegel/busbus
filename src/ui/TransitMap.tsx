@@ -4,6 +4,7 @@ import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { StaticFeed, LatLng } from "../data/types";
 import type { Bus } from "../data/vehicles";
+import { basemapStyle, BASEMAP_ATTRIBUTION } from "./mapStyle";
 
 // MapLibre's worker is a separate ES module that imports a sibling. Rollup
 // cannot see it (the path is built from a runtime string) and ?url would copy
@@ -17,18 +18,18 @@ export const CAMPUS: LatLng = { lat: 41.8265, lng: -71.4015 };
 /** Overlay layers are torn down and rebuilt whenever the chosen trip changes. */
 const OVERLAY_LAYERS = ["itin-walk", "itin-ride-case", "itin-ride-0", "itin-ride-1", "itin-ride-2"];
 
-const STYLE: maplibregl.StyleSpecification = {
-  version: 8,
-  sources: {
-    osm: {
-      type: "raster",
-      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-      tileSize: 256,
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    },
-  },
-  layers: [{ id: "osm", type: "raster", source: "osm", paint: { "raster-saturation": -0.35 } }],
-};
+/** Watch the system colour scheme so the map can follow it. */
+function usePrefersDark(): boolean {
+  const [dark, setDark] = useState(() =>
+    typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const on = (e: MediaQueryListEvent) => setDark(e.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  return dark;
+}
 
 export interface Overlay {
   /** Sidewalk-following walking legs. */
@@ -63,17 +64,24 @@ export function TransitMap({
   const routeCb = useRef(onRouteClick);
   routeCb.current = onRouteClick;
   const [ready, setReady] = useState(false);
+  const dark = usePrefersDark();
+  const darkRef = useRef(dark);
+  darkRef.current = dark;
 
   useEffect(() => {
     if (!div.current || map.current) return;
     setReady(false);   // this flag describes THIS map; never inherit a previous one's
     const m = new maplibregl.Map({
-      container: div.current, style: STYLE,
+      container: div.current, style: basemapStyle(darkRef.current),
       center: [CAMPUS.lng, CAMPUS.lat], zoom: 14.2, attributionControl: false,
+      // Apple Maps lets you turn the map; on a campus grid it genuinely helps
+      // orient which way Thayer runs.
+      pitchWithRotate: false, dragRotate: true,
     });
     // Bottom-left: the top-right corner belongs to the locate button, and the
     // bottom-right sits under the sheet at every detent.
-    m.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
+    m.addControl(new maplibregl.AttributionControl(
+      { compact: true, customAttribution: BASEMAP_ATTRIBUTION }), "bottom-left");
     m.on("load", () => setReady(true));
     // Read the handler from a ref so changing it never tears down the map.
     m.on("click", (e) => clickCb.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng }));
@@ -98,10 +106,13 @@ export function TransitMap({
       m.addSource(id, { type: "geojson", data: {
         type: "Feature", properties: {},
         geometry: { type: "LineString", coordinates: r.shape.map((p) => [p.lng, p.lat]) } } });
-      // Casing under the colour keeps five overlapping routes legible.
+      // Casing under the colour keeps five overlapping routes legible. It has
+      // to be the map's own land tone, not white -- a white halo on a dark
+      // basemap reads as glowing piping rather than as separation.
       m.addLayer({ id: `${id}-case`, type: "line", source: id,
         layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": "#fff", "line-width": 7, "line-opacity": 0.9 } });
+        paint: { "line-color": darkRef.current ? "#15110F" : "#FFFFFF",
+                 "line-width": 7, "line-opacity": 0.9 } });
       m.addLayer({ id, type: "line", source: id,
         layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": r.color, "line-width": 3.5 } });
@@ -114,7 +125,9 @@ export function TransitMap({
       m.addLayer({ id: "stops", type: "circle", source: "stops", minzoom: 13,
         paint: {
           "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 2.5, 16, 5],
-          "circle-color": "#fff", "circle-stroke-color": "#241C17", "circle-stroke-width": 1.5,
+          "circle-color": darkRef.current ? "#15110F" : "#FFFFFF",
+          "circle-stroke-color": darkRef.current ? "#C6BAB1" : "#241C17",
+          "circle-stroke-width": 1.5,
         } });
     }
   }, [feed, ready, activeRouteIds]);
@@ -131,7 +144,8 @@ export function TransitMap({
         el.className = "display";
         el.style.cssText =
           `width:24px;height:24px;border-radius:50%;background:${color};color:#fff;` +
-          `border:2.5px solid #fff;box-shadow:0 1px 5px rgb(36 28 23 / 35%);` +
+          `border:2.5px solid ${darkRef.current ? "#15110F" : "#FFFFFF"};` +
+          `box-shadow:0 1px 5px rgb(0 0 0 / 45%);` +
           `display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700`;
         el.textContent = b.label;
         el.title = `Bus ${b.label}`;
@@ -214,11 +228,12 @@ export function TransitMap({
 
     try {
       line("itin-ride-case", overlay.rides.map((r) => r.path),
-        { "line-color": "#fff", "line-width": 11 });
+        { "line-color": darkRef.current ? "#15110F" : "#FFFFFF", "line-width": 11 });
       overlay.rides.forEach((r, i) => line(`itin-ride-${i}`, [r.path],
         { "line-color": r.color, "line-width": 6 }));
       line("itin-walk", overlay.walks,
-        { "line-color": "#241C17", "line-width": 4, "line-dasharray": [0.4, 1.8] });
+        { "line-color": darkRef.current ? "#F0E9E3" : "#241C17",
+          "line-width": 4, "line-dasharray": [0.4, 1.8] });
     } catch { /* style churn; the next render redraws */ }
 
     return () => {
@@ -226,6 +241,34 @@ export function TransitMap({
         if (m.getLayer(`route-${r.id}`)) m.setPaintProperty(`route-${r.id}`, "line-opacity", 0.75);
     };
   }, [overlay, ready, feed]);
+
+  // Swap the basemap when the system theme flips. setStyle wipes our layers,
+  // so mark the map not-ready and let the drawing effects rebuild on load.
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready) return;
+    setReady(false);
+    m.setStyle(basemapStyle(dark));
+    m.once("styledata", () => setReady(true));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dark]);
+
+  // Re-tint route casings and stop dots after a theme swap.
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready || !m.isStyleLoaded() || !feed) return;
+    const ground = dark ? "#15110F" : "#FFFFFF";
+    try {
+      for (const r of feed.routes.values())
+        if (m.getLayer(`route-${r.id}-case`)) m.setPaintProperty(`route-${r.id}-case`, "line-color", ground);
+      if (m.getLayer("stops")) {
+        m.setPaintProperty("stops", "circle-color", ground);
+        m.setPaintProperty("stops", "circle-stroke-color", dark ? "#C6BAB1" : "#241C17");
+      }
+      if (m.getLayer("itin-ride-case")) m.setPaintProperty("itin-ride-case", "line-color", ground);
+      if (m.getLayer("itin-walk")) m.setPaintProperty("itin-walk", "line-color", dark ? "#F0E9E3" : "#241C17");
+    } catch { /* style churn */ }
+  }, [dark, ready, feed]);
 
   // Emphasise one route and let the others recede, so a route page reads as
   // being about that route rather than about the whole network.
