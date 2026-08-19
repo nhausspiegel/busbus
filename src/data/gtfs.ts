@@ -62,18 +62,7 @@ export function parseStaticFeed(zipBytes: Uint8Array): StaticFeed {
   const shapeOf = (id: string): LatLng[] =>
     (shapes.get(id) ?? []).sort((a, b) => a.seq - b.seq).map((x) => x.p);
 
-  const routes = new Map<string, Route>();
-  for (const r of table("routes.txt")) {
-    const id = r["route_id"]!;
-    routes.set(id, {
-      id,
-      name: r["route_long_name"] ?? "",
-      shortName: r["route_short_name"] ?? "",
-      // GTFS ships bare hex with no leading '#'.
-      color: "#" + (r["route_color"] || "888888"),
-      shape: shapeOf(id),
-    });
-  }
+  const routeRows = table("routes.txt");
 
   const stops = new Map<string, Stop>();
   for (const r of table("stops.txt")) {
@@ -86,7 +75,16 @@ export function parseStaticFeed(zipBytes: Uint8Array): StaticFeed {
   }
 
   const tripRoute = new Map<string, string>();
-  for (const r of table("trips.txt")) tripRoute.set(r["trip_id"]!, r["route_id"]!);
+  // GTFS puts shape_id on the TRIP, not the route. Passio currently sets
+  // shape_id == route_id, so joining shapes by route id happens to work -- but
+  // the day any route gets per-direction shapes (62487_0 / 62487_1) that route
+  // would silently draw nothing. Resolve it properly via trips.
+  const routeShape = new Map<string, string>();
+  for (const r of table("trips.txt")) {
+    tripRoute.set(r["trip_id"]!, r["route_id"]!);
+    const shapeId = r["shape_id"];
+    if (shapeId && !routeShape.has(r["route_id"]!)) routeShape.set(r["route_id"]!, shapeId);
+  }
 
   const tripStops = new Map<string, TripStop[]>();
   for (const r of table("stop_times.txt")) {
@@ -95,6 +93,21 @@ export function parseStaticFeed(zipBytes: Uint8Array): StaticFeed {
     const id = r["trip_id"]!;
     if (!tripStops.has(id)) tripStops.set(id, []);
     tripStops.get(id)!.push({ stopId: r["stop_id"]!, seq: Number(r["stop_sequence"]), time });
+  }
+
+  const routes = new Map<string, Route>();
+  for (const r of routeRows) {
+    const id = r["route_id"]!;
+    routes.set(id, {
+      id,
+      name: r["route_long_name"] ?? "",
+      shortName: r["route_short_name"] ?? "",
+      // GTFS ships bare hex with no leading '#'.
+      color: "#" + (r["route_color"] || "888888"),
+      // Prefer the shape its trips actually reference; fall back to the
+      // route id for feeds that omit shape_id entirely.
+      shape: shapeOf(routeShape.get(id) ?? id),
+    });
   }
 
   const trips = new Map<string, Trip>();

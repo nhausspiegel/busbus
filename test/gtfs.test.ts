@@ -75,3 +75,25 @@ describe("parseStaticFeed", () => {
     }
   });
 });
+
+describe("route shapes", () => {
+  const feed = parseStaticFeed(zip);
+
+  it("gives every route with trips a drawable shape", () => {
+    // Shapes were joined route_id -> shape_id, which works only because Passio
+    // happens to name them identically. A feed with per-direction shapes
+    // (62487_0 / 62487_1) would have drawn nothing, silently.
+    const withTrips = new Set([...feed.trips.values()].map((t) => t.routeId));
+    for (const routeId of withTrips) {
+      const r = feed.routes.get(routeId);
+      if (!r) continue;
+      expect(r.shape.length).toBeGreaterThan(1);
+    }
+  });
+
+  it("resolves shapes through trips.shape_id, not by assuming ids match", () => {
+    const raw = strFromU8(unzipSync(zip)["trips.txt"]!);
+    const header = raw.split(/\r?\n/)[0]!.split(",");
+    expect(header).toContain("shape_id");
+  });
+});

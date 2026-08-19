@@ -35,14 +35,47 @@ describe("nearestStops", () => {
   });
 });
 
+/** Encode at precision 6, the way Valhalla does, so the test exercises a real
+ *  round trip instead of a magic string. The previous fixture string actually
+ *  decoded to southern Spain, which is why an `abs(lat) < 90` assertion passed
+ *  while proving nothing. */
+function encodePolyline6(points: { lat: number; lng: number }[]): string {
+  let out = "", prevLat = 0, prevLng = 0;
+  const chunk = (v: number) => {
+    let s = v < 0 ? ~(v << 1) : v << 1;
+    let r = "";
+    while (s >= 0x20) { r += String.fromCharCode((0x20 | (s & 0x1f)) + 63); s >>= 5; }
+    return r + String.fromCharCode(s + 63);
+  };
+  for (const p of points) {
+    const lat = Math.round(p.lat * 1e6), lng = Math.round(p.lng * 1e6);
+    out += chunk(lat - prevLat) + chunk(lng - prevLng);
+    prevLat = lat; prevLng = lng;
+  }
+  return out;
+}
+
 describe("decodePolyline6", () => {
-  it("decodes at precision 6, keeping points in Providence", () => {
-    // Valhalla uses precision 6, not the usual 5. Decoding at 5 would put
-    // these coordinates ten degrees away, in the ocean.
-    const encoded = "_grbgA~{reF_kh@";
-    const pts = decodePolyline6(encoded);
-    expect(pts.length).toBeGreaterThan(0);
-    expect(Math.abs(pts[0]!.lat)).toBeLessThan(90);
+  it("round-trips Providence coordinates at precision 6", () => {
+    const path = [
+      { lat: 41.826195, lng: -71.404656 },   // John Hay Library
+      { lat: 41.823132, lng: -71.408373 },   // Dyer & Hay
+      { lat: 41.817892, lng: -71.406899 },   // South Street Landing
+    ];
+    const got = decodePolyline6(encodePolyline6(path));
+    expect(got).toHaveLength(3);
+    got.forEach((p, i) => {
+      expect(p.lat).toBeCloseTo(path[i]!.lat, 5);
+      expect(p.lng).toBeCloseTo(path[i]!.lng, 5);
+    });
+  });
+
+  it("decoded at precision 5 the same string would land nowhere near Providence", () => {
+    // Guards the actual mistake: Valhalla uses 1e6, most polyline code uses
+    // 1e5, and getting it wrong silently draws the walk in another hemisphere.
+    const encoded = encodePolyline6([{ lat: 41.826195, lng: -71.404656 }]);
+    const wrong = decodePolyline6(encoded).map((p) => ({ lat: p.lat * 10, lng: p.lng * 10 }));
+    expect(Math.abs(wrong[0]!.lat)).toBeGreaterThan(90);
   });
 
   it("returns empty for an empty string", () => {

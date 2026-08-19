@@ -7,9 +7,13 @@ const pb = new Uint8Array(readFileSync("test/fixtures/tripUpdates.pb"));
 describe("parseTripUpdates", () => {
   const deps = parseTripUpdates(pb);
 
-  it("decodes departures without throwing on a sparse or empty feed", () => {
-    // Overnight the feed legitimately has zero entities. That is not an error.
-    expect(Array.isArray(deps)).toBe(true);
+  it("decodes the departures the fixture actually contains", () => {
+    // Was `expect(Array.isArray(deps)).toBe(true)`, which the return type
+    // guarantees -- it could only fail by throwing, and it ran against the
+    // non-empty fixture so it tested neither branch of its own name.
+    expect(deps.length).toBeGreaterThan(0);
+    expect(new Set(deps.map((d) => d.tripId)).size).toBeGreaterThan(0);
+    for (const d of deps) expect(d.stopId).not.toBe("");
   });
 
   it("marks everything it returns as live", () => {
@@ -22,8 +26,12 @@ describe("parseTripUpdates", () => {
     for (const d of deps) expect(d.time).toBeGreaterThan(1_600_000_000);
   });
 
-  it("carries stop sequence so downstream stops can be identified", () => {
-    for (const d of deps) expect(d.seq).toBeGreaterThanOrEqual(0);
+  it("carries real stop sequences, not the zero fallback", () => {
+    // `seq` is `stopSequence ?? 0` on a protobuf uint32, so `>= 0` was
+    // unfalsifiable -- and it passed on a feed carrying no sequences at all,
+    // which is precisely the case that makes seq useless downstream.
+    expect(deps.every((d) => d.seq > 0)).toBe(true);
+    expect(new Set(deps.map((d) => d.seq)).size).toBeGreaterThan(1);
   });
 
   it("returns an empty array for an empty protobuf rather than throwing", () => {

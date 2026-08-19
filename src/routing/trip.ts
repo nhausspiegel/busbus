@@ -1,9 +1,9 @@
 import { fetchStaticFeed } from "../data/gtfs";
 import { fetchLiveDepartures } from "../data/realtime";
-import { serviceDayStart, scheduledDepartures, buildBoard } from "../data/departures";
+import { serviceDayStart, scheduledDepartures, buildBoard, groupLiveTrips } from "../data/departures";
 import { nearestStops, walkMatrixMulti } from "./walk";
 import { planWithTransfers } from "./transfers";
-import type { LatLng, Itinerary, StaticFeed, DepartureBoard } from "../data/types";
+import type { LatLng, Itinerary, StaticFeed, DepartureBoard, Departure } from "../data/types";
 
 const CANDIDATE_STOPS = 8;
 
@@ -21,6 +21,7 @@ export async function planBetween(
   origin: LatLng,
   destination: LatLng,
   now: Date = new Date(),
+  liveTrips?: Map<string, Departure[]>,
 ): Promise<Itinerary[]> {
   const all = [...feed.stops.values()];
   const fromStops = nearestStops(origin, all, CANDIDATE_STOPS);
@@ -48,6 +49,7 @@ export async function planBetween(
   return planWithTransfers({
     feed, board, origin, destination,
     walkFromOrigin, walkToDestination,
+    ...(liveTrips ? { liveTrips } : {}),
     ...(typeof direct === "number" ? { directWalkSeconds: direct } : {}),
     now: Math.floor(now.getTime() / 1000),
   });
@@ -62,5 +64,5 @@ export async function findItineraries(
   const feed = await fetchStaticFeed();
   const live = await fetchLiveDepartures().catch(() => []);
   const board = buildBoard(live, scheduledDepartures(feed, serviceDayStart(now)));
-  return planBetween(feed, board, origin, destination, now);
+  return planBetween(feed, board, origin, destination, now, groupLiveTrips(live));
 }

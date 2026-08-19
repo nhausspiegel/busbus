@@ -156,6 +156,21 @@ describe("planTrips", () => {
     expect(got[0]!.allLive).toBe(true);      // your own legs are not a prediction
   });
 
+  it("drops an option arriving hours after the best one", () => {
+    // Brown's routes run in shifts: a 10am search finds Daytime buses now and
+    // an Evening bus tonight. "Arrive 7:08 PM" listed beside "arrive 10:16 AM"
+    // is not a choice anyone makes.
+    const f = fixture(NOW + 300);
+    f.feed.routes.set("RL", { id: "RL", name: "Tonight", shortName: "L", color: "#444", shape: [] });
+    f.feed.trips.set("TL", { id: "TL", routeId: "RL", stops: [
+      { stopId: "A", seq: 1, time: 0 }, { stopId: "B", seq: 2, time: 600 }] });
+    f.board.get("A")!.push({ stopId: "A", tripId: "TL", routeId: "RL", seq: 1, time: NOW + 8 * 3600, live: false });
+    f.board.get("B")!.push({ stopId: "B", tripId: "TL", routeId: "RL", seq: 2, time: NOW + 8 * 3600 + 600, live: false });
+    const got = planTrips({ feed: f.feed, board: f.board, ...base() });
+    expect(got.some((i) => i.rides[0]?.routeId === "RL")).toBe(false);
+    expect(got.length).toBeGreaterThan(0);
+  });
+
   it("prefers a slower bus leaving now over a faster bus leaving much later", () => {
     // THE requirement: earliest ARRIVAL, not shortest ride.
     const f = fixture(NOW + 300);                       // R1: leaves +300, rides 600 -> arrives +900

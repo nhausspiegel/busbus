@@ -13,14 +13,14 @@ import { fetchAlerts, type Alert } from "../data/alerts";
 import { fetchStaticFeed } from "../data/gtfs";
 import { fetchLiveDepartures } from "../data/realtime";
 import { fetchVehicles, type Bus } from "../data/vehicles";
-import { serviceDayStart, scheduledDepartures, buildBoard } from "../data/departures";
+import { serviceDayStart, scheduledDepartures, buildBoard, groupLiveTrips } from "../data/departures";
 import { nearbyDepartures } from "../routing/nearby";
 import { routeStops } from "../routing/routeDetail";
 import { walkGeometry } from "../routing/walk";
 import { planBetween } from "../routing/trip";
 import { sliceShape } from "../routing/shape";
 import type { Place } from "../data/geocode";
-import type { StaticFeed, DepartureBoard, LatLng, Itinerary } from "../data/types";
+import type { StaticFeed, DepartureBoard, Departure, LatLng, Itinerary } from "../data/types";
 
 /** Routes Passio lists as not archived. GTFS ships every route Brown ever
  *  configured, including two with no trips at all. */
@@ -33,6 +33,7 @@ type Mode = "nearby" | "results" | "detail" | "route" | "stop";
 export default function App() {
   const [feed, setFeed] = useState<StaticFeed | null>(null);
   const [board, setBoard] = useState<DepartureBoard>(new Map());
+  const [liveTrips, setLiveTrips] = useState<Map<string, Departure[]>>(new Map());
   const [buses, setBuses] = useState<Bus[]>([]);
   const [me, setMe] = useState<LatLng | null>(null);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
@@ -64,7 +65,9 @@ export default function App() {
     let cancelled = false;
     const load = async () => {
       const live = await fetchLiveDepartures().catch(() => []);
-      if (!cancelled) setBoard(buildBoard(live, scheduledDepartures(feed, serviceDayStart(leaveAt ?? new Date()))));
+      if (cancelled) return;
+      setBoard(buildBoard(live, scheduledDepartures(feed, serviceDayStart(leaveAt ?? new Date()))));
+      setLiveTrips(groupLiveTrips(live));
     };
     load();
     const h = setInterval(load, BOARD_POLL_MS);
@@ -116,7 +119,7 @@ export default function App() {
     setPlanning(true);
     (async () => {
       try {
-        const found = await planBetween(feed, board, origin, dest.at, leaveAt ?? new Date());
+        const found = await planBetween(feed, board, origin, dest.at, leaveAt ?? new Date(), liveTrips);
         if (!cancelled) setItineraries(found);
       } catch {
         if (!cancelled) {
@@ -128,7 +131,7 @@ export default function App() {
       }
     })();
     return () => { cancelled = true; };
-  }, [feed, dest, board, origin, leaveAt]);
+  }, [feed, dest, board, origin, leaveAt, liveTrips]);
 
   // Draw the chosen trip: real sidewalk geometry for the walks, and only the
   // ridden slice of each route shape.
