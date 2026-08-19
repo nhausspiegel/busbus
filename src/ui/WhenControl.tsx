@@ -32,7 +32,10 @@ export function WhenControl({
           d.setHours(h!, m!, 0, 0);
           // Picking 8:00 at 11pm means tomorrow morning, not this morning --
           // otherwise the app silently plans a trip that already happened.
-          if (d.getTime() < Date.now()) d.setDate(d.getDate() + 1);
+          // Compare against the start of the current minute, so choosing the
+          // minute you are already in does not roll the whole board a day.
+          const thisMinute = Math.floor(Date.now() / 60_000) * 60_000;
+          if (d.getTime() < thisMinute) d.setDate(d.getDate() + 1);
           onChange(d);
         }}
         style={{

@@ -90,6 +90,23 @@ body {
  * as a white box in a dark sheet. */
 :root { color-scheme: light dark; }
 
+/* Under Windows High Contrast, `color` is forced to the system text colour,
+ * so a hollow numeral renders solid -- identical to a live one. That erases
+ * the live/scheduled distinction this project treats as non-negotiable, and
+ * RouteDetail has no text fallback beside it. Restate it visibly. */
+@media (forced-colors: active) {
+  .when--sched {
+    -webkit-text-stroke: 0;
+    text-decoration: underline dashed;
+    text-underline-offset: 3px;
+  }
+  .when--sched::after {
+    content: " (scheduled)";
+    font-size: 11px;
+    text-decoration: none;
+  }
+}
+
 .pulse {
   display: inline-block; width: 7px; height: 7px; border-radius: 50%;
   background: var(--accent); vertical-align: middle;

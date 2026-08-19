@@ -20,9 +20,11 @@ const MOMENTUM_SECONDS = 0.16;
 const RUBBER = 0.35;
 
 export function Sheet({
-  detent, onDetentChange, header, children,
+  detent, onDetentChange, header, label, children,
 }: {
   detent: Detent; onDetentChange: (d: Detent) => void;
+  /** Accessible name for the panel; it is not always a departures list. */
+  label?: string;
   /** Pinned above the scroll area -- search belongs here, not floating over
    *  the map, because the sheet is the surface the rider actually works in. */
   header?: ReactNode;
@@ -32,6 +34,12 @@ export function Sheet({
   // finger is down and moving. Entering drag mode on pointerdown instead would
   // freeze the sheet at its start height if pointerup were ever missed.
   const [dragPx, setDragPx] = useState<number | null>(null);
+  // The grabber tracks the finger for the whole gesture, so pointerdown and
+  // pointerup both land on the button and the browser fires a click after
+  // every drag. Without this guard `cycle` ran after the snap and the sheet
+  // always overshot by one detent -- dragging down from full was impossible.
+  const didDrag = useRef(false);
+  const activePointer = useRef<number | null>(null);
   const [vh, setVh] = useState(() => (typeof window === "undefined" ? 800 : window.innerHeight));
   const [wide, setWide] = useState(() => (typeof window === "undefined" ? false : window.innerWidth >= 820));
 
@@ -44,7 +52,9 @@ export function Sheet({
   const height = dragPx ?? HEIGHT[detent] * vh;
 
   const onPointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || activePointer.current !== null) return;  // ignore a second finger
+    activePointer.current = e.pointerId;
+    didDrag.current = false;
     const startY = e.clientY;
     const startH = HEIGHT[detent] * vh;
     let dragging = false;
@@ -60,12 +70,17 @@ export function Sheet({
     let liveH = startH;
     const maxH = HEIGHT.full * vh;
     const move = (ev: PointerEvent) => {
+      if (ev.pointerId !== activePointer.current) return;
       const delta = startY - ev.clientY;
       if (!dragging && Math.abs(delta) < DRAG_THRESHOLD_PX) return;  // still a tap
       dragging = true;
+      didDrag.current = true;
 
       const dt = (ev.timeStamp - lastT) / 1000;
-      if (dt > 0) velocity = (lastY - ev.clientY) / dt;
+      // A pause means the throw is over. Without this, drag up, hold, release
+      // still flings the sheet using the velocity from a second ago.
+      if (dt > 0.1) velocity = 0;
+      else if (dt > 0) velocity = (lastY - ev.clientY) / dt;
       lastY = ev.clientY;
       lastT = ev.timeStamp;
 
@@ -76,7 +91,11 @@ export function Sheet({
       liveH = Math.min(Math.max(next, 90), maxH + 60);
       setDragPx(liveH);
     };
-    const up = () => {
+    const up = (ev: PointerEvent) => {
+      // Only this finger ends this drag. Otherwise tapping the map with a
+      // second finger snapped the sheet mid-gesture and stranded the first.
+      if (ev.pointerId !== activePointer.current) return;
+      activePointer.current = null;
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
@@ -95,11 +114,15 @@ export function Sheet({
     window.addEventListener("pointercancel", up);
   };
 
-  const cycle = () => onDetentChange(ORDER[(ORDER.indexOf(detent) + 1) % ORDER.length]!);
+  const cycle = () => {
+    // A drag already chose a detent; the trailing click must not advance it.
+    if (didDrag.current) { didDrag.current = false; return; }
+    onDetentChange(ORDER[(ORDER.indexOf(detent) + 1) % ORDER.length]!);
+  };
 
   return (
     <section
-      aria-label="Departures"
+      aria-label={label ?? "Departures"}
       style={{
         // On a wide screen the sheet becomes a side panel: a full-width tray
         // across a desktop monitor wastes the map and is hard to read across.

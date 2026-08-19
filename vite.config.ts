@@ -11,8 +11,10 @@ export default defineConfig({
   base: process.env["GITHUB_ACTIONS"] ? "/busbus/" : "/",
   server: { port: 5173, strictPort: true },
   test: {
+    // Node by default; component tests opt into jsdom with a docblock. The
+    // routing layer is pure and must stay testable without a DOM.
     environment: "node",
-    include: ["test/**/*.test.ts"],
+    include: ["test/**/*.test.ts", "test/**/*.test.tsx"],
     // An empty run is not a failure -- the Stop hook keys on this exit code.
     passWithNoTests: true,
   },

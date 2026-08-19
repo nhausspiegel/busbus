@@ -70,7 +70,13 @@ export function SearchBar({
         <button type="submit" disabled={busy || q.trim().length < 3} style={ghostBtn}>
           {busy ? "…" : "Search"}
         </button>
-        <button type="button" onClick={() => { setOpen(false); setResults([]); setMsg(null); }}
+        <button type="button"
+                onClick={() => {
+                  // Abort the in-flight geocode too, or it lands afterwards and
+                  // repopulates results behind the closed panel.
+                  abort.current?.abort();
+                  setOpen(false); setResults([]); setMsg(null); setBusy(false);
+                }}
                 style={ghostBtn} aria-label="Close search">Cancel</button>
       </form>
 
