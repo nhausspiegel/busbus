@@ -4,8 +4,12 @@ import { GTFS_VEHICLES_URL, httpGetBytes } from "./passio";
 export interface Bus {
   id: string; label: string; routeId: string;
   lat: number; lng: number; bearing: number;
-  /** GTFS-RT occupancy enum name, or null when the bus does not report it. */
+  /** GTFS-RT occupancy enum name, or null when the bus does not report it.
+   *  Kept as the fallback when Passio's exact counts are unreachable. */
   occupancy: string | null;
+  /** Exact counts from Passio's private feed, when available. */
+  paxLoad?: number;
+  totalCap?: number;
 }
 
 /** Plain-English occupancy. GTFS-RT's enum names are not rider-facing text. */

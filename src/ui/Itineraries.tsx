@@ -36,9 +36,11 @@ function WalkChip({ minutes }: { minutes: number }) {
 }
 
 export function ItineraryList({
-  itineraries, feed, now, onSelect,
+  itineraries, feed, now, selected, onSelect,
 }: {
   itineraries: Itinerary[]; feed: StaticFeed | null; now: number;
+  /** The one currently drawn on the map. */
+  selected?: Itinerary | null;
   onSelect: (i: Itinerary) => void;
 }) {
   return (
@@ -49,8 +51,11 @@ export function ItineraryList({
           <li key={n} style={{ borderTop: "1px solid var(--hairline)" }}>
             <button
               onClick={() => onSelect(it)}
+              aria-current={selected === it ? "true" : undefined}
               style={{ display: "block", width: "100%", textAlign: "left", border: 0,
-                       background: "transparent", padding: "13px 0", cursor: "pointer" }}
+                       background: selected === it ? "var(--paper)" : "transparent",
+                       padding: "13px 10px", margin: "0 -10px", borderRadius: 10,
+                       cursor: "pointer" }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>

@@ -5,6 +5,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { StaticFeed, LatLng } from "../data/types";
 import type { Bus } from "../data/vehicles";
 import { basemapStyle } from "./mapStyle";
+import { offsetColinearRoutes } from "../routing/parallel";
 
 // MapLibre's worker is a separate ES module that imports a sibling. Rollup
 // cannot see it (the path is built from a runtime string) and ?url would copy
@@ -16,6 +17,13 @@ maplibregl.setWorkerUrl(`${import.meta.env.BASE_URL}maplibre/maplibre-gl-worker.
 export const CAMPUS: LatLng = { lat: 41.8265, lng: -71.4015 };
 
 /** Overlay layers are torn down and rebuilt whenever the chosen trip changes. */
+/** Hold this long to drop a pin. Matches the platform's own press delay. */
+const LONG_PRESS_MS = 500;
+
+/** Gap between coincident routes, in screen pixels. Pixels, not metres, so
+ *  the bundle stays legible at every zoom. */
+const LANE_PX = 5;
+
 const OVERLAY_LAYERS = ["itin-walk", "itin-ride-case", "itin-ride-0", "itin-ride-1", "itin-ride-2"];
 
 /** Watch the system colour scheme so the map can follow it. */
@@ -40,12 +48,15 @@ export interface Overlay {
 
 export function TransitMap({
   feed, buses, me, destination, overlay, focus, highlightRouteId, routeStopIds, activeRouteIds,
-  onMapClick, onRouteClick, onStopClick,
+  onMapClick, onClearDestination, onRouteClick, onStopClick,
 }: {
   feed: StaticFeed | null;
   buses: Bus[];
   me: LatLng | null;
   destination: LatLng | null;
+  /** Tapping empty map with a destination set clears it, the way Apple Maps
+   *  deselects rather than dropping a second pin. */
+  onClearDestination?: () => void;
   overlay: Overlay | null;
   /** Points the map should frame, e.g. the chosen trip end to end. */
   focus: LatLng[] | null;
@@ -69,6 +80,10 @@ export function TransitMap({
   routeCb.current = onRouteClick;
   const stopCb = useRef(onStopClick);
   stopCb.current = onStopClick;
+  const clearCb = useRef(onClearDestination);
+  clearCb.current = onClearDestination;
+  const hasDest = useRef(false);
+  hasDest.current = destination !== null;
   // A counter, not a boolean: setStyle falls back to a full reload when its
   // diff is not applicable, which drops every layer we added. Incrementing on
   // each styledata lets the drawing effects re-run and rebuild them.
@@ -100,10 +115,43 @@ export function TransitMap({
       // Ask what was actually hit rather than relying on preventDefault:
       // MapLibre dispatches the layer handler and this one independently, so
       // a tap on a stop was opening the stop card AND dropping a pin.
-      const onStop = m.getLayer("stops-hit")
-        ? m.queryRenderedFeatures(e.point, { layers: ["stops-hit"] })
-        : [];
-      if (onStop.length > 0) return;
+      const hitLayers = ["stops-hit", "poi-hit"].filter((l) => m.getLayer(l));
+      if (hitLayers.length && m.queryRenderedFeatures(e.point, { layers: hitLayers }).length) return;
+      // A plain tap never drops a pin. With a destination set it deselects;
+      // otherwise it does nothing. Dropping a pin is a long press.
+      if (hasDest.current) clearCb.current?.();
+    });
+
+    // Long press (or right click) drops a pin, as on Apple Maps.
+    let pressTimer: ReturnType<typeof setTimeout> | undefined;
+    let pressStart: { x: number; y: number } | null = null;
+    const cancelPress = () => { if (pressTimer) clearTimeout(pressTimer); pressTimer = undefined; };
+    m.on("mousedown", (e) => {
+      pressStart = { x: e.point.x, y: e.point.y };
+      pressTimer = setTimeout(() => {
+        clickCb.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+        pressTimer = undefined;
+      }, LONG_PRESS_MS);
+    });
+    m.on("touchstart", (e) => {
+      if (e.points.length !== 1) return;      // pinch, not a press
+      pressStart = { x: e.point.x, y: e.point.y };
+      pressTimer = setTimeout(() => {
+        clickCb.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+        pressTimer = undefined;
+      }, LONG_PRESS_MS);
+    });
+    // Any real movement means a pan, not a press.
+    const maybeCancel = (p: { x: number; y: number }) => {
+      if (!pressStart) return;
+      if (Math.hypot(p.x - pressStart.x, p.y - pressStart.y) > 8) cancelPress();
+    };
+    m.on("mousemove", (e) => maybeCancel(e.point));
+    m.on("touchmove", (e) => maybeCancel(e.point));
+    for (const ev of ["mouseup", "touchend", "touchcancel", "dragstart", "zoomstart"] as const)
+      m.on(ev, cancelPress);
+    m.on("contextmenu", (e) => {
+      cancelPress();
       clickCb.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng });
     });
     // Without this MapLibre fails silently -- a dead worker just leaves a blank map.
@@ -125,61 +173,88 @@ export function TransitMap({
 
   // route lines + stops
   useEffect(() => {
-    const m = map.current;
     // isStyleLoaded() is the authority: addSource/addLayer throw "Style is not
     // done loading" and that exception escapes the effect and unmounts the app.
+    const m = map.current;
     if (!m || !ready || !m.isStyleLoaded() || !feed) return;
-    for (const r of feed.routes.values()) {
-      if (!activeRouteIds.has(r.id) || r.shape.length < 2) continue;
-      const id = `route-${r.id}`;
-      if (m.getSource(id)) continue;
-      m.addSource(id, { type: "geojson", data: {
-        type: "Feature", properties: {},
-        geometry: { type: "LineString", coordinates: r.shape.map((p) => [p.lng, p.lat]) } } });
-      // Casing under the colour keeps five overlapping routes legible. It has
-      // to be the map's own land tone, not white -- a white halo on a dark
-      // basemap reads as glowing piping rather than as separation.
-      m.addLayer({ id: `${id}-case`, type: "line", source: id,
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": darkRef.current ? "#15110F" : "#FFFFFF",
-                 "line-width": 7, "line-opacity": 0.9 } });
-      m.addLayer({ id, type: "line", source: id,
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": r.color, "line-width": 3.5 } });
-    }
-    if (!m.getSource("stops")) {
-      m.addSource("stops", { type: "geojson", data: { type: "FeatureCollection",
-        features: [...feed.stops.values()].map((s) => ({
-          type: "Feature" as const, properties: { name: s.name, id: s.id },
-          geometry: { type: "Point" as const, coordinates: [s.lng, s.lat] } })) } });
-      m.addLayer({ id: "stops", type: "circle", source: "stops", minzoom: 13,
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 2.5, 16, 5],
-          "circle-color": darkRef.current ? "#15110F" : "#FFFFFF",
-          "circle-stroke-color": darkRef.current ? "#C6BAB1" : "#241C17",
-          "circle-stroke-width": 1.5,
-        } });
-      // A 5px dot is far too small to hit with a thumb, so an invisible
-      // wider circle takes the taps.
-      // Stops on the route being viewed, drawn larger and in the route colour
-      // so a route page reads as a line with stations on it.
-      m.addLayer({ id: "stops-active", type: "circle", source: "stops",
-        filter: ["in", "id", ""],
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 4, 16, 7],
-          "circle-color": "#FFFFFF", "circle-stroke-width": 3.5,
-          "circle-stroke-color": "#6F625A",
-        } });
-      m.addLayer({ id: "stops-hit", type: "circle", source: "stops", minzoom: 13,
-        paint: { "circle-radius": 14, "circle-opacity": 0 } });
-      m.on("click", "stops-hit", (e: maplibregl.MapLayerMouseEvent) => {
-        const f = e.features?.[0];
-        const id = f?.properties?.["id"];
-        if (id) stopCb.current?.(String(id));
-      });
-      m.on("mouseenter", "stops-hit", () => { m.getCanvas().style.cursor = "pointer"; });
-      m.on("mouseleave", "stops-hit", () => { m.getCanvas().style.cursor = ""; });
-    }
+
+    // One source for every route, split into lanes so coincident routes draw
+    // side by side instead of hiding each other. Drawn before the stops layer
+    // so a stop is never buried under the line it belongs to.
+    const active = [...feed.routes.values()].filter(
+      (r) => activeRouteIds.has(r.id) && r.shape.length >= 2);
+    const pieces = offsetColinearRoutes(active.map((r) => ({ id: r.id, shape: r.shape })));
+    const colorOf = new Map(active.map((r) => [r.id, r.color]));
+
+    const data: GeoJSON.FeatureCollection = {
+      type: "FeatureCollection",
+      features: pieces.map((p) => ({
+        type: "Feature",
+        properties: { routeId: p.routeId, lane: p.lane, color: colorOf.get(p.routeId) ?? "#888" },
+        geometry: { type: "LineString", coordinates: p.path.map((q) => [q.lng, q.lat]) },
+      })),
+    };
+
+    try {
+      const src = m.getSource("routes") as maplibregl.GeoJSONSource | undefined;
+      if (src) {
+        src.setData(data);
+      } else {
+        m.addSource("routes", { type: "geojson", data });
+        // line-offset is in PIXELS, so lanes stay evenly spaced at every zoom,
+        // the way a subway map keeps its lines apart when you zoom out.
+        const offset: maplibregl.ExpressionSpecification =
+          ["*", ["get", "lane"], LANE_PX];
+        m.addLayer({
+          id: "routes-case", type: "line", source: "routes",
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: {
+            "line-color": darkRef.current ? "#15110F" : "#FFFFFF",
+            "line-width": 7, "line-opacity": 0.9, "line-offset": offset,
+          },
+        });
+        m.addLayer({
+          id: "routes-line", type: "line", source: "routes",
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: {
+            "line-color": ["get", "color"],
+            "line-width": 3.5, "line-offset": offset,
+          },
+        });
+      }
+
+      if (!m.getSource("stops")) {
+        m.addSource("stops", { type: "geojson", data: { type: "FeatureCollection",
+          features: [...feed.stops.values()].map((s) => ({
+            type: "Feature" as const, properties: { name: s.name, id: s.id },
+            geometry: { type: "Point" as const, coordinates: [s.lng, s.lat] } })) } });
+        // Stops on the route being viewed, drawn larger and in the route colour.
+        m.addLayer({ id: "stops-active", type: "circle", source: "stops",
+          filter: ["in", ["get", "id"], ["literal", []]],
+          paint: {
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 4, 16, 7],
+            "circle-color": "#FFFFFF", "circle-stroke-width": 3.5,
+            "circle-stroke-color": "#6F625A",
+          } });
+        m.addLayer({ id: "stops", type: "circle", source: "stops", minzoom: 13,
+          paint: {
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 2.5, 16, 5],
+            "circle-color": darkRef.current ? "#15110F" : "#FFFFFF",
+            "circle-stroke-color": darkRef.current ? "#C6BAB1" : "#241C17",
+            "circle-stroke-width": 1.5,
+          } });
+        // A 5px dot is too small for a thumb; an invisible wider circle takes taps.
+        m.addLayer({ id: "stops-hit", type: "circle", source: "stops", minzoom: 13,
+          paint: { "circle-radius": 14, "circle-opacity": 0 } });
+        m.on("click", "stops-hit", (e: maplibregl.MapLayerMouseEvent) => {
+          const f = e.features?.[0];
+          const id = f?.properties?.["id"];
+          if (id) stopCb.current?.(String(id));
+        });
+        m.on("mouseenter", "stops-hit", () => { m.getCanvas().style.cursor = "pointer"; });
+        m.on("mouseleave", "stops-hit", () => { m.getCanvas().style.cursor = ""; });
+      }
+    } catch { /* style churn; the next render rebuilds */ }
   }, [feed, ready, activeRouteIds]);
 
   // live buses
@@ -195,6 +270,9 @@ export function TransitMap({
         const el = document.createElement("button");
         el.type = "button";
         el.className = "display";
+        // 30x30 box whose lower 22px is the dot; anchoring the box centre put
+        // the dot ~4px north of the bus's real position, which at street zoom
+        // reads as "the bus is not on its route".
         el.style.cssText =
           "position:relative;width:30px;height:30px;padding:0;border:0;background:none;cursor:pointer";
         // A heading arrow answers "is it coming towards me or leaving", which
@@ -216,17 +294,24 @@ export function TransitMap({
         el.append(arrow, dot);
         el.title = `Bus ${b.label}`;
         el.setAttribute("aria-label",
-          `Bus ${b.label} on ${feed?.routes.get(b.routeId)?.name ?? "route"}. See route.`);
+          `Bus ${b.label} on ${feed?.routes.get(b.routeId)?.name ?? "route"}` +
+          (b.totalCap ? `, ${b.paxLoad} of ${b.totalCap} seats taken` : "") + ". See route.");
         el.addEventListener("click", (ev) => {
           ev.stopPropagation();          // do not also drop a destination pin
           routeCb.current?.(b.routeId);
         });
-        mk = new maplibregl.Marker({ element: el }).setLngLat([b.lng, b.lat]).addTo(m);
+        // offset shifts the element so the DOT's centre sits on the coordinate.
+        mk = new maplibregl.Marker({ element: el, offset: [0, 4] })
+          .setLngLat([b.lng, b.lat]).addTo(m);
         busMarks.current.set(b.id, mk);
       } else {
         mk.setLngLat([b.lng, b.lat]);
-        const arrow = mk.getElement().firstElementChild as HTMLElement | null;
+        const el = mk.getElement();
+        const arrow = el.firstElementChild as HTMLElement | null;
         if (arrow) arrow.style.transform = `rotate(${b.bearing}deg)`;
+        el.setAttribute("aria-label",
+          `Bus ${b.label} on ${feed?.routes.get(b.routeId)?.name ?? "route"}` +
+          (b.totalCap ? `, ${b.paxLoad} of ${b.totalCap} seats taken` : "") + ". See route.");
       }
     }
     for (const [id, mk] of busMarks.current)
@@ -321,8 +406,7 @@ export function TransitMap({
     if (!m || !ready || !m.isStyleLoaded() || !feed) return;
     const ground = dark ? "#15110F" : "#FFFFFF";
     try {
-      for (const r of feed.routes.values())
-        if (m.getLayer(`route-${r.id}-case`)) m.setPaintProperty(`route-${r.id}-case`, "line-color", ground);
+      if (m.getLayer("routes-case")) m.setPaintProperty("routes-case", "line-color", ground);
       if (m.getLayer("stops")) {
         m.setPaintProperty("stops", "circle-color", ground);
         m.setPaintProperty("stops", "circle-stroke-color", dark ? "#C6BAB1" : "#241C17");
@@ -338,18 +422,17 @@ export function TransitMap({
     const m = map.current;
     if (!m || !ready || !m.isStyleLoaded() || !feed) return;
     try {
-      // Single owner of route emphasis. Two effects setting line-opacity with
-      // different resting values fought each other: selecting an itinerary
-      // dimmed everything to 0.25, then tapping a bus reset it to 0.85 while
-      // the trip was still drawn, so the answer stopped reading as the answer.
-      const tripDrawn = overlay !== null;
-      for (const r of feed.routes.values()) {
-        const id = `route-${r.id}`;
-        if (!m.getLayer(id)) continue;
-        const highlighted = highlightRouteId === r.id;
-        const recede = (highlightRouteId !== null && !highlighted) || (tripDrawn && !highlighted);
-        m.setPaintProperty(id, "line-opacity", recede ? 0.18 : 0.85);
-        m.setPaintProperty(id, "line-width", highlighted ? 5.5 : 3.5);
+      // Single owner of route emphasis, expressed per feature so one layer
+      // can dim the network while keeping the focused route at full strength.
+      const focus = highlightRouteId;
+      if (m.getLayer("routes-line")) {
+        m.setPaintProperty("routes-line", "line-opacity", focus
+          ? ["case", ["==", ["get", "routeId"], focus], 0.9, 0.16]
+          : 0.85);
+        m.setPaintProperty("routes-line", "line-width", focus
+          ? ["case", ["==", ["get", "routeId"], focus], 5.5, 3]
+          : 3.5);
+        m.setPaintProperty("routes-case", "line-opacity", focus ? 0.35 : 0.9);
       }
       if (m.getLayer("stops-active")) {
         const ids = highlightRouteId ? (routeStopIds ?? []) : [];
