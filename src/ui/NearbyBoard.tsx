@@ -3,6 +3,31 @@ import type { StopDepartures } from "../routing/nearby";
 import type { StaticFeed } from "../data/types";
 import type { Bus } from "../data/vehicles";
 
+/** Placeholder rows shaped like the real ones. A bare "Loading…" line makes
+ *  the sheet jump when content lands; matching the eventual shape does not. */
+function DepartureSkeleton() {
+  return (
+    <div aria-hidden="true">
+      {[0, 1, 2].map((i) => (
+        <div key={i} style={{ borderTop: "1px solid var(--hairline)", padding: "13px 0" }}>
+          <div style={{ ...bone, width: `${45 + i * 12}%`, height: 15, marginBottom: 11 }} />
+          {[0, 1].map((j) => (
+            <div key={j} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <div style={{ ...bone, width: 4, height: 22, borderRadius: 2 }} />
+              <div style={{ ...bone, flex: 1, height: 13 }} />
+              <div style={{ ...bone, width: 34, height: 20 }} />
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const bone: React.CSSProperties = {
+  background: "var(--hairline)", borderRadius: 5, animation: "shimmer 1.4s ease-in-out infinite",
+};
+
 export function NearbyBoard({
   feed, nearby, buses, now, loading, me, onRouteClick, onLocate,
 }: {
@@ -34,7 +59,7 @@ export function NearbyBoard({
         <h1 className="display" style={{ fontSize: 30, margin: "4px 0 0" }}>Next departures</h1>
       </header>
 
-      {loading && <p style={{ color: "var(--muted)" }}>Loading the timetable…</p>}
+      {loading && <DepartureSkeleton />}
 
       {!loading && nearby.length === 0 && (
         <div style={{ padding: "18px 0" }}>

@@ -31,6 +31,11 @@ const DARK: Palette = {
 
 const SRC = "openmaptiles";
 
+/** Attribution required by OpenFreeMap and OpenStreetMap. */
+export const BASEMAP_ATTRIBUTION =
+  '<a href="https://openfreemap.org">OpenFreeMap</a> · ' +
+  '<a href="https://www.openstreetmap.org/copyright">© OpenStreetMap</a>';
+
 export function basemapStyle(dark: boolean): StyleSpecification {
   const c = dark ? DARK : LIGHT;
   const major = ["motorway", "trunk", "primary"];
@@ -40,7 +45,11 @@ export function basemapStyle(dark: boolean): StyleSpecification {
     version: 8,
     glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
     sources: {
-      [SRC]: { type: "vector", url: "https://tiles.openfreemap.org/planet" },
+      [SRC]: {
+        type: "vector",
+        url: "https://tiles.openfreemap.org/planet",
+        attribution: BASEMAP_ATTRIBUTION,
+      },
     },
     layers: [
       { id: "bg", type: "background", paint: { "background-color": c.land } },
@@ -130,7 +139,3 @@ export function basemapStyle(dark: boolean): StyleSpecification {
   };
 }
 
-/** Attribution required by OpenFreeMap and OpenMapTiles. */
-export const BASEMAP_ATTRIBUTION =
-  '<a href="https://openfreemap.org">OpenFreeMap</a> · ' +
-  '<a href="https://www.openstreetmap.org/copyright">© OpenStreetMap</a>';
