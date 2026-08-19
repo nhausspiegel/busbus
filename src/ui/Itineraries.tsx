@@ -2,18 +2,19 @@
 import { clock, minsUntil, durationMins } from "./format";
 import type { Itinerary, StaticFeed } from "../data/types";
 
+/** A filled badge in the route's own colour, the way transit apps label lines.
+ *  An outlined chip with a dot made every route look the same at a glance. */
 function RouteChip({ feed, routeId }: { feed: StaticFeed | null; routeId: string }) {
   const r = feed?.routes.get(routeId);
+  const color = r?.color ?? "#6F625A";
+  const label = r?.shortName || r?.name || routeId;
   return (
     <span style={{
-      display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13,
-      background: "var(--paper)", border: "1px solid var(--hairline)",
-      borderRadius: 999, padding: "3px 9px 3px 6px", whiteSpace: "nowrap",
-    }}>
-      <span aria-hidden="true" style={{
-        width: 9, height: 9, borderRadius: 2, background: r?.color ?? "var(--muted)" }} />
-      {r?.shortName || r?.name || routeId}
-    </span>
+      display: "inline-flex", alignItems: "center", fontSize: 13, fontWeight: 600,
+      background: color, color: "#fff", borderRadius: 7, padding: "3px 9px",
+      whiteSpace: "nowrap", maxWidth: 190, overflow: "hidden", textOverflow: "ellipsis",
+      textShadow: "0 1px 1px rgb(0 0 0 / 25%)",
+    }}>{label}</span>
   );
 }
 

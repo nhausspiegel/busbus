@@ -15,6 +15,7 @@ import { fetchLiveDepartures } from "../data/realtime";
 import { fetchVehicles, type Bus } from "../data/vehicles";
 import { serviceDayStart, scheduledDepartures, buildBoard } from "../data/departures";
 import { nearbyDepartures } from "../routing/nearby";
+import { routeStops } from "../routing/routeDetail";
 import { walkGeometry } from "../routing/walk";
 import { planBetween } from "../routing/trip";
 import { sliceShape } from "../routing/shape";
@@ -174,6 +175,12 @@ export default function App() {
     return pts.length ? pts : null;
   }, [overlay]);
 
+  // Stops on the route being viewed, so the map can draw them as stations.
+  const routeStopIds = useMemo(() => {
+    if (!feed || !routeId) return undefined;
+    return routeStops(feed, board, routeId, planNow).map((r) => r.stop.id);
+  }, [feed, board, routeId, planNow]);
+
   const pickDestination = (at: LatLng, label: string) => {
     setDest({ at, label });
     setChosen(null);
@@ -185,7 +192,7 @@ export default function App() {
       <TransitMap
         feed={feed} buses={buses} me={me}
         destination={dest?.at ?? null} overlay={overlay} focus={focus}
-        highlightRouteId={routeId} activeRouteIds={ACTIVE}
+        highlightRouteId={routeId} routeStopIds={routeStopIds} activeRouteIds={ACTIVE}
         onRouteClick={(r) => { setRouteId(r); setStopId(null); setDetent("half"); }}
         onStopClick={(id) => { setStopId(id); setRouteId(null); setDetent("half"); }}
         onMapClick={(p) => pickDestination(p, "Dropped pin")}
@@ -216,6 +223,9 @@ export default function App() {
         }
       >
         <AlertBanner alerts={alerts} feed={feed} />
+
+        {/* Keyed on mode so switching views animates in rather than jump-cutting. */}
+        <div key={mode} className="enter">
 
         {mode === "nearby" && (
           <>
@@ -267,6 +277,7 @@ export default function App() {
         {mode === "detail" && chosen && (
           <ItineraryDetail itinerary={chosen} feed={feed} now={planNow} onBack={() => setChosen(null)} />
         )}
+        </div>
       </Sheet>
     </main>
   );

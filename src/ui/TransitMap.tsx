@@ -39,7 +39,7 @@ export interface Overlay {
 }
 
 export function TransitMap({
-  feed, buses, me, destination, overlay, focus, highlightRouteId, activeRouteIds,
+  feed, buses, me, destination, overlay, focus, highlightRouteId, routeStopIds, activeRouteIds,
   onMapClick, onRouteClick, onStopClick,
 }: {
   feed: StaticFeed | null;
@@ -51,6 +51,8 @@ export function TransitMap({
   focus: LatLng[] | null;
   /** When set, this route is drawn at full strength and the rest recede. */
   highlightRouteId: string | null;
+  /** Stop ids on the highlighted route, drawn as stations along the line. */
+  routeStopIds?: string[];
   activeRouteIds: Set<string>;
   onMapClick?: (p: LatLng) => void;
   onRouteClick?: (routeId: string) => void;
@@ -144,6 +146,15 @@ export function TransitMap({
         } });
       // A 5px dot is far too small to hit with a thumb, so an invisible
       // wider circle takes the taps.
+      // Stops on the route being viewed, drawn larger and in the route colour
+      // so a route page reads as a line with stations on it.
+      m.addLayer({ id: "stops-active", type: "circle", source: "stops",
+        filter: ["in", "id", ""],
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 4, 16, 7],
+          "circle-color": "#FFFFFF", "circle-stroke-width": 3.5,
+          "circle-stroke-color": "#6F625A",
+        } });
       m.addLayer({ id: "stops-hit", type: "circle", source: "stops", minzoom: 13,
         paint: { "circle-radius": 14, "circle-opacity": 0 } });
       m.on("click", "stops-hit", (e: maplibregl.MapLayerMouseEvent) => {
@@ -323,8 +334,14 @@ export function TransitMap({
         m.setPaintProperty(id, "line-opacity", dim ? 0.18 : 0.85);
         m.setPaintProperty(id, "line-width", highlightRouteId === r.id ? 5.5 : 3.5);
       }
+      if (m.getLayer("stops-active")) {
+        const ids = highlightRouteId ? (routeStopIds ?? []) : [];
+        m.setFilter("stops-active", ["in", ["get", "id"], ["literal", ids]]);
+        m.setPaintProperty("stops-active", "circle-stroke-color",
+          (highlightRouteId && feed.routes.get(highlightRouteId)?.color) || "#6F625A");
+      }
     } catch { /* style churn */ }
-  }, [highlightRouteId, ready, feed]);
+  }, [highlightRouteId, routeStopIds, ready, feed]);
 
   // Frame the chosen trip. Without this the rider has to hunt for their own
   // itinerary on the map, which defeats the point of drawing it.
