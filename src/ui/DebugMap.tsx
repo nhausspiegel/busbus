@@ -86,6 +86,10 @@ export default function DebugMap() {
     // Surface map errors. Without this MapLibre fails silently: a broken
     // worker leaves the style uninitialised and the map simply stays blank.
     m.on("error", (ev) => console.error("MAPLIBRE ERROR:", ev.error?.message ?? ev));
+    // Deliberate: this is a debug tool, and a live map handle in the console is
+    // the only practical way to diagnose a deployed build.
+    (globalThis as unknown as { __map: maplibregl.Map }).__map = m;
+    console.info("busbus worker url:", `${import.meta.env.BASE_URL}maplibre/maplibre-gl-worker.mjs`);
     m.on("click", (e: maplibregl.MapMouseEvent) => setPts((p) => (p.length >= 2 ? [] : [...p, { lat: e.lngLat.lat, lng: e.lngLat.lng }])));
     map.current = m;
 
