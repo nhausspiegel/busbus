@@ -1,0 +1,85 @@
+/* busbus design tokens.
+ *
+ * The five shuttle route colours come from Passio and cannot be changed --
+ * they are data, and riders use them to tell routes apart. So the chrome is
+ * deliberately quiet warm paper: it lets those five colours stay unambiguous
+ * and keeps one accent free for "you are here" and primary actions. */
+:root {
+  --ink:          #241C17;   /* Brown's seal brown, pushed darker for contrast */
+  --ink-soft:     #4A3D35;
+  --muted:        #6F625A;
+  --paper:        #FBF8F5;
+  --raised:       #FFFFFF;
+  --hairline:     #E6DFD8;
+  --accent:       #C8102E;   /* Brown red. Reserved: the user, and primary actions. */
+  --accent-wash:  #FBEAEC;
+  --warn-bg:      #FDF4E3;
+  --warn-line:    #E8C48A;
+  --warn-ink:     #6B4A12;
+
+  --sheet-radius: 18px;
+  --shadow: 0 -1px 3px rgb(36 28 23 / 6%), 0 -8px 28px rgb(36 28 23 / 10%);
+
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-t: env(safe-area-inset-top, 0px);
+}
+
+html, body, #root { margin: 0; padding: 0; height: 100%; width: 100%; }
+
+body {
+  font-family: Barlow, system-ui, -apple-system, sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+  /* Times are the hero data; they must never shift width as they tick down. */
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+/* Transit-signage lineage: condensed, confident, set tight. */
+.display {
+  font-family: "Barlow Condensed", Barlow, system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 0.95;
+}
+
+.eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* --- the signature: a departure time carries its own confidence ---------- */
+
+.when { font-family: "Barlow Condensed", Barlow, sans-serif; font-weight: 700; line-height: 0.9; }
+
+/* A bus is actually reporting its position. Solid, with a live pulse. */
+.when--live { color: var(--ink); }
+
+/* Only the timetable says so. Brown's GTFS marks every route as running every
+ * day through 2027 and Passio reports seasonally-suspended routes as active,
+ * so this is a genuinely weaker claim and is drawn as one: hollow, not solid. */
+.when--sched {
+  color: transparent;
+  -webkit-text-stroke: 1.5px var(--ink-soft);
+}
+
+.pulse {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent); vertical-align: middle;
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: .35; transform: scale(.8); }
+}
+
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}
