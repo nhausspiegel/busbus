@@ -14,6 +14,7 @@ import { fetchAlerts, type Alert } from "../data/alerts";
 import { fetchStaticFeed } from "../data/gtfs";
 import { fetchLiveDepartures } from "../data/realtime";
 import { fetchVehicles, type Bus } from "../data/vehicles";
+import { fetchOccupancy, mergeOccupancy } from "../data/occupancy";
 import { serviceDayStart, scheduledDepartures, buildBoard, groupLiveTrips } from "../data/departures";
 import { nearbyDepartures } from "../routing/nearby";
 import { routeStops } from "../routing/routeDetail";
@@ -52,6 +53,9 @@ export default function App() {
   const [dest, setDest] = useState<{ at: LatLng; label: string } | null>(null);
   const [itineraries, setItineraries] = useState<Itinerary[] | null>(null);
   const [chosen, setChosen] = useState<Itinerary | null>(null);
+  /** The itinerary drawn on the map: whichever the rider opened, or the best
+   *  one while they are still looking at the list. */
+  const [preview, setPreview] = useState<Itinerary | null>(null);
   const [overlay, setOverlay] = useState<Overlay | null>(null);
   const [planning, setPlanning] = useState(false);
   const [routeId, setRouteId] = useState<string | null>(null);
@@ -88,7 +92,18 @@ export default function App() {
     // "no shuttles reporting" and "times below come from the timetable only"
     // because one request dropped -- overstating what the data says, in the
     // opposite direction from the mistake this project is built to avoid.
-    const tick = () => fetchVehicles().then(setBuses).catch(() => {});
+    // GTFS-RT carries only a coarse occupancy enum; Passio's own feed has the
+    // real counts (1/11, 3/20). Fetch both and merge -- if the private feed is
+    // unreachable the enum still stands.
+    const tick = async () => {
+      try {
+        const [live, counts] = await Promise.all([
+          fetchVehicles(),
+          fetchOccupancy().catch(() => new Map()),
+        ]);
+        setBuses(mergeOccupancy(live, counts));
+      } catch { /* keep the last known buses */ }
+    };
     tick();
     const h = setInterval(tick, VEHICLE_POLL_MS);
     return () => clearInterval(h);
@@ -147,7 +162,12 @@ export default function App() {
     (async () => {
       try {
         const found = await planBetween(feed, boardRef.current, origin, dest.at, leaveAt ?? new Date(), liveTripsRef.current);
-        if (!cancelled) setItineraries(found);
+        if (cancelled) return;
+        setItineraries(found);
+        // Draw the best option straight away. Apple Maps shows the first
+        // result on the map without waiting to be asked, and an empty map
+        // beside a list of times makes the rider do the work twice.
+        setPreview(found[0] ?? null);
       } catch {
         if (!cancelled) {
           setItineraries([]);
@@ -163,9 +183,10 @@ export default function App() {
   // Draw the chosen trip: real sidewalk geometry for the walks, and only the
   // ridden slice of each route shape.
   useEffect(() => {
-    if (!chosen || !feed) { setOverlay(null); return; }
+    const shown = chosen ?? preview;
+    if (!shown || !feed) { setOverlay(null); return; }
     let cancelled = false;
-    const rides = chosen.rides.flatMap((r) => {
+    const rides = shown.rides.flatMap((r) => {
       const shape = feed.routes.get(r.routeId)?.shape ?? [];
       const from = feed.stops.get(r.boardStopId);
       const to = feed.stops.get(r.alightStopId);
@@ -175,9 +196,9 @@ export default function App() {
     // Straight lines first so the trip appears instantly, then upgrade to real
     // sidewalk paths when Valhalla answers.
     // A walk-only trip is a single leg from where you are to where you're going.
-    const walkOnly = chosen.rides.length === 0;
-    const boardStop = walkOnly ? null : feed.stops.get(chosen.rides[0]?.boardStopId ?? "");
-    const alightStop = walkOnly ? null : feed.stops.get(chosen.rides[chosen.rides.length - 1]?.alightStopId ?? "");
+    const walkOnly = shown.rides.length === 0;
+    const boardStop = walkOnly ? null : feed.stops.get(shown.rides[0]?.boardStopId ?? "");
+    const alightStop = walkOnly ? null : feed.stops.get(shown.rides[shown.rides.length - 1]?.alightStopId ?? "");
     const straight: LatLng[][] = [];
     if (walkOnly && dest) straight.push([origin, dest.at]);
     if (boardStop) straight.push([origin, boardStop]);
@@ -196,7 +217,7 @@ export default function App() {
       } catch { /* straight lines are a fine fallback */ }
     })();
     return () => { cancelled = true; };
-  }, [chosen, feed, origin, dest]);
+  }, [chosen, preview, feed, origin, dest]);
 
   // Everything the chosen trip touches, so the map can frame it.
   const focus = useMemo<LatLng[] | null>(() => {
@@ -219,6 +240,7 @@ export default function App() {
     setStopId(null);
     setRouteId(null);
     setChosen(null);
+    setPreview(null);
     setDest({ at, label });
     setDetent("half");
   };
@@ -232,6 +254,10 @@ export default function App() {
         onRouteClick={(r) => { setRouteId(r); setStopId(null); setDetent("half"); }}
         onStopClick={(id) => { setStopId(id); setRouteId(null); setDetent("half"); }}
         onMapClick={(p) => pickDestination(p, "Dropped pin")}
+        onClearDestination={() => {
+          setDest(null); setChosen(null); setPreview(null); setItineraries(null);
+          setDetent("peek");
+        }}
       />
 
       <button onClick={locate} aria-label="Center on my location" style={{
@@ -255,7 +281,7 @@ export default function App() {
             destination={dest ? { label: dest.label } : null}
             onPick={(p: Place) => pickDestination(p.at, p.name)}
             onClear={() => {
-            setDest(null); setChosen(null); setStopId(null); setRouteId(null);
+            setDest(null); setChosen(null); setStopId(null); setRouteId(null); setPreview(null);
             setDetent("peek");
           }}
           />
@@ -343,7 +369,8 @@ export default function App() {
             )}
             {itineraries && itineraries.length > 0 && (
               <ItineraryList itineraries={itineraries} feed={feed} now={planNow}
-                             onSelect={(i) => { setChosen(i); setDetent("half"); }} />
+                             selected={preview}
+                             onSelect={(i) => { setChosen(i); setPreview(i); setDetent("half"); }} />
             )}
           </>
         )}

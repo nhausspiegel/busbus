@@ -8,7 +8,9 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 export type Detent = "peek" | "half" | "full";
 
 /** Fraction of viewport height the sheet occupies at each detent. */
-const HEIGHT: Record<Detent, number> = { peek: 0.30, half: 0.55, full: 0.92 };
+/** Peek is deliberately small: the map is the context and the sheet should not
+ *  eat a third of it before the rider has asked for anything. */
+const HEIGHT: Record<Detent, number> = { peek: 0.20, half: 0.52, full: 0.92 };
 const ORDER: Detent[] = ["peek", "half", "full"];
 const DRAG_THRESHOLD_PX = 5;
 
@@ -40,6 +42,7 @@ export function Sheet({
   // always overshot by one detent -- dragging down from full was impossible.
   const didDrag = useRef(false);
   const activePointer = useRef<number | null>(null);
+  const scroller = useRef<HTMLDivElement>(null);
   const [vh, setVh] = useState(() => (typeof window === "undefined" ? 800 : window.innerHeight));
   const [wide, setWide] = useState(() => (typeof window === "undefined" ? false : window.innerWidth >= 820));
 
@@ -114,6 +117,15 @@ export function Sheet({
     window.addEventListener("pointercancel", up);
   };
 
+  /** Start a drag from the body. Only takes over when the list is already at
+   *  the top and the gesture is vertical; otherwise the browser scrolls. */
+  const onContentPointerDown = (e: React.PointerEvent) => {
+    const el = scroller.current;
+    if (!el) return;
+    if (el.scrollTop > 0 && detent === "full") return;   // let it scroll
+    onPointerDown(e);
+  };
+
   const cycle = () => {
     // A drag already chose a detent; the trailing click must not advance it.
     if (didDrag.current) { didDrag.current = false; return; }
@@ -158,10 +170,17 @@ export function Sheet({
           {header}
         </div>
       )}
-      <div style={{
-        overflowY: "auto", overscrollBehavior: "contain", flex: 1,
-        padding: wide ? "16px 18px" : "0 16px calc(16px + var(--safe-b))",
-      }}>
+      <div
+        ref={scroller}
+        // Dragging works anywhere on the sheet, not only on the grabber --
+        // but only when the content is already scrolled to the top, so a
+        // downward swipe still scrolls a long list instead of closing it.
+        onPointerDown={wide ? undefined : onContentPointerDown}
+        style={{
+          overflowY: "auto", overscrollBehavior: "contain", flex: 1,
+          padding: wide ? "16px 18px" : "0 16px calc(16px + var(--safe-b))",
+        }}
+      >
         {children}
       </div>
     </section>

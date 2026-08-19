@@ -2,6 +2,7 @@ import { clock, minsUntil } from "./format";
 import { routeStops } from "../routing/routeDetail";
 import type { StaticFeed, DepartureBoard } from "../data/types";
 import { occupancyLabel, type Bus } from "../data/vehicles";
+import { fullness } from "../data/occupancy";
 
 export function RouteDetail({
   feed, board, routeId, buses, now, onBack,
@@ -45,9 +46,19 @@ export function RouteDetail({
             }}>
               <span className="pulse" aria-hidden="true" />
               Bus {b.label}
-              {occupancyLabel(b.occupancy) && (
-                <span style={{ color: "var(--muted)" }}>· {occupancyLabel(b.occupancy)}</span>
-              )}
+              {(() => {
+                // Exact counts when Passio gives them, the coarse GTFS-RT enum
+                // otherwise. "3/20 · 15%" tells a rider whether to wait for
+                // the next one; "FEW_SEATS_AVAILABLE" does not.
+                const f = fullness(b.paxLoad, b.totalCap);
+                if (f) return (
+                  <span style={{ color: "var(--muted)" }}>
+                    · {b.paxLoad}/{b.totalCap}{f.pct !== null ? ` · ${f.label}` : ""}
+                  </span>
+                );
+                const coarse = occupancyLabel(b.occupancy);
+                return coarse ? <span style={{ color: "var(--muted)" }}>· {coarse}</span> : null;
+              })()}
             </li>
           ))}
         </ul>

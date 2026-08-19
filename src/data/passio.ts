@@ -1,6 +1,7 @@
 export const SYSTEM_ID = "1067";     // Brown University
 export const SYSTEM_SLUG = "brown";  // `username` from getSystems; builds GTFS URLs
 
+export const PRIVATE_BASE = "https://passiogo.com";
 export const GTFS_BASE = `https://passio3.com/${SYSTEM_SLUG}/passioTransit/gtfs`;
 /** Whether we are running outside a browser (scripts, tests). */
 export const IS_NODE = typeof window === "undefined";
