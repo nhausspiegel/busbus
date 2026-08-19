@@ -1,0 +1,14 @@
+{
+  "name": "busbus — Brown shuttles",
+  "short_name": "busbus",
+  "description": "When the next Brown shuttle leaves, and how to get where you're going.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FBF8F5",
+  "theme_color": "#FBF8F5",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
