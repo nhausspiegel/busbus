@@ -10,8 +10,8 @@ import { fetchLiveDepartures } from "../data/realtime";
 import { fetchVehicles, type Bus } from "../data/vehicles";
 import { serviceDayStart, scheduledDepartures, buildBoard } from "../data/departures";
 import { nearbyDepartures } from "../routing/nearby";
-import { nearestStops, walkMatrix, walkGeometry } from "../routing/walk";
-import { planWithTransfers } from "../routing/transfers";
+import { walkGeometry } from "../routing/walk";
+import { planBetween } from "../routing/trip";
 import { sliceShape } from "../routing/shape";
 import type { Place } from "../data/geocode";
 import type { StaticFeed, DepartureBoard, LatLng, Itinerary } from "../data/types";
@@ -21,7 +21,6 @@ import type { StaticFeed, DepartureBoard, LatLng, Itinerary } from "../data/type
 const ACTIVE = new Set(["3302", "3469", "3470", "22427", "62487"]);
 const VEHICLE_POLL_MS = 10_000;
 const BOARD_POLL_MS = 30_000;
-const CANDIDATE_STOPS = 8;
 
 type Mode = "nearby" | "results" | "detail";
 
@@ -94,17 +93,8 @@ export default function App() {
     setPlanning(true);
     (async () => {
       try {
-        const all = [...feed.stops.values()];
-        const [fromWalk, toWalk] = await Promise.all([
-          walkMatrix(origin, nearestStops(origin, all, CANDIDATE_STOPS)),
-          walkMatrix(dest.at, nearestStops(dest.at, all, CANDIDATE_STOPS)),
-        ]);
-        if (cancelled) return;
-        setItineraries(planWithTransfers({
-          feed, board, origin, destination: dest.at,
-          walkFromOrigin: fromWalk, walkToDestination: toWalk,
-          now: Math.floor(Date.now() / 1000),
-        }));
+        const found = await planBetween(feed, board, origin, dest.at);
+        if (!cancelled) setItineraries(found);
       } catch {
         if (!cancelled) {
           setItineraries([]);
@@ -131,9 +121,12 @@ export default function App() {
     });
     // Straight lines first so the trip appears instantly, then upgrade to real
     // sidewalk paths when Valhalla answers.
-    const boardStop = feed.stops.get(chosen.rides[0]?.boardStopId ?? "");
-    const alightStop = feed.stops.get(chosen.rides[chosen.rides.length - 1]?.alightStopId ?? "");
+    // A walk-only trip is a single leg from where you are to where you're going.
+    const walkOnly = chosen.rides.length === 0;
+    const boardStop = walkOnly ? null : feed.stops.get(chosen.rides[0]?.boardStopId ?? "");
+    const alightStop = walkOnly ? null : feed.stops.get(chosen.rides[chosen.rides.length - 1]?.alightStopId ?? "");
     const straight: LatLng[][] = [];
+    if (walkOnly && dest) straight.push([origin, dest.at]);
     if (boardStop) straight.push([origin, boardStop]);
     if (alightStop && dest) straight.push([alightStop, dest.at]);
     setOverlay({ walks: straight, rides });
@@ -141,7 +134,8 @@ export default function App() {
     (async () => {
       try {
         const legs = await Promise.all([
-          boardStop ? walkGeometry(origin, boardStop) : Promise.resolve([]),
+          walkOnly && dest ? walkGeometry(origin, dest.at)
+            : boardStop ? walkGeometry(origin, boardStop) : Promise.resolve([]),
           alightStop && dest ? walkGeometry(alightStop, dest.at) : Promise.resolve([]),
         ]);
         const real = legs.filter((l) => l.length > 1);
@@ -212,8 +206,8 @@ export default function App() {
             </h1>
             {!planning && itineraries?.length === 0 && (
               <p style={{ color: "var(--muted)", fontSize: 14, margin: 0 }}>
-                No shuttle connects here right now. Daytime routes run weekdays 7am–7pm;
-                the Evening routes are suspended for the summer.
+                No shuttle connects here, and it is too far to walk. Daytime routes run
+                weekdays 7am–7pm; the Evening routes are suspended for the summer.
               </p>
             )}
             {itineraries && itineraries.length > 0 && (

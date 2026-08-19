@@ -1,42 +1,55 @@
-/** Terminal proof that objective 1 works end to end, before any UI exists.
+/** Terminal check that routefinding works end to end.
+ *
+ *  Default case is 129 Angell Street <-> Trader Joe's on South Main, run in
+ *  both directions: the trip is downhill one way and up College Hill the
+ *  other, so the two directions are genuinely different problems.
+ *
  *  Usage: npx tsx scripts/plan-demo.ts [fromLat,fromLng] [toLat,toLng] */
 import { findItineraries } from "../src/routing/trip";
 import { fetchStaticFeed } from "../src/data/gtfs";
 
-const parse = (s: string | undefined, fallback: { lat: number; lng: number }) => {
-  if (!s) return fallback;
+const ANGELL = { lat: 41.8278062, lng: -71.4024241, label: "129 Angell St" };
+const TRADER_JOES = { lat: 41.8182465, lng: -71.4004397, label: "Trader Joe's" };
+
+const parse = (s: string | undefined) => {
+  if (!s) return null;
   const [lat, lng] = s.split(",").map(Number);
-  return { lat: lat!, lng: lng! };
+  return Number.isFinite(lat) && Number.isFinite(lng)
+    ? { lat: lat!, lng: lng!, label: s } : null;
 };
 
-const from = parse(process.argv[2], { lat: 41.826195, lng: -71.404656 }); // John Hay Library
-const to = parse(process.argv[3], { lat: 41.817892, lng: -71.406899 });   // South Street Landing
+const a = parse(process.argv[2]);
+const b = parse(process.argv[3]);
+const pairs = a && b ? [[a, b]] : [[ANGELL, TRADER_JOES], [TRADER_JOES, ANGELL]];
 
 const fmt = (t: number) =>
   new Date(t * 1000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 const mins = (s: number) => `${Math.round(s / 60)} min`;
 
 const feed = await fetchStaticFeed();
-const nameOf = (id: string) => feed.stops.get(id)?.name ?? id;
-const routeOf = (id: string) => feed.routes.get(id)?.name ?? id;
+const stopName = (id: string) => feed.stops.get(id)?.name ?? id;
+const routeName = (id: string) => feed.routes.get(id)?.name ?? id;
 
-console.log(`from ${from.lat},${from.lng}  ->  to ${to.lat},${to.lng}`);
-console.log(`now  ${new Date().toLocaleString("en-US")}\n`);
+console.log(`now ${new Date().toLocaleString("en-US")}\n`);
 
-const its = await findItineraries(from, to);
-if (its.length === 0) {
-  console.log("No itineraries. No shuttle currently connects these two points.");
-} else {
-  console.log(`${its.length} option(s), earliest arrival first:\n`);
+for (const [from, to] of pairs) {
+  console.log(`${"=".repeat(62)}\n${from!.label}  ->  ${to!.label}\n`);
+  const its = await findItineraries(from!, to!);
+  if (its.length === 0) {
+    console.log("  No option: no shuttle connects these points and it is too far to walk.\n");
+    continue;
+  }
   its.forEach((it, n) => {
-    console.log(`[${n + 1}] ARRIVE ${fmt(it.arriveTime)}   leave by ${fmt(it.departTime)}   ` +
-      `${mins(it.totalWalkSeconds)} walking, ${it.transfers} transfer(s)`);
-    console.log(`     walk ${mins(it.walkToStop.seconds)} to ${nameOf(it.rides[0]!.boardStopId)}`);
-    for (const r of it.rides) {
-      console.log(`     ${fmt(r.departTime)} board ${routeOf(r.routeId)} at ${nameOf(r.boardStopId)}` +
-        `${r.live ? "  [live]" : "  [scheduled]"}`);
-      console.log(`     ${fmt(r.arriveTime)} alight at ${nameOf(r.alightStopId)} (${r.numStops} stops)`);
+    const kind = it.rides.length === 0 ? "WALK" : `${it.rides.length} ride(s)`;
+    console.log(`  [${n + 1}] arrive ${fmt(it.arriveTime)}  (${kind}, ${mins(it.totalWalkSeconds)} walking)`);
+    if (it.rides.length === 0) {
+      console.log(`      walk the whole way -- no waiting\n`);
+      return;
     }
-    console.log(`     walk ${mins(it.walkFromStop.seconds)} to destination\n`);
+    console.log(`      walk ${mins(it.walkToStop.seconds)} to ${stopName(it.rides[0]!.boardStopId)}`);
+    for (const r of it.rides)
+      console.log(`      ${fmt(r.departTime)} ${routeName(r.routeId)} -> ${fmt(r.arriveTime)} ` +
+        `${stopName(r.alightStopId)} (${r.numStops} stops${r.live ? ", live" : ", scheduled"})`);
+    console.log(`      walk ${mins(it.walkFromStop.seconds)} to destination\n`);
   });
 }

@@ -12,7 +12,18 @@ export interface PlanOptions {
   /** stopId -> walking seconds to the destination. */
   walkToDestination: Map<string, number>;
   now: number;            // epoch seconds
+  /** Walking seconds straight from origin to destination, if known. */
+  directWalkSeconds?: number;
   maxResults?: number;
+}
+
+/** Beyond this, walking stops being a real option for a campus shuttle app
+ *  and listing it is just noise. */
+const MAX_REASONABLE_WALK_SECONDS = 45 * 60;
+
+/** An itinerary with no rides: the rider just walks. */
+export function isWalkOnly(it: Itinerary): boolean {
+  return it.rides.length === 0;
 }
 
 /** Rank single-shuttle itineraries by arrival time at the destination.
@@ -88,11 +99,30 @@ export function planTrips(opts: PlanOptions): Itinerary[] {
     }
   }
 
+  // Walking is a real option and sometimes the best one: waiting nine minutes
+  // for a bus that loops seven stops across a few blocks is worse than simply
+  // walking there. Emitted as an itinerary so it ranks by arrival like any
+  // other, rather than being special-cased in the UI.
+  const walk = opts.directWalkSeconds;
+  if (walk !== undefined && walk <= MAX_REASONABLE_WALK_SECONDS) {
+    found.push({
+      arriveTime: now + walk,
+      departTime: now,
+      walkToStop: { from: origin, to: destination, seconds: walk },
+      rides: [],
+      walkFromStop: { from: destination, to: destination, seconds: 0 },
+      totalWalkSeconds: walk,
+      transfers: 0,
+      // Your own legs are not a prediction, so this is never an unconfirmed claim.
+      allLive: true,
+    });
+  }
+
   // One suggestion per route: riders choose between routes, not between the
   // 3:00 and the 3:20 bus on the same route.
   const bestByRoute = new Map<string, Itinerary>();
   for (const it of found) {
-    const key = it.rides[0]!.routeId;
+    const key = it.rides[0]?.routeId ?? "__walk__";
     const prev = bestByRoute.get(key);
     if (!prev || it.arriveTime < prev.arriveTime) bestByRoute.set(key, it);
   }

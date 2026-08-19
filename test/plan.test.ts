@@ -124,6 +124,38 @@ describe("planTrips", () => {
     expect(got[0]!.rides[0]!.routeId).toBe("R2");
   });
 
+  it("offers walking, and ranks it first when it beats the bus", () => {
+    // The case that exposed this: a 9-minute wait for a 7-stop loop across a
+    // few blocks, when the rider could simply walk there sooner.
+    const f = fixture(NOW + 540);            // bus leaves in 9 min, rides 600s
+    const got = planTrips({ feed: f.feed, board: f.board, ...base({ directWalkSeconds: 480 }) });
+    expect(got[0]!.rides).toHaveLength(0);   // walking
+    expect(got[0]!.arriveTime).toBe(NOW + 480);
+    expect(got.length).toBeGreaterThan(1);   // the bus is still offered
+  });
+
+  it("ranks the bus first when the walk is long", () => {
+    const f = fixture(NOW + 300);            // arrives NOW+1080 including final walk
+    const got = planTrips({ feed: f.feed, board: f.board, ...base({ directWalkSeconds: 1800 }) });
+    expect(got[0]!.rides.length).toBeGreaterThan(0);
+  });
+
+  it("does not suggest walking an unreasonable distance", () => {
+    // A two-hour walk is not an option a campus shuttle app should offer.
+    const f = fixture(NOW + 300);
+    const got = planTrips({ feed: f.feed, board: f.board, ...base({ directWalkSeconds: 7200 }) });
+    expect(got.every((i) => i.rides.length > 0)).toBe(true);
+  });
+
+  it("offers walking even when no bus runs at all", () => {
+    // Overnight and between seasons this is the only true answer.
+    const f = fixture(NOW + 300);
+    const got = planTrips({ feed: f.feed, board: new Map(), ...base({ directWalkSeconds: 600 }) });
+    expect(got).toHaveLength(1);
+    expect(got[0]!.rides).toHaveLength(0);
+    expect(got[0]!.allLive).toBe(true);      // your own legs are not a prediction
+  });
+
   it("prefers a slower bus leaving now over a faster bus leaving much later", () => {
     // THE requirement: earliest ARRIVAL, not shortest ride.
     const f = fixture(NOW + 300);                       // R1: leaves +300, rides 600 -> arrives +900
