@@ -100,6 +100,7 @@ export function SearchBar({
 
 const bar: React.CSSProperties = {
   position: "absolute", left: 12, right: 66, top: "calc(12px + var(--safe-t))",
+  maxWidth: 520,
   display: "flex", alignItems: "center", gap: 8,
   background: "var(--raised)", border: "1px solid var(--hairline)", borderRadius: 12,
   padding: "11px 12px", boxShadow: "0 1px 6px rgb(36 28 23 / 14%)", zIndex: 3,
