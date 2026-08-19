@@ -85,6 +85,29 @@ describe("nearbyDepartures", () => {
     expect(got[0]!.departures[0]!.live).toBe(true);
   });
 
+  it("does not list a departure hours away", () => {
+    // Brown's routes run in shifts: at 9am the Evening routes' next departure
+    // is tonight. "Evening CW - 440 min" is correct but useless, and it pushed
+    // the daytime service a rider can actually catch off the board.
+    const { feed, board } = fixture();
+    board.set("near", [
+      { stopId: "near", tripId: "tonight", routeId: "R1", seq: 1, time: NOW + 440 * 60, live: false },
+    ]);
+    board.set("far", []);
+    expect(nearbyDepartures(feed, board, origin, NOW, 5)).toEqual([]);
+  });
+
+  it("keeps a departure inside the horizon", () => {
+    const { feed, board } = fixture();
+    board.set("near", [
+      { stopId: "near", tripId: "soon", routeId: "R1", seq: 1, time: NOW + 80 * 60, live: false },
+    ]);
+    board.set("far", []);
+    const got = nearbyDepartures(feed, board, origin, NOW, 5);
+    expect(got).toHaveLength(1);
+    expect(got[0]!.departures[0]!.tripId).toBe("soon");
+  });
+
   it("returns empty when nothing runs at all", () => {
     const { feed } = fixture();
     expect(nearbyDepartures(feed, new Map(), origin, NOW, 5)).toEqual([]);
