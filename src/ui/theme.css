@@ -100,6 +100,14 @@ body {
   50%      { opacity: .35; transform: scale(.8); }
 }
 
+/* Sheet content changes should feel like a push, not a jump cut. Short and
+ * shallow: a long slide on every tap reads as sluggish, not polished. */
+@keyframes enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.enter { animation: enter .22s cubic-bezier(.32,.72,0,1) both; }
+
 button { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 
