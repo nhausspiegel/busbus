@@ -1,4 +1,4 @@
-import { planTrips, type PlanOptions } from "./plan";
+import { planTrips, rankAndTrim, type PlanOptions } from "./plan";
 import type { Itinerary, RideLeg } from "../data/types";
 
 /** Slack for stepping off one bus and boarding another at the same stop.
@@ -33,15 +33,25 @@ export function planWithTransfers(
       if (dep.time < readyAt) continue;
       const trip1 = feed.trips.get(dep.tripId);
       if (!trip1) continue;
-      const boardSched = trip1.stops.find((s) => s.seq === dep.seq);
+      // Same reasoning as plan.ts: join on stop id, since Passio's realtime
+      // sequence numbers do not match its own static feed.
+      const visits = trip1.stops.filter((s) => s.stopId === dep.stopId);
+      const boardSched = visits.find((s) => s.seq === dep.seq) ?? visits[0];
       if (!boardSched) continue;
 
       for (const mid of trip1.stops) {
-        if (mid.seq <= dep.seq) continue;
-        // Already covered by a direct ride; transferring here is pointless.
-        if (opts.walkToDestination.has(mid.stopId)) continue;
+        if (mid.seq <= boardSched.seq) continue;
+        // No membership test here. Skipping stops that happen to be walkable
+        // from the destination suppressed genuinely faster connections: those
+        // stops are merely the k NEAREST to the destination, and "nearest"
+        // can still be a twenty-minute walk. Whether a transfer is worth
+        // offering is decided by arrival time at the bottom of this function.
 
-        const arriveMid = dep.time + (mid.time - boardSched.time);
+        const rideSecs = mid.time - boardSched.time;
+        // Guard parity with plan.ts: without this a malformed feed row
+        // produces a transfer that arrives before it departs.
+        if (rideSecs <= 0) continue;
+        const arriveMid = dep.time + rideSecs;
         const midStop = feed.stops.get(mid.stopId);
         if (!midStop) continue;
 
@@ -87,10 +97,22 @@ export function planWithTransfers(
   const bestDirect = direct.find((d) => d.rides.length > 0);
   const worthwhile = twoLeg.filter((t) => !bestDirect || t.arriveTime < bestDirect.arriveTime);
 
-  return [...direct, ...worthwhile]
-    .sort((a, b) =>
-      a.arriveTime - b.arriveTime ||
-      a.transfers - b.transfers ||
-      a.totalWalkSeconds - b.totalWalkSeconds)
-    .slice(0, opts.maxResults ?? 5);
+  // One itinerary per route pair. Every intermediate stop on the first bus
+  // produced its own near-identical two-leg trip, and since transfers sort
+  // ahead of the direct ride they filled maxResults with five renderings of
+  // the same journey -- pushing out both the direct option and the walk.
+  const bestByPair = new Map<string, Itinerary>();
+  for (const t of worthwhile) {
+    const key = t.rides.map((r) => r.routeId).join(">");
+    const prev = bestByPair.get(key);
+    if (!prev || t.arriveTime < prev.arriveTime ||
+        (t.arriveTime === prev.arriveTime && t.totalWalkSeconds < prev.totalWalkSeconds)) {
+      bestByPair.set(key, t);
+    }
+  }
+
+  // Same horizon as planTrips: a transfer arriving tonight is not an
+  // alternative to walking there this morning, even though it beats every
+  // other RIDE.
+  return rankAndTrim([...direct, ...bestByPair.values()], opts.maxResults ?? 5);
 }

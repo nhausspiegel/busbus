@@ -17,13 +17,21 @@ export function parseAlerts(bytes: Uint8Array, now: number): Alert[] {
   for (const e of feed.entity) {
     const a = e.alert;
     if (!a) continue;
-    const period = a.activePeriod?.[0];
-    const start = period?.start != null ? Number(period.start) : null;
-    const end = period?.end != null ? Number(period.end) : null;
-    // Skip alerts that have expired or have not begun; showing a closure that
-    // ended last week trains riders to ignore the banner.
-    if (start !== null && start > now) continue;
-    if (end !== null && end < now) continue;
+    // Consider EVERY period, not just the first. A weekend suspension is
+    // published as two windows; judging it on period[0] alone hides a live
+    // closure on the Sunday because Saturday's window has ended.
+    const periods = a.activePeriod ?? [];
+    const active = periods.length === 0 || periods.some((p) => {
+      const s = p.start != null ? Number(p.start) : null;
+      const e = p.end != null ? Number(p.end) : null;
+      return (s === null || s <= now) && (e === null || e >= now);
+    });
+    // No stated period means an ongoing alert; treating that as inactive would
+    // hide a live service change.
+    if (!active) continue;
+    const first = periods[0];
+    const start = first?.start != null ? Number(first.start) : null;
+    const end = first?.end != null ? Number(first.end) : null;
     out.push({
       routeIds: (a.informedEntity ?? []).map((i) => i.routeId ?? "").filter(Boolean),
       header: a.headerText?.translation?.[0]?.text ?? "",

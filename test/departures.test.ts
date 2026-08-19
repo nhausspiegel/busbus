@@ -28,9 +28,21 @@ describe("scheduledDepartures", () => {
   });
 
   it("keeps post-midnight trips after the evening ones", () => {
-    // 25:11:00 must land 25h11m after midnight, not 1h11m.
-    const max = Math.max(...deps.map((d) => d.time));
-    expect(max - start).toBeGreaterThan(24 * 3600);
+    // 25:11:00 must land 25h11m after the service day starts, not 1h11m.
+    const sameDay = deps.filter((d) => d.time >= start);
+    expect(Math.max(...sameDay.map((d) => d.time)) - start).toBeGreaterThan(24 * 3600);
+  });
+
+  it("puts a post-midnight bus minutes away for a rider at 00:15, not a day", () => {
+    // The real failure this guards: GTFS encodes after-midnight service as
+    // 24:xx belonging to the PREVIOUS service day. Generating only the current
+    // day placed those buses ~24 hours out and left the board empty during
+    // exactly the hours the shuttle is the only way home.
+    const at0015 = new Date(2026, 7, 19, 0, 15, 0);
+    const nowS = Math.floor(at0015.getTime() / 1000);
+    const soon = scheduledDepartures(feed, serviceDayStart(at0015))
+      .filter((d) => d.time >= nowS && d.time < nowS + 3600);
+    expect(soon.length).toBeGreaterThan(0);
   });
 });
 

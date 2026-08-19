@@ -49,7 +49,10 @@ export function nearbyDepartures(
       // Prefer the live entry: a real prediction beats a timetable guess.
       if (d.live && !kept[dupIdx]!.live) kept[dupIdx] = d;
     }
-    const upcoming = kept.slice(0, perStop);
+    // Re-sort: replacing a scheduled entry with its live equivalent at line
+    // above swaps in a LATER time at an earlier index, which left the board
+    // showing the 4-minute bus above the 3-minute one.
+    const upcoming = kept.sort((a, b) => a.time - b.time).slice(0, perStop);
     if (upcoming.length === 0) continue;   // an empty stop row is noise, not information
     out.push({ stop, meters: haversineMeters(origin, stop), departures: upcoming });
   }

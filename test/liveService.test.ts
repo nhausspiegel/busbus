@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import GtfsRealtimeBindings from "gtfs-realtime-bindings";
 import { parseStaticFeed } from "../src/data/gtfs";
 import { parseTripUpdates } from "../src/data/realtime";
-import { serviceDayStart, scheduledDepartures, buildBoard } from "../src/data/departures";
+import { serviceDayStart, scheduledDepartures, buildBoard, groupLiveTrips } from "../src/data/departures";
 import { nearbyDepartures } from "../src/routing/nearby";
 import { planTrips } from "../src/routing/plan";
 
@@ -120,5 +120,69 @@ describe("with buses actually reporting", () => {
     const other = [...board.values()].flat().filter((d) => d.tripId !== trip.id);
     expect(other.length).toBeGreaterThan(50);
     expect(other.every((d) => !d.live)).toBe(true);
+  });
+});
+
+describe("against the real realtime fixture", () => {
+  const live = parseTripUpdates(new Uint8Array(readFileSync("test/fixtures/tripUpdates.pb")));
+  const liveTrips = groupLiveTrips(live);
+
+  it("the fixture actually contains live departures", () => {
+    expect(live.length).toBeGreaterThan(0);
+  });
+
+  it("plans a live ride from Passio's own realtime trip", () => {
+    // Passio's realtime and static feeds list DIFFERENT stops for the same
+    // trip id -- RT trip 899435 has 10 stops (seq 6-15), the static trip of
+    // that id has 4 (seq 1-4), overlapping in one. Planning a live ride from
+    // the static trip therefore produced nothing at all, silently, and every
+    // itinerary fell back to the timetable.
+    const trip = [...liveTrips.values()].find((t) => t.length >= 3);
+    expect(trip).toBeDefined();
+    const boardDep = trip![0]!;
+    const alightDep = trip![2]!;
+    const boardStop = feed.stops.get(boardDep.stopId);
+    const alightStop = feed.stops.get(alightDep.stopId);
+    expect(boardStop).toBeDefined();
+    expect(alightStop).toBeDefined();
+
+    const got = planTrips({
+      feed,
+      board: new Map([[boardDep.stopId, [boardDep]]]),
+      liveTrips,
+      origin: { lat: boardStop!.lat, lng: boardStop!.lng },
+      destination: { lat: alightStop!.lat, lng: alightStop!.lng },
+      walkFromOrigin: new Map([[boardStop!.id, 30]]),
+      walkToDestination: new Map([[alightStop!.id, 30]]),
+      now: boardDep.time - 300,
+    });
+
+    expect(got.length).toBeGreaterThan(0);
+    const ride = got[0]!.rides[0]!;
+    expect(got[0]!.allLive).toBe(true);
+    expect(ride.live).toBe(true);
+    expect(ride.boardStopId).toBe(boardDep.stopId);
+    // Arrival comes from the realtime prediction, not a timetable offset.
+    expect(ride.arriveTime).toBe(alightDep.time);
+    expect(ride.numStops).toBe(2);
+  });
+
+  it("never rides backwards along a realtime trip", () => {
+    const trip = [...liveTrips.values()].find((t) => t.length >= 3)!;
+    const boardDep = trip[2]!;
+    const earlier = trip[0]!;
+    const boardStop = feed.stops.get(boardDep.stopId)!;
+    const earlierStop = feed.stops.get(earlier.stopId)!;
+    const got = planTrips({
+      feed,
+      board: new Map([[boardDep.stopId, [boardDep]]]),
+      liveTrips,
+      origin: { lat: boardStop.lat, lng: boardStop.lng },
+      destination: { lat: earlierStop.lat, lng: earlierStop.lng },
+      walkFromOrigin: new Map([[boardStop.id, 30]]),
+      walkToDestination: new Map([[earlierStop.id, 30]]),
+      now: boardDep.time - 300,
+    });
+    expect(got).toEqual([]);
   });
 });
