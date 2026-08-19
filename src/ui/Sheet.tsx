@@ -12,6 +12,13 @@ const HEIGHT: Record<Detent, number> = { peek: 0.30, half: 0.55, full: 0.92 };
 const ORDER: Detent[] = ["peek", "half", "full"];
 const DRAG_THRESHOLD_PX = 5;
 
+/** How far a throw carries past the finger, in seconds of travel. Snapping to
+ *  wherever the finger happened to stop ignores intent: a fast flick upward
+ *  means "open it", even if it was released only slightly above the start. */
+const MOMENTUM_SECONDS = 0.16;
+/** Past the top detent the sheet still moves, but grudgingly. */
+const RUBBER = 0.35;
+
 export function Sheet({
   detent, onDetentChange, header, children,
 }: {
@@ -41,16 +48,32 @@ export function Sheet({
     const startY = e.clientY;
     const startH = HEIGHT[detent] * vh;
     let dragging = false;
+    // Velocity from the most recent movement only: an average over the whole
+    // gesture makes a flick at the end of a slow drag feel ignored.
+    let lastY = e.clientY;
+    let lastT = e.timeStamp;
+    let velocity = 0;   // px per second, positive = upward
 
     // Track the live height here rather than reading it back out of state, so
     // the release handler never has to call the parent from inside a state
     // updater -- updaters must be pure, and React warns loudly when they are not.
     let liveH = startH;
+    const maxH = HEIGHT.full * vh;
     const move = (ev: PointerEvent) => {
       const delta = startY - ev.clientY;
       if (!dragging && Math.abs(delta) < DRAG_THRESHOLD_PX) return;  // still a tap
       dragging = true;
-      liveH = Math.min(Math.max(startH + delta, 90), vh * 0.95);
+
+      const dt = (ev.timeStamp - lastT) / 1000;
+      if (dt > 0) velocity = (lastY - ev.clientY) / dt;
+      lastY = ev.clientY;
+      lastT = ev.timeStamp;
+
+      let next = startH + delta;
+      // Rubber-band past the top rather than stopping dead, so the sheet feels
+      // attached to the finger instead of hitting a wall.
+      if (next > maxH) next = maxH + (next - maxH) * RUBBER;
+      liveH = Math.min(Math.max(next, 90), maxH + 60);
       setDragPx(liveH);
     };
     const up = () => {
@@ -59,7 +82,9 @@ export function Sheet({
       window.removeEventListener("pointercancel", up);
       setDragPx(null);                    // always release, so it cannot stick
       if (!dragging) return;              // a tap: onClick cycles instead
-      const f = liveH / vh;
+      // Snap to where the throw was heading, not where the finger stopped.
+      const projected = liveH + velocity * MOMENTUM_SECONDS;
+      const f = projected / vh;
       let best = ORDER[0]!;
       for (const d of ORDER)
         if (Math.abs(HEIGHT[d] - f) < Math.abs(HEIGHT[best] - f)) best = d;
@@ -89,7 +114,7 @@ export function Sheet({
         borderTopLeftRadius: "var(--sheet-radius)", borderTopRightRadius: "var(--sheet-radius)",
         boxShadow: "var(--shadow)",
         display: "flex", flexDirection: "column",
-        transition: dragPx === null ? "height .28s cubic-bezier(.32,.72,0,1)" : "none",
+        transition: dragPx === null ? "height .34s cubic-bezier(.22,1,.28,1)" : "none",
         zIndex: 2,
       }}
     >

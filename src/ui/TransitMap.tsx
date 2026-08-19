@@ -4,7 +4,7 @@ import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { StaticFeed, LatLng } from "../data/types";
 import type { Bus } from "../data/vehicles";
-import { basemapStyle, BASEMAP_ATTRIBUTION } from "./mapStyle";
+import { basemapStyle } from "./mapStyle";
 
 // MapLibre's worker is a separate ES module that imports a sibling. Rollup
 // cannot see it (the path is built from a runtime string) and ?url would copy
@@ -86,8 +86,11 @@ export function TransitMap({
     });
     // Bottom-left: the top-right corner belongs to the locate button, and the
     // bottom-right sits under the sheet at every detent.
-    m.addControl(new maplibregl.AttributionControl(
-      { compact: true, customAttribution: BASEMAP_ATTRIBUTION }), "bottom-left");
+    // Top-left: the sheet covers the entire bottom edge at every detent, so
+    // attribution placed there is invisible -- and OpenStreetMap and
+    // OpenFreeMap both require it to be visible. Search moved into the sheet,
+    // which freed this corner.
+    m.addControl(new maplibregl.AttributionControl({ compact: true }), "top-left");
     m.on("load", () => setReady(true));
     // Read the handler from a ref so changing it never tears down the map.
     m.on("click", (e) => {
