@@ -20,9 +20,10 @@ export function Sheet({
   // freeze the sheet at its start height if pointerup were ever missed.
   const [dragPx, setDragPx] = useState<number | null>(null);
   const [vh, setVh] = useState(() => (typeof window === "undefined" ? 800 : window.innerHeight));
+  const [wide, setWide] = useState(() => (typeof window === "undefined" ? false : window.innerWidth >= 820));
 
   useEffect(() => {
-    const onResize = () => setVh(window.innerHeight);
+    const onResize = () => { setVh(window.innerHeight); setWide(window.innerWidth >= 820); };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
@@ -69,8 +70,15 @@ export function Sheet({
     <section
       aria-label="Departures"
       style={{
-        position: "absolute", left: 0, right: 0, bottom: 0,
-        height, maxHeight: "95vh",
+        // On a wide screen the sheet becomes a side panel: a full-width tray
+        // across a desktop monitor wastes the map and is hard to read across.
+        position: "absolute", left: 0, bottom: 0,
+        right: wide ? "auto" : 0,
+        width: wide ? 400 : "auto",
+        margin: wide ? 12 : 0,
+        height: wide ? `calc(100vh - 92px)` : height,
+        maxHeight: wide ? "none" : "95vh",
+        borderRadius: wide ? "var(--sheet-radius)" : undefined,
         background: "var(--raised)",
         borderTopLeftRadius: "var(--sheet-radius)", borderTopRightRadius: "var(--sheet-radius)",
         boxShadow: "var(--shadow)",
@@ -79,7 +87,8 @@ export function Sheet({
         zIndex: 2,
       }}
     >
-      <button
+      {/* The grabber only means something when the sheet can be resized. */}
+      {!wide && <button
         onPointerDown={onPointerDown}
         onClick={cycle}
         aria-label={`Resize panel, currently ${detent}`}
@@ -89,10 +98,10 @@ export function Sheet({
         }}
       >
         <div style={{ width: 38, height: 5, borderRadius: 3, background: "var(--hairline)", margin: "0 auto" }} />
-      </button>
+      </button>}
       <div style={{
         overflowY: "auto", overscrollBehavior: "contain", flex: 1,
-        padding: "0 16px calc(16px + var(--safe-b))",
+        padding: wide ? "16px 18px" : "0 16px calc(16px + var(--safe-b))",
       }}>
         {children}
       </div>

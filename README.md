@@ -1,7 +1,48 @@
 # busbus
 
-Brown University shuttle data — routes, stops, schedule, live vehicle positions —
-from Passio GO.
+Brown University shuttles: when the next one leaves, and how to get where you're going.
+
+**Live: https://nhausspiegel.github.io/busbus/**
+
+Open it, see the shuttles near you and when they leave. Tap the map or search a
+place to get routes ranked by **when you actually arrive** — walking time on
+both ends included, and walking offered as an option in its own right when it
+beats waiting. Tap any route to see its whole line.
+
+```bash
+npm install
+npm run dev          # http://localhost:5173
+npm test             # 72 tests, no network
+```
+
+Debug view (raw feed contents, unstyled) stays at `?debug=1`.
+
+## What it does
+
+| | |
+|---|---|
+| **Next departures** | Stops near you, soonest first, with live buses when any are running |
+| **Trip planning** | Ranked by earliest arrival, not shortest ride — a slow bus leaving now beats an express in fifteen minutes |
+| **Walking** | Offered as a real option and ranked alongside transit, because on a campus this size it often wins |
+| **Route pages** | Every stop in riding order with its next departure |
+| **Leave at** | Plan for later today or tomorrow, which is the only way to see daytime service at night |
+
+## The one design idea
+
+**A departure time shows how much it can be trusted.** Live times are solid
+with a pulse. Timetable-only times are drawn hollow.
+
+That is not decoration — it is this project's central data problem made
+visible. Brown's GTFS `calendar.txt` marks every route as running every day
+from 2025 to 2027, and Passio's `outdated` flag reports the Evening routes as
+active even while Brown publishes "No Summer Service" for them. Neither source
+can answer "is this bus really coming", so the app stops pretending it can and
+shows the difference instead. Walking always renders solid: your own legs are
+not a prediction.
+
+Route colours come from Passio and riders use them to tell routes apart, so the
+chrome stays quiet warm paper to keep those five colours unambiguous, leaving
+one accent for your own location.
 
 > ### ▶︎ Checking that the Passio feeds still work
 >

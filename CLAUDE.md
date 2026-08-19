@@ -2,11 +2,24 @@
 
 Brown University shuttle app.
 
-- **Routing engine: done.** `src/routing/plan.ts` ranks itineraries by earliest
-  arrival. Pure function, 44 tests, no network. `npx tsx scripts/plan-demo.ts`.
-- **UI: not built.** Objective 3 (Apple-Maps-style transit view) is next and
-  needs `superpowers:brainstorming` first.
+- **Routing engine: done.** `src/routing/plan.ts` ranks by earliest arrival and
+  offers walking as an option. Pure functions, no network, fully fixture-tested.
+  `npx tsx scripts/plan-demo.ts` (defaults to 129 Angell St <-> Trader Joe's,
+  both directions).
+- **UI: done.** `src/ui/App.tsx`. Deployed to GitHub Pages on push to main.
+  Debug view at `?debug=1`.
 - `busbus.py` is the live-verification tool, not app code. Don't import it.
+
+## Non-negotiable
+
+Never present a timetable time as if it were a live one. Brown's calendar.txt
+marks every route running daily through 2027 and Passio's `outdated` flag lies
+about seasonal suspensions, so "scheduled" is a genuinely weaker claim and the
+UI must keep showing it as one (hollow numerals, explicit wording).
+
+Valhalla and Nominatim are volunteer-run. One request per user action, never
+per keystroke; a throttled response has no CORS headers and shows up in the
+browser as a confusing CORS error rather than a rate limit.
 
 ## Data source
 

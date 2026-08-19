@@ -30,6 +30,9 @@ export function WhenControl({
           if (!Number.isFinite(h) || !Number.isFinite(m)) return onChange(null);
           const d = new Date();
           d.setHours(h!, m!, 0, 0);
+          // Picking 8:00 at 11pm means tomorrow morning, not this morning --
+          // otherwise the app silently plans a trip that already happened.
+          if (d.getTime() < Date.now()) d.setDate(d.getDate() + 1);
           onChange(d);
         }}
         style={{
@@ -38,6 +41,9 @@ export function WhenControl({
           borderRadius: 999, padding: "4px 10px", font: "13px Barlow, sans-serif",
         }}
       />
+      {at && at.toDateString() !== new Date().toDateString() && (
+        <span style={{ fontSize: 12, color: "var(--muted)" }}>tomorrow</span>
+      )}
     </div>
   );
 }
