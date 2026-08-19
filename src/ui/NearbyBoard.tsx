@@ -4,11 +4,12 @@ import type { StaticFeed } from "../data/types";
 import type { Bus } from "../data/vehicles";
 
 export function NearbyBoard({
-  feed, nearby, buses, now, loading, me, onRouteClick,
+  feed, nearby, buses, now, loading, me, onRouteClick, onLocate,
 }: {
   feed: StaticFeed | null; nearby: StopDepartures[]; buses: Bus[];
   now: number; loading: boolean; me: boolean;
   onRouteClick: (routeId: string) => void;
+  onLocate: () => void;
 }) {
   const anyLive = buses.length > 0;
   const anyScheduled = nearby.some((n) => n.departures.some((d) => !d.live));
@@ -17,10 +18,18 @@ export function NearbyBoard({
     <>
       <header style={{ marginBottom: 14 }}>
         <div className="eyebrow">
-          {me ? "Near you" : "Near campus"}
+          {me ? "Near you" : (
+            // Context, not a warning: a yellow box here pushed the actual
+            // departures below the fold at the peek detent.
+            <button onClick={onLocate} style={{
+              border: 0, background: "transparent", padding: 0, cursor: "pointer",
+              font: "inherit", letterSpacing: "inherit", textTransform: "inherit",
+              color: "var(--accent)",
+            }}>Near campus · use my location</button>
+          )}
           {anyLive
             ? <> · <span className="pulse" /> {buses.length} shuttle{buses.length === 1 ? "" : "s"} running</>
-            : " · no shuttles reporting"}
+            : (me ? " · no shuttles reporting" : "")}
         </div>
         <h1 className="display" style={{ fontSize: 30, margin: "4px 0 0" }}>Next departures</h1>
       </header>

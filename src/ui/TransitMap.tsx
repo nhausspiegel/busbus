@@ -39,7 +39,8 @@ export interface Overlay {
 }
 
 export function TransitMap({
-  feed, buses, me, destination, overlay, focus, highlightRouteId, activeRouteIds, onMapClick, onRouteClick,
+  feed, buses, me, destination, overlay, focus, highlightRouteId, activeRouteIds,
+  onMapClick, onRouteClick, onStopClick,
 }: {
   feed: StaticFeed | null;
   buses: Bus[];
@@ -53,6 +54,7 @@ export function TransitMap({
   activeRouteIds: Set<string>;
   onMapClick?: (p: LatLng) => void;
   onRouteClick?: (routeId: string) => void;
+  onStopClick?: (stopId: string) => void;
 }) {
   const div = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -63,6 +65,8 @@ export function TransitMap({
   clickCb.current = onMapClick;
   const routeCb = useRef(onRouteClick);
   routeCb.current = onRouteClick;
+  const stopCb = useRef(onStopClick);
+  stopCb.current = onStopClick;
   const [ready, setReady] = useState(false);
   const dark = usePrefersDark();
   const darkRef = useRef(dark);
@@ -84,7 +88,16 @@ export function TransitMap({
       { compact: true, customAttribution: BASEMAP_ATTRIBUTION }), "bottom-left");
     m.on("load", () => setReady(true));
     // Read the handler from a ref so changing it never tears down the map.
-    m.on("click", (e) => clickCb.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng }));
+    m.on("click", (e) => {
+      // Ask what was actually hit rather than relying on preventDefault:
+      // MapLibre dispatches the layer handler and this one independently, so
+      // a tap on a stop was opening the stop card AND dropping a pin.
+      const onStop = m.getLayer("stops-hit")
+        ? m.queryRenderedFeatures(e.point, { layers: ["stops-hit"] })
+        : [];
+      if (onStop.length > 0) return;
+      clickCb.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+    });
     // Without this MapLibre fails silently -- a dead worker just leaves a blank map.
     m.on("error", (ev) => console.error("MAPLIBRE:", ev.error?.message ?? ev));
     map.current = m;
@@ -120,7 +133,7 @@ export function TransitMap({
     if (!m.getSource("stops")) {
       m.addSource("stops", { type: "geojson", data: { type: "FeatureCollection",
         features: [...feed.stops.values()].map((s) => ({
-          type: "Feature" as const, properties: { name: s.name },
+          type: "Feature" as const, properties: { name: s.name, id: s.id },
           geometry: { type: "Point" as const, coordinates: [s.lng, s.lat] } })) } });
       m.addLayer({ id: "stops", type: "circle", source: "stops", minzoom: 13,
         paint: {
@@ -129,6 +142,17 @@ export function TransitMap({
           "circle-stroke-color": darkRef.current ? "#C6BAB1" : "#241C17",
           "circle-stroke-width": 1.5,
         } });
+      // A 5px dot is far too small to hit with a thumb, so an invisible
+      // wider circle takes the taps.
+      m.addLayer({ id: "stops-hit", type: "circle", source: "stops", minzoom: 13,
+        paint: { "circle-radius": 14, "circle-opacity": 0 } });
+      m.on("click", "stops-hit", (e: maplibregl.MapLayerMouseEvent) => {
+        const f = e.features?.[0];
+        const id = f?.properties?.["id"];
+        if (id) stopCb.current?.(String(id));
+      });
+      m.on("mouseenter", "stops-hit", () => { m.getCanvas().style.cursor = "pointer"; });
+      m.on("mouseleave", "stops-hit", () => { m.getCanvas().style.cursor = ""; });
     }
   }, [feed, ready, activeRouteIds]);
 
@@ -142,12 +166,24 @@ export function TransitMap({
       if (!mk) {
         const el = document.createElement("div");
         el.className = "display";
-        el.style.cssText =
-          `width:24px;height:24px;border-radius:50%;background:${color};color:#fff;` +
+        el.style.cssText = "position:relative;width:30px;height:30px";
+        // A heading arrow answers "is it coming towards me or leaving", which
+        // a plain dot cannot. Bearing is in the feed and was going unused.
+        const arrow = document.createElement("div");
+        arrow.style.cssText =
+          `position:absolute;inset:0;transform:rotate(${b.bearing}deg);transition:transform .4s ease`;
+        arrow.innerHTML =
+          `<svg width="30" height="30" viewBox="0 0 30 30" aria-hidden="true">` +
+          `<path d="M15 0.5 L19 6 L11 6 Z" fill="${color}"/></svg>`;
+        const dot = document.createElement("div");
+        dot.style.cssText =
+          `position:absolute;left:4px;top:4px;width:22px;height:22px;border-radius:50%;` +
+          `background:${color};color:#fff;` +
           `border:2.5px solid ${darkRef.current ? "#15110F" : "#FFFFFF"};` +
           `box-shadow:0 1px 5px rgb(0 0 0 / 45%);` +
-          `display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700`;
-        el.textContent = b.label;
+          `display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700`;
+        dot.textContent = b.label;
+        el.append(arrow, dot);
         el.title = `Bus ${b.label}`;
         el.style.cursor = "pointer";
         el.setAttribute("role", "button");
@@ -157,7 +193,11 @@ export function TransitMap({
         });
         mk = new maplibregl.Marker({ element: el }).setLngLat([b.lng, b.lat]).addTo(m);
         busMarks.current.set(b.id, mk);
-      } else mk.setLngLat([b.lng, b.lat]);
+      } else {
+        mk.setLngLat([b.lng, b.lat]);
+        const arrow = mk.getElement().firstElementChild as HTMLElement | null;
+        if (arrow) arrow.style.transform = `rotate(${b.bearing}deg)`;
+      }
     }
     for (const [id, mk] of busMarks.current)
       if (!buses.some((b) => b.id === id)) { mk.remove(); busMarks.current.delete(id); }

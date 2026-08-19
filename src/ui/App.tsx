@@ -7,6 +7,9 @@ import { ItineraryList, ItineraryDetail } from "./Itineraries";
 import { NearbyBoard } from "./NearbyBoard";
 import { RouteDetail } from "./RouteDetail";
 import { WhenControl } from "./WhenControl";
+import { StopCard } from "./StopCard";
+import { AlertBanner } from "./AlertBanner";
+import { fetchAlerts, type Alert } from "../data/alerts";
 import { fetchStaticFeed } from "../data/gtfs";
 import { fetchLiveDepartures } from "../data/realtime";
 import { fetchVehicles, type Bus } from "../data/vehicles";
@@ -24,7 +27,7 @@ const ACTIVE = new Set(["3302", "3469", "3470", "22427", "62487"]);
 const VEHICLE_POLL_MS = 10_000;
 const BOARD_POLL_MS = 30_000;
 
-type Mode = "nearby" | "results" | "detail" | "route";
+type Mode = "nearby" | "results" | "detail" | "route" | "stop";
 
 export default function App() {
   const [feed, setFeed] = useState<StaticFeed | null>(null);
@@ -41,10 +44,13 @@ export default function App() {
   const [overlay, setOverlay] = useState<Overlay | null>(null);
   const [planning, setPlanning] = useState(false);
   const [routeId, setRouteId] = useState<string | null>(null);
+  const [stopId, setStopId] = useState<string | null>(null);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   /** null means "leave now"; a Date plans for later today. */
   const [leaveAt, setLeaveAt] = useState<Date | null>(null);
 
-  const mode: Mode = routeId ? "route" : chosen ? "detail" : dest ? "results" : "nearby";
+  const mode: Mode =
+    stopId ? "stop" : routeId ? "route" : chosen ? "detail" : dest ? "results" : "nearby";
   const origin = me ?? CAMPUS;
 
   useEffect(() => {
@@ -68,6 +74,14 @@ export default function App() {
     const tick = () => fetchVehicles().then(setBuses).catch(() => setBuses([]));
     tick();
     const h = setInterval(tick, VEHICLE_POLL_MS);
+    return () => clearInterval(h);
+  }, []);
+
+  // Service alerts change rarely; once a minute is plenty and stays polite.
+  useEffect(() => {
+    const tick = () => fetchAlerts(Math.floor(Date.now() / 1000)).then(setAlerts).catch(() => {});
+    tick();
+    const h = setInterval(tick, 60_000);
     return () => clearInterval(h);
   }, []);
 
@@ -172,14 +186,9 @@ export default function App() {
         feed={feed} buses={buses} me={me}
         destination={dest?.at ?? null} overlay={overlay} focus={focus}
         highlightRouteId={routeId} activeRouteIds={ACTIVE}
-        onRouteClick={(r) => { setRouteId(r); setDetent("half"); }}
+        onRouteClick={(r) => { setRouteId(r); setStopId(null); setDetent("half"); }}
+        onStopClick={(id) => { setStopId(id); setRouteId(null); setDetent("half"); }}
         onMapClick={(p) => pickDestination(p, "Dropped pin")}
-      />
-
-      <SearchBar
-        destination={dest ? { label: dest.label } : null}
-        onPick={(p: Place) => pickDestination(p.at, p.name)}
-        onClear={() => { setDest(null); setChosen(null); setDetent("peek"); }}
       />
 
       <button onClick={locate} aria-label="Center on my location" style={{
@@ -195,20 +204,39 @@ export default function App() {
         </svg>
       </button>
 
-      <Sheet detent={detent} onDetentChange={setDetent}>
-        {notice && mode === "nearby" && (
-          <p style={{
-            background: "var(--warn-bg)", border: "1px solid var(--warn-line)", color: "var(--warn-ink)",
-            borderRadius: 8, padding: "8px 10px", fontSize: 13, margin: "0 0 12px",
-          }}>{notice}</p>
-        )}
+      <Sheet
+        detent={detent}
+        onDetentChange={setDetent}
+        header={
+          <SearchBar
+            destination={dest ? { label: dest.label } : null}
+            onPick={(p: Place) => pickDestination(p.at, p.name)}
+            onClear={() => { setDest(null); setChosen(null); setStopId(null); setDetent("peek"); }}
+          />
+        }
+      >
+        <AlertBanner alerts={alerts} feed={feed} />
 
         {mode === "nearby" && (
           <>
             <WhenControl at={leaveAt} onChange={setLeaveAt} />
             <NearbyBoard feed={feed} nearby={nearby} buses={buses} now={planNow}
-                         loading={!feed} me={!!me} onRouteClick={setRouteId} />
+                         loading={!feed} me={!!me} onRouteClick={setRouteId}
+                         onLocate={locate} />
           </>
+        )}
+
+        {mode === "stop" && feed?.stops.get(stopId!) && (
+          <StopCard
+            stop={feed.stops.get(stopId!)!} feed={feed} board={board} now={planNow}
+            onBack={() => setStopId(null)}
+            onRouteClick={(r) => { setStopId(null); setRouteId(r); }}
+            onSetDestination={() => {
+              const st = feed.stops.get(stopId!)!;
+              setStopId(null);
+              pickDestination({ lat: st.lat, lng: st.lng }, st.name);
+            }}
+          />
         )}
 
         {mode === "route" && (
