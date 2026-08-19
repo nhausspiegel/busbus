@@ -4,10 +4,11 @@ import type { StaticFeed } from "../data/types";
 import type { Bus } from "../data/vehicles";
 
 export function NearbyBoard({
-  feed, nearby, buses, now, loading, me,
+  feed, nearby, buses, now, loading, me, onRouteClick,
 }: {
   feed: StaticFeed | null; nearby: StopDepartures[]; buses: Bus[];
   now: number; loading: boolean; me: boolean;
+  onRouteClick: (routeId: string) => void;
 }) {
   const anyLive = buses.length > 0;
   const anyScheduled = nearby.some((n) => n.departures.some((d) => !d.live));
@@ -51,7 +52,12 @@ export function NearbyBoard({
               const route = feed?.routes.get(d.routeId);
               const mins = minsUntil(d.time, now);
               return (
-                <li key={`${d.tripId}-${d.time}`} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <li key={`${d.tripId}-${d.time}`}>
+                  <button onClick={() => onRouteClick(d.routeId)}
+                    aria-label={`See the ${route?.name ?? d.routeId} route`}
+                    style={{ display: "flex", alignItems: "center", gap: 10, width: "100%",
+                             border: 0, background: "transparent", padding: 0, cursor: "pointer",
+                             textAlign: "left" }}>
                   <span aria-hidden="true" style={{
                     width: 4, height: 22, borderRadius: 2, flexShrink: 0,
                     background: route?.color ?? "var(--muted)" }} />
@@ -68,6 +74,7 @@ export function NearbyBoard({
                   <span style={{ fontSize: 11, color: "var(--muted)", width: 18 }}>
                     {mins === 0 ? "" : "min"}
                   </span>
+                  </button>
                 </li>
               );
             })}

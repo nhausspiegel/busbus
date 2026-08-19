@@ -5,6 +5,8 @@ import { Sheet, type Detent } from "./Sheet";
 import { SearchBar } from "./SearchBar";
 import { ItineraryList, ItineraryDetail } from "./Itineraries";
 import { NearbyBoard } from "./NearbyBoard";
+import { RouteDetail } from "./RouteDetail";
+import { WhenControl } from "./WhenControl";
 import { fetchStaticFeed } from "../data/gtfs";
 import { fetchLiveDepartures } from "../data/realtime";
 import { fetchVehicles, type Bus } from "../data/vehicles";
@@ -22,7 +24,7 @@ const ACTIVE = new Set(["3302", "3469", "3470", "22427", "62487"]);
 const VEHICLE_POLL_MS = 10_000;
 const BOARD_POLL_MS = 30_000;
 
-type Mode = "nearby" | "results" | "detail";
+type Mode = "nearby" | "results" | "detail" | "route";
 
 export default function App() {
   const [feed, setFeed] = useState<StaticFeed | null>(null);
@@ -38,8 +40,11 @@ export default function App() {
   const [chosen, setChosen] = useState<Itinerary | null>(null);
   const [overlay, setOverlay] = useState<Overlay | null>(null);
   const [planning, setPlanning] = useState(false);
+  const [routeId, setRouteId] = useState<string | null>(null);
+  /** null means "leave now"; a Date plans for later today. */
+  const [leaveAt, setLeaveAt] = useState<Date | null>(null);
 
-  const mode: Mode = chosen ? "detail" : dest ? "results" : "nearby";
+  const mode: Mode = routeId ? "route" : chosen ? "detail" : dest ? "results" : "nearby";
   const origin = me ?? CAMPUS;
 
   useEffect(() => {
@@ -52,12 +57,12 @@ export default function App() {
     let cancelled = false;
     const load = async () => {
       const live = await fetchLiveDepartures().catch(() => []);
-      if (!cancelled) setBoard(buildBoard(live, scheduledDepartures(feed, serviceDayStart(new Date()))));
+      if (!cancelled) setBoard(buildBoard(live, scheduledDepartures(feed, serviceDayStart(leaveAt ?? new Date()))));
     };
     load();
     const h = setInterval(load, BOARD_POLL_MS);
     return () => { cancelled = true; clearInterval(h); };
-  }, [feed]);
+  }, [feed, leaveAt]);
 
   useEffect(() => {
     const tick = () => fetchVehicles().then(setBuses).catch(() => setBuses([]));
@@ -81,9 +86,12 @@ export default function App() {
   }, []);
   useEffect(() => { locate(); }, [locate]);
 
+  /** The clock the whole screen reasons from: real now, or the planned time. */
+  const planNow = leaveAt ? Math.floor(leaveAt.getTime() / 1000) : now;
+
   const nearby = useMemo(
-    () => (feed ? nearbyDepartures(feed, board, origin, now, 6) : []),
-    [feed, board, origin, now]);
+    () => (feed ? nearbyDepartures(feed, board, origin, planNow, 6) : []),
+    [feed, board, origin, planNow]);
 
   // Plan whenever the destination changes. Walking times come from Valhalla,
   // one matrix call per end rather than one call per candidate stop.
@@ -93,7 +101,7 @@ export default function App() {
     setPlanning(true);
     (async () => {
       try {
-        const found = await planBetween(feed, board, origin, dest.at);
+        const found = await planBetween(feed, board, origin, dest.at, leaveAt ?? new Date());
         if (!cancelled) setItineraries(found);
       } catch {
         if (!cancelled) {
@@ -105,7 +113,7 @@ export default function App() {
       }
     })();
     return () => { cancelled = true; };
-  }, [feed, dest, board, origin]);
+  }, [feed, dest, board, origin, leaveAt]);
 
   // Draw the chosen trip: real sidewalk geometry for the walks, and only the
   // ridden slice of each route shape.
@@ -162,7 +170,9 @@ export default function App() {
     <main style={{ position: "fixed", inset: 0, overflow: "hidden" }}>
       <TransitMap
         feed={feed} buses={buses} me={me}
-        destination={dest?.at ?? null} overlay={overlay} focus={focus} activeRouteIds={ACTIVE}
+        destination={dest?.at ?? null} overlay={overlay} focus={focus}
+        highlightRouteId={routeId} activeRouteIds={ACTIVE}
+        onRouteClick={(r) => { setRouteId(r); setDetent("half"); }}
         onMapClick={(p) => pickDestination(p, "Dropped pin")}
       />
 
@@ -194,7 +204,16 @@ export default function App() {
         )}
 
         {mode === "nearby" && (
-          <NearbyBoard feed={feed} nearby={nearby} buses={buses} now={now} loading={!feed} me={!!me} />
+          <>
+            <WhenControl at={leaveAt} onChange={setLeaveAt} />
+            <NearbyBoard feed={feed} nearby={nearby} buses={buses} now={planNow}
+                         loading={!feed} me={!!me} onRouteClick={setRouteId} />
+          </>
+        )}
+
+        {mode === "route" && (
+          <RouteDetail feed={feed} board={board} routeId={routeId!} buses={buses}
+                       now={planNow} onBack={() => setRouteId(null)} />
         )}
 
         {mode === "results" && (
@@ -211,14 +230,14 @@ export default function App() {
               </p>
             )}
             {itineraries && itineraries.length > 0 && (
-              <ItineraryList itineraries={itineraries} feed={feed} now={now}
+              <ItineraryList itineraries={itineraries} feed={feed} now={planNow}
                              onSelect={(i) => { setChosen(i); setDetent("half"); }} />
             )}
           </>
         )}
 
         {mode === "detail" && chosen && (
-          <ItineraryDetail itinerary={chosen} feed={feed} now={now} onBack={() => setChosen(null)} />
+          <ItineraryDetail itinerary={chosen} feed={feed} now={planNow} onBack={() => setChosen(null)} />
         )}
       </Sheet>
     </main>

@@ -38,7 +38,7 @@ export interface Overlay {
 }
 
 export function TransitMap({
-  feed, buses, me, destination, overlay, focus, activeRouteIds, onMapClick,
+  feed, buses, me, destination, overlay, focus, highlightRouteId, activeRouteIds, onMapClick, onRouteClick,
 }: {
   feed: StaticFeed | null;
   buses: Bus[];
@@ -47,8 +47,11 @@ export function TransitMap({
   overlay: Overlay | null;
   /** Points the map should frame, e.g. the chosen trip end to end. */
   focus: LatLng[] | null;
+  /** When set, this route is drawn at full strength and the rest recede. */
+  highlightRouteId: string | null;
   activeRouteIds: Set<string>;
   onMapClick?: (p: LatLng) => void;
+  onRouteClick?: (routeId: string) => void;
 }) {
   const div = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -57,6 +60,8 @@ export function TransitMap({
   const destMark = useRef<maplibregl.Marker | null>(null);
   const clickCb = useRef(onMapClick);
   clickCb.current = onMapClick;
+  const routeCb = useRef(onRouteClick);
+  routeCb.current = onRouteClick;
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -130,6 +135,12 @@ export function TransitMap({
           `display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700`;
         el.textContent = b.label;
         el.title = `Bus ${b.label}`;
+        el.style.cursor = "pointer";
+        el.setAttribute("role", "button");
+        el.addEventListener("click", (ev) => {
+          ev.stopPropagation();          // do not also drop a destination pin
+          routeCb.current?.(b.routeId);
+        });
         mk = new maplibregl.Marker({ element: el }).setLngLat([b.lng, b.lat]).addTo(m);
         busMarks.current.set(b.id, mk);
       } else mk.setLngLat([b.lng, b.lat]);
@@ -215,6 +226,22 @@ export function TransitMap({
         if (m.getLayer(`route-${r.id}`)) m.setPaintProperty(`route-${r.id}`, "line-opacity", 0.75);
     };
   }, [overlay, ready, feed]);
+
+  // Emphasise one route and let the others recede, so a route page reads as
+  // being about that route rather than about the whole network.
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready || !m.isStyleLoaded() || !feed) return;
+    try {
+      for (const r of feed.routes.values()) {
+        const id = `route-${r.id}`;
+        if (!m.getLayer(id)) continue;
+        const dim = highlightRouteId !== null && highlightRouteId !== r.id;
+        m.setPaintProperty(id, "line-opacity", dim ? 0.18 : 0.85);
+        m.setPaintProperty(id, "line-width", highlightRouteId === r.id ? 5.5 : 3.5);
+      }
+    } catch { /* style churn */ }
+  }, [highlightRouteId, ready, feed]);
 
   // Frame the chosen trip. Without this the rider has to hunt for their own
   // itinerary on the map, which defeats the point of drawing it.
