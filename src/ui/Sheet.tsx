@@ -13,8 +13,14 @@ const ORDER: Detent[] = ["peek", "half", "full"];
 const DRAG_THRESHOLD_PX = 5;
 
 export function Sheet({
-  detent, onDetentChange, children,
-}: { detent: Detent; onDetentChange: (d: Detent) => void; children: ReactNode }) {
+  detent, onDetentChange, header, children,
+}: {
+  detent: Detent; onDetentChange: (d: Detent) => void;
+  /** Pinned above the scroll area -- search belongs here, not floating over
+   *  the map, because the sheet is the surface the rider actually works in. */
+  header?: ReactNode;
+  children: ReactNode;
+}) {
   // null means "not dragging" -- the sheet follows `detent`. A number means the
   // finger is down and moving. Entering drag mode on pointerdown instead would
   // freeze the sheet at its start height if pointerup were ever missed.
@@ -99,6 +105,11 @@ export function Sheet({
       >
         <div style={{ width: 38, height: 5, borderRadius: 3, background: "var(--hairline)", margin: "0 auto" }} />
       </button>}
+      {header && (
+        <div style={{ padding: wide ? "0 18px 10px" : "0 16px 10px", flexShrink: 0 }}>
+          {header}
+        </div>
+      )}
       <div style={{
         overflowY: "auto", overscrollBehavior: "contain", flex: 1,
         padding: wide ? "16px 18px" : "0 16px calc(16px + var(--safe-b))",

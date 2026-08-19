@@ -4,6 +4,22 @@ import { GTFS_VEHICLES_URL, httpGetBytes } from "./passio";
 export interface Bus {
   id: string; label: string; routeId: string;
   lat: number; lng: number; bearing: number;
+  /** GTFS-RT occupancy enum name, or null when the bus does not report it. */
+  occupancy: string | null;
+}
+
+/** Plain-English occupancy. GTFS-RT's enum names are not rider-facing text. */
+export function occupancyLabel(o: string | null): string | null {
+  switch (o) {
+    case "EMPTY":
+    case "MANY_SEATS_AVAILABLE": return "Seats available";
+    case "FEW_SEATS_AVAILABLE": return "Filling up";
+    case "STANDING_ROOM_ONLY": return "Standing room";
+    case "CRUSHED_STANDING_ROOM_ONLY":
+    case "FULL": return "Very full";
+    case "NOT_ACCEPTING_PASSENGERS": return "Not boarding";
+    default: return null;
+  }
 }
 
 /** Live vehicle positions. Returns [] when nothing is running, which is a
@@ -20,6 +36,9 @@ export async function fetchVehicles(): Promise<Bus[]> {
       routeId: v.trip?.routeId ?? "",
       lat: v.position.latitude, lng: v.position.longitude,
       bearing: v.position.bearing ?? 0,
+      occupancy: v.occupancyStatus != null
+        ? (GtfsRealtimeBindings.transit_realtime.VehiclePosition.OccupancyStatus[v.occupancyStatus] ?? null)
+        : null,
     }];
   });
 }

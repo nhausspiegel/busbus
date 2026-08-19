@@ -1,7 +1,7 @@
 import { clock, minsUntil } from "./format";
 import { routeStops } from "../routing/routeDetail";
 import type { StaticFeed, DepartureBoard } from "../data/types";
-import type { Bus } from "../data/vehicles";
+import { occupancyLabel, type Bus } from "../data/vehicles";
 
 export function RouteDetail({
   feed, board, routeId, buses, now, onBack,
@@ -33,6 +33,25 @@ export function RouteDetail({
           </div>
         </div>
       </div>
+
+      {onRoute.length > 0 && (
+        <ul style={{ listStyle: "none", display: "flex", gap: 8, flexWrap: "wrap",
+                     margin: "12px 0 0", padding: 0 }}>
+          {onRoute.map((b) => (
+            <li key={b.id} style={{
+              display: "flex", alignItems: "center", gap: 7, fontSize: 13,
+              background: "var(--paper)", border: "1px solid var(--hairline)",
+              borderRadius: 999, padding: "4px 11px",
+            }}>
+              <span className="pulse" aria-hidden="true" />
+              Bus {b.label}
+              {occupancyLabel(b.occupancy) && (
+                <span style={{ color: "var(--muted)" }}>· {occupancyLabel(b.occupancy)}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
 
       {onRoute.length === 0 && (
         <p style={{ margin: "12px 0 0", fontSize: 13, color: "var(--muted)" }}>
