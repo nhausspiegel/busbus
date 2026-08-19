@@ -71,11 +71,6 @@ export default function DebugMap() {
   const [its, setIts] = useState<Itinerary[] | null>(null);
   const [status, setStatus] = useState("loading GTFS…");
   const [styleReady, setStyleReady] = useState(false);
-  // Routes with a vehicle actually reporting. Brown's GTFS calendar marks every
-  // route as running every day for three years, and Passio's `outdated` flag
-  // says the Evening routes are active even in summer when they are not -- so
-  // live activity is the only trustworthy signal that a route really runs.
-  const liveRoutes = new Set(buses.map((b) => b.routeId).filter(Boolean));
 
   // map init
   useEffect(() => {
@@ -219,6 +214,19 @@ export default function DebugMap() {
         </div>
         <div style={{ marginBottom: 8 }}>{buses.length} bus(es) live</div>
 
+        {its && its.length > 0 && its.some((i) => !i.allLive) && (
+          <div style={{
+            background: "#fff4e5", border: "1px solid #f0b775", borderRadius: 6,
+            padding: "6px 8px", marginBottom: 8, color: "#7a4a00",
+          }}>
+            <strong>Times below are from the timetable, not live buses.</strong>{" "}
+            Brown&rsquo;s GTFS feed marks every route as running every day for three
+            years, and Passio reports the Evening routes as active even when Brown
+            publishes &ldquo;No Summer Service&rdquo; for them. Treat any route with
+            no bus reporting as possibly not running at all.
+          </div>
+        )}
+
         {its?.map((it, n) => (
           <div key={n} style={{ borderTop: "1px solid #ddd", paddingTop: 8, marginTop: 8 }}>
             <div><strong>arrive {clock(it.arriveTime)}</strong> · leave by {clock(it.departTime)}</div>
@@ -230,11 +238,7 @@ export default function DebugMap() {
                   background: feed?.routes.get(r.routeId)?.color ?? "#888",
                 }} />
                 {feed?.routes.get(r.routeId)?.name ?? r.routeId}{" "}
-                {r.live
-                  ? "· live"
-                  : liveRoutes.size > 0 && !liveRoutes.has(r.routeId)
-                    ? "· TIMETABLE ONLY — no bus reporting on this route"
-                    : "· scheduled"}
+                {r.live ? "· live" : "· timetable only, unconfirmed"}
                 <div style={{ color: "#555", marginLeft: 16 }}>
                   {clock(r.departTime)} {feed?.stops.get(r.boardStopId)?.name}<br />
                   {clock(r.arriveTime)} {feed?.stops.get(r.alightStopId)?.name}
