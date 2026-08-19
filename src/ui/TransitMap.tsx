@@ -69,14 +69,17 @@ export function TransitMap({
   routeCb.current = onRouteClick;
   const stopCb = useRef(onStopClick);
   stopCb.current = onStopClick;
-  const [ready, setReady] = useState(false);
+  // A counter, not a boolean: setStyle falls back to a full reload when its
+  // diff is not applicable, which drops every layer we added. Incrementing on
+  // each styledata lets the drawing effects re-run and rebuild them.
+  const [ready, setReady] = useState(0);
   const dark = usePrefersDark();
   const darkRef = useRef(dark);
   darkRef.current = dark;
 
   useEffect(() => {
     if (!div.current || map.current) return;
-    setReady(false);   // this flag describes THIS map; never inherit a previous one's
+    setReady(0);   // this counter describes THIS map; never inherit a previous one's
     const m = new maplibregl.Map({
       container: div.current, style: basemapStyle(darkRef.current),
       center: [CAMPUS.lng, CAMPUS.lat], zoom: 14.2, attributionControl: false,
@@ -91,7 +94,7 @@ export function TransitMap({
     // OpenFreeMap both require it to be visible. Search moved into the sheet,
     // which freed this corner.
     m.addControl(new maplibregl.AttributionControl({ compact: true }), "top-left");
-    m.on("load", () => setReady(true));
+    m.on("load", () => setReady((n) => n + 1));
     // Read the handler from a ref so changing it never tears down the map.
     m.on("click", (e) => {
       // Ask what was actually hit rather than relying on preventDefault:
@@ -108,7 +111,16 @@ export function TransitMap({
     map.current = m;
     const ro = new ResizeObserver(() => m.resize());
     ro.observe(div.current);
-    return () => { ro.disconnect(); m.remove(); map.current = null; setReady(false); };
+    return () => {
+      ro.disconnect();
+      // Markers hold a reference to the removed map; leaving them populated
+      // makes every bus silently invisible after a StrictMode double-mount.
+      for (const mk of busMarks.current.values()) mk.remove();
+      busMarks.current.clear();
+      meMark.current?.remove(); meMark.current = null;
+      destMark.current?.remove(); destMark.current = null;
+      m.remove(); map.current = null; setReady(0);
+    };
   }, []);
 
   // route lines + stops
@@ -178,9 +190,13 @@ export function TransitMap({
       const color = feed?.routes.get(b.routeId)?.color ?? "#241C17";
       let mk = busMarks.current.get(b.id);
       if (!mk) {
-        const el = document.createElement("div");
+        // A real button: role="button" on a div is announced but cannot be
+        // reached or activated by keyboard or assistive tech.
+        const el = document.createElement("button");
+        el.type = "button";
         el.className = "display";
-        el.style.cssText = "position:relative;width:30px;height:30px";
+        el.style.cssText =
+          "position:relative;width:30px;height:30px;padding:0;border:0;background:none;cursor:pointer";
         // A heading arrow answers "is it coming towards me or leaving", which
         // a plain dot cannot. Bearing is in the feed and was going unused.
         const arrow = document.createElement("div");
@@ -199,8 +215,8 @@ export function TransitMap({
         dot.textContent = b.label;
         el.append(arrow, dot);
         el.title = `Bus ${b.label}`;
-        el.style.cursor = "pointer";
-        el.setAttribute("role", "button");
+        el.setAttribute("aria-label",
+          `Bus ${b.label} on ${feed?.routes.get(b.routeId)?.name ?? "route"}. See route.`);
         el.addEventListener("click", (ev) => {
           ev.stopPropagation();          // do not also drop a destination pin
           routeCb.current?.(b.routeId);
@@ -276,9 +292,6 @@ export function TransitMap({
         layout: { "line-cap": "round", "line-join": "round" }, paint });
     };
 
-    // Dim the network so the chosen trip reads as the answer, not one line of five.
-    for (const r of feed?.routes.values() ?? [])
-      if (m.getLayer(`route-${r.id}`)) m.setPaintProperty(`route-${r.id}`, "line-opacity", 0.25);
 
     try {
       line("itin-ride-case", overlay.rides.map((r) => r.path),
@@ -290,10 +303,6 @@ export function TransitMap({
           "line-width": 4, "line-dasharray": [0.4, 1.8] });
     } catch { /* style churn; the next render redraws */ }
 
-    return () => {
-      for (const r of feed?.routes.values() ?? [])
-        if (m.getLayer(`route-${r.id}`)) m.setPaintProperty(`route-${r.id}`, "line-opacity", 0.75);
-    };
   }, [overlay, ready, feed]);
 
   // Swap the basemap when the system theme flips. setStyle wipes our layers,
@@ -301,9 +310,8 @@ export function TransitMap({
   useEffect(() => {
     const m = map.current;
     if (!m || !ready) return;
-    setReady(false);
     m.setStyle(basemapStyle(dark));
-    m.once("styledata", () => setReady(true));
+    m.once("styledata", () => setReady((n) => n + 1));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dark]);
 
@@ -330,12 +338,18 @@ export function TransitMap({
     const m = map.current;
     if (!m || !ready || !m.isStyleLoaded() || !feed) return;
     try {
+      // Single owner of route emphasis. Two effects setting line-opacity with
+      // different resting values fought each other: selecting an itinerary
+      // dimmed everything to 0.25, then tapping a bus reset it to 0.85 while
+      // the trip was still drawn, so the answer stopped reading as the answer.
+      const tripDrawn = overlay !== null;
       for (const r of feed.routes.values()) {
         const id = `route-${r.id}`;
         if (!m.getLayer(id)) continue;
-        const dim = highlightRouteId !== null && highlightRouteId !== r.id;
-        m.setPaintProperty(id, "line-opacity", dim ? 0.18 : 0.85);
-        m.setPaintProperty(id, "line-width", highlightRouteId === r.id ? 5.5 : 3.5);
+        const highlighted = highlightRouteId === r.id;
+        const recede = (highlightRouteId !== null && !highlighted) || (tripDrawn && !highlighted);
+        m.setPaintProperty(id, "line-opacity", recede ? 0.18 : 0.85);
+        m.setPaintProperty(id, "line-width", highlighted ? 5.5 : 3.5);
       }
       if (m.getLayer("stops-active")) {
         const ids = highlightRouteId ? (routeStopIds ?? []) : [];
@@ -344,7 +358,7 @@ export function TransitMap({
           (highlightRouteId && feed.routes.get(highlightRouteId)?.color) || "#6F625A");
       }
     } catch { /* style churn */ }
-  }, [highlightRouteId, routeStopIds, ready, feed]);
+  }, [highlightRouteId, routeStopIds, overlay, ready, feed]);
 
   // Frame the chosen trip. Without this the rider has to hunt for their own
   // itinerary on the map, which defeats the point of drawing it.

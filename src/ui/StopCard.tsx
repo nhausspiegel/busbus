@@ -43,7 +43,9 @@ export function StopCard({
           return (
             <li key={`${d.tripId}-${d.time}`}>
               <button onClick={() => onRouteClick(d.routeId)}
-                aria-label={`See the ${route?.name ?? d.routeId} route`}
+                aria-label={`${route?.name ?? d.routeId}, ${
+                  mins === 0 ? "departing now" : `in ${mins} minutes`
+                }, ${d.live ? "live" : "scheduled"}. See route.`}
                 style={{ display: "flex", alignItems: "center", gap: 10, width: "100%",
                          border: 0, background: "transparent", padding: 0, cursor: "pointer",
                          textAlign: "left" }}>

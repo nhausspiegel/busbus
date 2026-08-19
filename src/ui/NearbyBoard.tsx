@@ -88,7 +88,12 @@ export function NearbyBoard({
               return (
                 <li key={`${d.tripId}-${d.time}`}>
                   <button onClick={() => onRouteClick(d.routeId)}
-                    aria-label={`See the ${route?.name ?? d.routeId} route`}
+                    // The old label overrode the button's contents, so a screen
+                    // reader announced only "See the Daytime Express route" and
+                    // never the minutes, "now", or whether it was live.
+                    aria-label={`${route?.name ?? d.routeId}, ${
+                      mins === 0 ? "departing now" : `in ${mins} minutes`
+                    }, ${d.live ? "live" : "scheduled"}. See route.`}
                     style={{ display: "flex", alignItems: "center", gap: 10, width: "100%",
                              border: 0, background: "transparent", padding: 0, cursor: "pointer",
                              textAlign: "left" }}>

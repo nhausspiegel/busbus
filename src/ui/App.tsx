@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./theme.css";
 import { TransitMap, CAMPUS, type Overlay } from "./TransitMap";
 import { Sheet, type Detent } from "./Sheet";
@@ -7,6 +7,7 @@ import { ItineraryList, ItineraryDetail } from "./Itineraries";
 import { NearbyBoard } from "./NearbyBoard";
 import { RouteDetail } from "./RouteDetail";
 import { WhenControl } from "./WhenControl";
+import { resolveMode } from "./mode";
 import { StopCard } from "./StopCard";
 import { AlertBanner } from "./AlertBanner";
 import { fetchAlerts, type Alert } from "../data/alerts";
@@ -28,17 +29,25 @@ const ACTIVE = new Set(["3302", "3469", "3470", "22427", "62487"]);
 const VEHICLE_POLL_MS = 10_000;
 const BOARD_POLL_MS = 30_000;
 
-type Mode = "nearby" | "results" | "detail" | "route" | "stop";
-
 export default function App() {
   const [feed, setFeed] = useState<StaticFeed | null>(null);
   const [board, setBoard] = useState<DepartureBoard>(new Map());
   const [liveTrips, setLiveTrips] = useState<Map<string, Departure[]>>(new Map());
+  // The board and live trips are replaced by fresh Maps every poll. Reading
+  // them from refs keeps them out of the planning effect's deps: with them in,
+  // the trip was re-planned every 30 seconds with no user action, hitting
+  // Valhalla each time -- and a throttled response (no CORS headers) landed in
+  // the catch and told a rider staring at a valid list "No shuttle route".
+  const boardRef = useRef(board);
+  const liveTripsRef = useRef(liveTrips);
+  boardRef.current = board;
+  liveTripsRef.current = liveTrips;
   const [buses, setBuses] = useState<Bus[]>([]);
   const [me, setMe] = useState<LatLng | null>(null);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const [detent, setDetent] = useState<Detent>("peek");
   const [notice, setNotice] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const [dest, setDest] = useState<{ at: LatLng; label: string } | null>(null);
   const [itineraries, setItineraries] = useState<Itinerary[] | null>(null);
@@ -51,14 +60,14 @@ export default function App() {
   /** null means "leave now"; a Date plans for later today. */
   const [leaveAt, setLeaveAt] = useState<Date | null>(null);
 
-  const mode: Mode =
-    stopId ? "stop" : routeId ? "route" : chosen ? "detail" : dest ? "results" : "nearby";
+  const mode = resolveMode({ stopId, routeId, chosen: chosen !== null, dest: dest !== null });
   const origin = me ?? CAMPUS;
 
   useEffect(() => {
-    fetchStaticFeed().then(setFeed).catch(() =>
-      setNotice("Couldn't load the shuttle timetable. Check your connection and reload."));
-  }, []);
+    fetchStaticFeed()
+      .then((f) => { setFeed(f); setNotice(null); })
+      .catch(() => setNotice("Couldn't load the shuttle timetable. Check your connection."));
+  }, [refreshKey]);
 
   useEffect(() => {
     if (!feed) return;
@@ -72,10 +81,14 @@ export default function App() {
     load();
     const h = setInterval(load, BOARD_POLL_MS);
     return () => { cancelled = true; clearInterval(h); };
-  }, [feed, leaveAt]);
+  }, [feed, leaveAt, refreshKey]);
 
   useEffect(() => {
-    const tick = () => fetchVehicles().then(setBuses).catch(() => setBuses([]));
+    // Keep the last known buses when a poll fails. Clearing them told riders
+    // "no shuttles reporting" and "times below come from the timetable only"
+    // because one request dropped -- overstating what the data says, in the
+    // opposite direction from the mistake this project is built to avoid.
+    const tick = () => fetchVehicles().then(setBuses).catch(() => {});
     tick();
     const h = setInterval(tick, VEHICLE_POLL_MS);
     return () => clearInterval(h);
@@ -92,6 +105,20 @@ export default function App() {
   useEffect(() => {
     const h = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 15_000);
     return () => clearInterval(h);
+  }, []);
+
+  // Background timers are throttled and, on iOS Safari, suspended outright.
+  // Unlocking your phone at the stop otherwise shows a countdown from up to
+  // half a minute ago, still pulsing as though it were live.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      setNow(Math.floor(Date.now() / 1000));
+      fetchVehicles().then(setBuses).catch(() => {});
+      setRefreshKey((k) => k + 1);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, []);
 
   const locate = useCallback(() => {
@@ -119,7 +146,7 @@ export default function App() {
     setPlanning(true);
     (async () => {
       try {
-        const found = await planBetween(feed, board, origin, dest.at, leaveAt ?? new Date(), liveTrips);
+        const found = await planBetween(feed, boardRef.current, origin, dest.at, leaveAt ?? new Date(), liveTripsRef.current);
         if (!cancelled) setItineraries(found);
       } catch {
         if (!cancelled) {
@@ -131,7 +158,7 @@ export default function App() {
       }
     })();
     return () => { cancelled = true; };
-  }, [feed, dest, board, origin, leaveAt, liveTrips]);
+  }, [feed, dest, origin, leaveAt]);
 
   // Draw the chosen trip: real sidewalk geometry for the walks, and only the
   // ridden slice of each route shape.
@@ -184,9 +211,15 @@ export default function App() {
     return routeStops(feed, board, routeId, planNow).map((r) => r.stop.id);
   }, [feed, board, routeId, planNow]);
 
+  /** `mode` is derived by precedence stop > route > chosen > dest, so setting a
+   *  destination while a stop card or route page is open left the old view on
+   *  screen with the itineraries reachable only via Back. Every entry point
+   *  into a mode clears the ones above it. */
   const pickDestination = (at: LatLng, label: string) => {
-    setDest({ at, label });
+    setStopId(null);
+    setRouteId(null);
     setChosen(null);
+    setDest({ at, label });
     setDetent("half");
   };
 
@@ -221,14 +254,52 @@ export default function App() {
           <SearchBar
             destination={dest ? { label: dest.label } : null}
             onPick={(p: Place) => pickDestination(p.at, p.name)}
-            onClear={() => { setDest(null); setChosen(null); setStopId(null); setDetent("peek"); }}
+            onClear={() => {
+            setDest(null); setChosen(null); setStopId(null); setRouteId(null);
+            setDetent("peek");
+          }}
           />
         }
       >
         <AlertBanner alerts={alerts} feed={feed} />
 
+        {/* Was set in four places and rendered in none, so a failed feed load
+            shimmered a skeleton forever with no explanation and no retry. */}
+        {notice && (
+          <div role="status" style={{
+            background: "var(--warn-bg)", border: "1px solid var(--warn-line)",
+            color: "var(--warn-ink)", borderRadius: 10, padding: "9px 11px",
+            marginBottom: 12, fontSize: 13, display: "flex", gap: 10, alignItems: "center",
+          }}>
+            <span style={{ flex: 1 }}>{notice}</span>
+            <button onClick={() => { setNotice(null); setRefreshKey((k) => k + 1); }}
+              style={{ border: 0, background: "transparent", color: "inherit",
+                       fontWeight: 600, cursor: "pointer", flexShrink: 0 }}>
+              Retry
+            </button>
+          </div>
+        )}
+
         {/* Keyed on mode so switching views animates in rather than jump-cutting. */}
         <div key={mode} className="enter">
+
+        {/* planNow drives the countdowns on every screen, but the control that
+            sets it only lives on the nearby board -- so results and route pages
+            silently showed frozen times against a clock that was not now. */}
+        {leaveAt && mode !== "nearby" && (
+          <button onClick={() => setLeaveAt(null)} style={{
+            display: "flex", alignItems: "center", gap: 8, width: "100%",
+            border: "1px solid var(--hairline)", background: "var(--paper)",
+            borderRadius: 9, padding: "7px 10px", marginBottom: 12,
+            fontSize: 13, cursor: "pointer", textAlign: "left", color: "var(--ink)",
+          }}>
+            <span style={{ flex: 1 }}>
+              Times shown for {leaveAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+              {leaveAt.toDateString() !== new Date().toDateString() ? " tomorrow" : ""}
+            </span>
+            <span style={{ color: "var(--accent)", fontWeight: 600 }}>Now</span>
+          </button>
+        )}
 
         {mode === "nearby" && (
           <>
