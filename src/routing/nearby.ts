@@ -4,6 +4,13 @@ import type { StaticFeed, DepartureBoard, Departure, Stop, LatLng } from "../dat
 /** Two departures on one route closer together than this are the same bus. */
 const SAME_BUS_SECONDS = 90;
 
+/** How far ahead a "next departures" board looks.
+ *
+ *  Brown's routes run in shifts, so at 9am the Evening routes' next departure
+ *  is tonight. Listing "Evening CW - 440 min" is correct data presented
+ *  uselessly: it crowds out the daytime service a rider can actually catch. */
+const HORIZON_SECONDS = 90 * 60;
+
 export interface StopDepartures {
   stop: Stop;
   meters: number;         // straight-line, for a rough "x min walk" label
@@ -22,6 +29,7 @@ export function nearbyDepartures(
   now: number,
   maxStops: number,
   perStop = 3,
+  horizonSeconds = HORIZON_SECONDS,
 ): StopDepartures[] {
   const out: StopDepartures[] = [];
   for (const stop of feed.stops.values()) {
@@ -31,7 +39,10 @@ export function nearbyDepartures(
     // Bucketing by clock minute is not enough -- two entries 20s apart can
     // straddle a minute boundary -- so collapse by proximity instead.
     const kept: Departure[] = [];
-    for (const d of (board.get(stop.id) ?? []).filter((x) => x.time >= now).sort((a, b) => a.time - b.time)) {
+    const window = (board.get(stop.id) ?? [])
+      .filter((x) => x.time >= now && x.time <= now + horizonSeconds)
+      .sort((a, b) => a.time - b.time);
+    for (const d of window) {
       const dupIdx = kept.findIndex(
         (k) => k.routeId === d.routeId && Math.abs(k.time - d.time) < SAME_BUS_SECONDS);
       if (dupIdx === -1) { kept.push(d); continue; }
