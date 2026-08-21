@@ -162,6 +162,20 @@ describe("TransitMap", () => {
     expect(Math.abs(lat - 41.8228) + Math.abs(lng - -71.4002)).toBeGreaterThan(1e-6);
   });
 
+  it("gives every route its own lane, centred on zero", () => {
+    // Two routes down one street collapse into one line when zoomed out, where
+    // the ~7m their shapes already differ by is under a pixel. The lane is
+    // spent by line-offset, in PIXELS, and faded out by z16 where the shapes
+    // separate on their own -- so no coordinate moves and a route running
+    // alone at street zoom sits exactly on its street.
+    mount();
+    map.fire("load");
+    const lanes = (map.getSource("routes") as { data: GeoJSON.FeatureCollection })
+      .data.features.map((f) => f.properties?.["lane"] as number);
+    expect(new Set(lanes).size).toBe(lanes.length);          // all distinct
+    expect(lanes.reduce((a, b) => a + b, 0)).toBeCloseTo(0);  // centred
+  });
+
   it("deselects when the map is tapped, so Back is not the only way out", () => {
     // Selecting a route and then having to find a small Back button to leave it
     // is the wrong way round: Apple Maps drops the selection when you tap the
