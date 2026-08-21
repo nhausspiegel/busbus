@@ -134,18 +134,27 @@ export function TransitMap({
     const src = m.getSource("routes") as maplibregl.GeoJSONSource | undefined;
     if (src) { src.setData(data); return; }
     m.addSource("routes", { type: "geojson", data });
+    // Corner rounding lives HERE, in screen space, not in the coordinates.
+    // `line-join: round` rounds each joint by half the stroke width, in
+    // PIXELS, identically at every zoom -- the same thing CSS and SVG call
+    // stroke-linejoin. Rounding the geometry instead moves the route off its
+    // street to fake the effect, and a radius in metres is ~22px of
+    // corner-cutting at z18 and 1.6px at z14: wrong in both directions.
+    //
+    // So the radius is set by the stroke width, and this is why the line is as
+    // thick as it is: Apple's transit lines are heavy for exactly this reason.
     m.addLayer({
       id: "routes-case", type: "line", source: "routes",
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
         "line-color": darkRef.current ? "#15110F" : "#FFFFFF",
-        "line-width": 7.5, "line-opacity": 0.9,
+        "line-width": 10, "line-opacity": 0.9,
       },
     });
     m.addLayer({
       id: "routes-line", type: "line", source: "routes",
       layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": ["get", "color"], "line-width": 4 },
+      paint: { "line-color": ["get", "color"], "line-width": 6 },
     });
   }
 
@@ -543,8 +552,8 @@ export function TransitMap({
           ? ["case", ["==", ["get", "routeId"], focus], 0.9, 0.16]
           : 0.85);
         m.setPaintProperty("routes-line", "line-width", focus
-          ? ["case", ["==", ["get", "routeId"], focus], 6, 3]
-          : 4);
+          ? ["case", ["==", ["get", "routeId"], focus], 8, 4]
+          : 6);
         m.setPaintProperty("routes-case", "line-opacity", focus ? 0.35 : 0.9);
       }
       if (m.getLayer("stops-active")) {
