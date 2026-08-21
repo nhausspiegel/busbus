@@ -186,6 +186,10 @@ export function TransitMap({
     });
     // Without this MapLibre fails silently -- a dead worker just leaves a blank map.
     m.on("error", (ev) => console.error("MAPLIBRE:", ev.error?.message ?? ev));
+    // Deliberate: a live map handle is the only practical way to measure what
+    // is actually rendered in a deployed build. Eyeballing screenshots has
+    // twice led to declaring a map bug fixed when it was not.
+    (globalThis as unknown as { __map: maplibregl.Map }).__map = m;
     map.current = m;
     const ro = new ResizeObserver(() => m.resize());
     ro.observe(div.current);
@@ -335,8 +339,11 @@ export function TransitMap({
           ev.stopPropagation();          // do not also drop a destination pin
           routeCb.current?.(b.routeId);
         });
-        // offset shifts the element so the DOT's centre sits on the coordinate.
-        mk = new maplibregl.Marker({ element: el, offset: [0, 4] })
+        // No offset: the dot is already centred in the 30x30 box (left 4 +
+        // radius 11 = 15 = box centre), so the default centre anchor puts it
+        // exactly on the coordinate. The offset I added "to centre the dot"
+        // pushed every bus 4px off its line.
+        mk = new maplibregl.Marker({ element: el })
           .setLngLat([at.lng, at.lat]).addTo(m);
         busMarks.current.set(b.id, mk);
       } else {

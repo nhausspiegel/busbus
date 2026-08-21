@@ -12,6 +12,10 @@ export interface PlanOptions {
   /** stopId -> walking seconds to the destination. */
   walkToDestination: Map<string, number>;
   now: number;            // epoch seconds
+  /** Deadline, epoch seconds. When set the question inverts: only itineraries
+   *  arriving at or before it are offered, and the best one is the one the
+   *  rider can leave for LAST. `now` remains the earliest-departure floor. */
+  arriveBy?: number;
   /** Each live trip's own stop sequence, from groupLiveTrips(). A live ride is
    *  planned entirely from these, never from the static trip. */
   liveTrips?: Map<string, Departure[]>;
@@ -30,15 +34,24 @@ const MAX_REASONABLE_WALK_SECONDS = 45 * 60;
  *  beside "arrive 10:16am" is not a choice anyone is making. */
 export const MAX_LATER_THAN_BEST_SECONDS = 90 * 60;
 
-/** Drop options arriving far later than the best one, and cap the list. */
-export function rankAndTrim(all: Itinerary[], maxResults: number): Itinerary[] {
-  const ranked = [...all].sort((a, b) =>
-    a.arriveTime - b.arriveTime ||
+/** Drop options arriving far later than the best one, and cap the list.
+ *
+ *  Under `arriveBy` both halves mirror: rank by latest departure among the
+ *  options that make the deadline, and drop the ones that would have you
+ *  leaving hours early. Being equally early is not worth an extra hour at a
+ *  stop, and "leave 6:10 AM" beside "leave 1:45 PM" is not a choice either. */
+export function rankAndTrim(all: Itinerary[], maxResults: number, arriveBy?: number): Itinerary[] {
+  const pool = arriveBy === undefined ? all : all.filter((i) => i.arriveTime <= arriveBy);
+  const ranked = [...pool].sort((a, b) =>
+    (arriveBy === undefined ? a.arriveTime - b.arriveTime : b.departTime - a.departTime) ||
     a.transfers - b.transfers ||
     a.totalWalkSeconds - b.totalWalkSeconds);
   const best = ranked[0];
+  if (!best) return [];
   return ranked
-    .filter((i) => !best || i.arriveTime - best.arriveTime <= MAX_LATER_THAN_BEST_SECONDS)
+    .filter((i) => (arriveBy === undefined
+      ? i.arriveTime - best.arriveTime
+      : best.departTime - i.departTime) <= MAX_LATER_THAN_BEST_SECONDS)
     .slice(0, maxResults);
 }
 
@@ -174,9 +187,16 @@ export function planTrips(opts: PlanOptions): Itinerary[] {
   // other, rather than being special-cased in the UI.
   const walk = opts.directWalkSeconds;
   if (walk !== undefined && walk <= MAX_REASONABLE_WALK_SECONDS) {
+    // Unlike a bus, a walk has no timetable: under a deadline it starts as late
+    // as it can and still make it. Clamped to `now`, so a walk that no longer
+    // fits reports an arrival past the deadline and drops out below, rather
+    // than telling the rider to have left ten minutes ago.
+    const walkDepart = opts.arriveBy === undefined
+      ? now
+      : Math.max(now, opts.arriveBy - walk);
     found.push({
-      arriveTime: now + walk,
-      departTime: now,
+      arriveTime: walkDepart + walk,
+      departTime: walkDepart,
       walkToStop: { from: origin, to: destination, seconds: walk },
       rides: [],
       walkFromStop: { from: destination, to: destination, seconds: 0 },
@@ -191,10 +211,18 @@ export function planTrips(opts: PlanOptions): Itinerary[] {
   // 3:00 and the 3:20 bus on the same route.
   const bestByRoute = new Map<string, Itinerary>();
   for (const it of found) {
+    // Discard misses BEFORE picking the route's representative: otherwise a
+    // route whose latest bus overshoots the deadline drops out entirely, even
+    // though an earlier bus on it would have got the rider there in time.
+    if (opts.arriveBy !== undefined && it.arriveTime > opts.arriveBy) continue;
     const key = it.rides[0]?.routeId ?? "__walk__";
     const prev = bestByRoute.get(key);
-    if (!prev || it.arriveTime < prev.arriveTime) bestByRoute.set(key, it);
+    const better = !prev || (opts.arriveBy === undefined
+      ? it.arriveTime < prev.arriveTime
+      : it.departTime > prev.departTime ||
+        (it.departTime === prev.departTime && it.arriveTime < prev.arriveTime));
+    if (better) bestByRoute.set(key, it);
   }
 
-  return rankAndTrim([...bestByRoute.values()], maxResults);
+  return rankAndTrim([...bestByRoute.values()], maxResults, opts.arriveBy);
 }

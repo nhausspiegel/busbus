@@ -6,7 +6,7 @@ import { SearchBar } from "./SearchBar";
 import { ItineraryList, ItineraryDetail } from "./Itineraries";
 import { NearbyBoard } from "./NearbyBoard";
 import { RouteDetail } from "./RouteDetail";
-import { WhenControl } from "./WhenControl";
+import { WhenControl, type WhenMode } from "./WhenControl";
 import { resolveMode } from "./mode";
 import { StopCard } from "./StopCard";
 import { AlertBanner } from "./AlertBanner";
@@ -63,6 +63,8 @@ export default function App() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   /** null means "leave now"; a Date plans for later today. */
   const [leaveAt, setLeaveAt] = useState<Date | null>(null);
+  /** Whether that time is a departure or a deadline. */
+  const [whenMode, setWhenMode] = useState<WhenMode>("leave");
 
   const mode = resolveMode({ stopId, routeId, chosen: chosen !== null, dest: dest !== null });
   const origin = me ?? CAMPUS;
@@ -147,7 +149,9 @@ export default function App() {
   useEffect(() => { locate(); }, [locate]);
 
   /** The clock the whole screen reasons from: real now, or the planned time. */
-  const planNow = leaveAt ? Math.floor(leaveAt.getTime() / 1000) : now;
+  // In arrive-by mode the chosen time is a deadline, not a departure, so the
+  // clock the screen reasons from stays the real one.
+  const planNow = leaveAt && whenMode === "leave" ? Math.floor(leaveAt.getTime() / 1000) : now;
 
   const nearby = useMemo(
     () => (feed ? nearbyDepartures(feed, board, origin, planNow, 6) : []),
@@ -161,7 +165,10 @@ export default function App() {
     setPlanning(true);
     (async () => {
       try {
-        const found = await planBetween(feed, boardRef.current, origin, dest.at, leaveAt ?? new Date(), liveTripsRef.current);
+        const departAfter = whenMode === "leave" ? leaveAt ?? new Date() : new Date();
+        const deadline = whenMode === "arrive" ? leaveAt ?? undefined : undefined;
+        const found = await planBetween(
+          feed, boardRef.current, origin, dest.at, departAfter, liveTripsRef.current, deadline);
         if (cancelled) return;
         setItineraries(found);
         // Draw the best option straight away. Apple Maps shows the first
@@ -178,7 +185,7 @@ export default function App() {
       }
     })();
     return () => { cancelled = true; };
-  }, [feed, dest, origin, leaveAt]);
+  }, [feed, dest, origin, leaveAt, whenMode]);
 
   // Draw the chosen trip: real sidewalk geometry for the walks, and only the
   // ridden slice of each route shape.
@@ -321,7 +328,8 @@ export default function App() {
             fontSize: 13, cursor: "pointer", textAlign: "left", color: "var(--ink)",
           }}>
             <span style={{ flex: 1 }}>
-              Times shown for {leaveAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+              {whenMode === "arrive" ? "Arriving by " : "Times shown for "}
+              {leaveAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
               {leaveAt.toDateString() !== new Date().toDateString() ? " tomorrow" : ""}
             </span>
             <span style={{ color: "var(--accent)", fontWeight: 600 }}>Now</span>
@@ -330,7 +338,8 @@ export default function App() {
 
         {mode === "nearby" && (
           <>
-            <WhenControl at={leaveAt} onChange={setLeaveAt} />
+            <WhenControl at={leaveAt} mode={whenMode}
+                         onChange={setLeaveAt} onModeChange={setWhenMode} />
             <NearbyBoard feed={feed} nearby={nearby} buses={buses} now={planNow}
                          loading={!feed} me={!!me} onRouteClick={setRouteId}
                          onLocate={locate} />

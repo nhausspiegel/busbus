@@ -22,6 +22,9 @@ export async function planBetween(
   destination: LatLng,
   now: Date = new Date(),
   liveTrips?: Map<string, Departure[]>,
+  /** Arrive-by deadline. `now` stays the earliest-departure floor, so in this
+   *  mode it should be the actual current time, not the chosen time. */
+  arriveBy?: Date,
 ): Promise<Itinerary[]> {
   const all = [...feed.stops.values()];
   const fromStops = nearestStops(origin, all, CANDIDATE_STOPS);
@@ -51,6 +54,7 @@ export async function planBetween(
     walkFromOrigin, walkToDestination,
     ...(liveTrips ? { liveTrips } : {}),
     ...(typeof direct === "number" ? { directWalkSeconds: direct } : {}),
+    ...(arriveBy ? { arriveBy: Math.floor(arriveBy.getTime() / 1000) } : {}),
     now: Math.floor(now.getTime() / 1000),
   });
 }

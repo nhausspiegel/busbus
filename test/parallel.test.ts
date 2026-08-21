@@ -52,15 +52,29 @@ describe("offsetColinearRoutes", () => {
     expect(offsetPoints / allPoints).toBeLessThan(0.15);
   });
 
-  it("splits a route where it stops sharing", () => {
-    // A runs 800m north; B joins only for the first 300m. A must be offset on
-    // the shared stretch and centred after it, so it needs at least 2 pieces.
+  it("keeps one lane for a whole route, even where it stops sharing", () => {
+    // A route that changes lane partway jumps sideways by the full lane width
+    // at that point. On the real map that drew the Connector as two parallel
+    // orange lines crossing in an X. A line holds its lane end to end, the way
+    // a subway line does.
     const long = northLine(41.820, -71.4, 800, 40);
     const short = northLine(41.820, -71.4, 300, 20);
     const got = offsetColinearRoutes([{ id: "A", shape: long }, { id: "B", shape: short }]);
-    const aPieces = got.filter((p) => p.routeId === "A");
-    expect(aPieces.length).toBeGreaterThan(1);
-    expect(new Set(aPieces.map((p) => p.lane))).toContain(0);
+    const aLanes = new Set(got.filter((p) => p.routeId === "A").map((p) => p.lane));
+    expect(aLanes.size).toBe(1);
+  });
+
+  it("gives every route exactly one lane", () => {
+    const shape = northLine(41.826, -71.4, 400);
+    const got = offsetColinearRoutes([
+      { id: "A", shape },
+      { id: "B", shape },
+      { id: "C", shape: northLine(41.9, -71.3, 400) },
+    ]);
+    for (const id of ["A", "B", "C"]) {
+      const lanes = new Set(got.filter((p) => p.routeId === id).map((p) => p.lane));
+      expect(lanes.size).toBe(1);
+    }
   });
 
   it("is deterministic across calls", () => {
@@ -100,9 +114,17 @@ describe("against the real Brown route shapes", () => {
     }
   });
 
-  it("does not hand the renderer thousands of features", () => {
-    // One feature per resampled segment would be unusable on a phone.
-    expect(pieces.length).toBeLessThan(200);
+  it("hands the renderer one feature per route", () => {
+    // One lane per route means one polyline per route -- nothing to stitch,
+    // nothing to jump between.
+    expect(pieces.length).toBe(routes.length);
+  });
+
+  it("never changes a real route's lane along its length", () => {
+    for (const r of routes) {
+      const lanes = new Set(pieces.filter((p) => p.routeId === r.id).map((p) => p.lane));
+      expect(lanes.size).toBe(1);
+    }
   });
 });
 
