@@ -513,6 +513,42 @@ git commit -m "fix: route view follows one bus round, not the soonest at each st
 
 ---
 
+### Task 3b: Breathing room in the sheet on desktop
+
+The sheet's header stack — search field, alert banner, Leave/Arrive-by row,
+`NEAR YOU` eyebrow, `Next departures` heading — is cramped at desktop widths.
+The controls were sized for a phone, where the sheet is narrow and vertical
+space is scarce; on a wide window they read as a wall.
+
+**Files:**
+- Modify: `src/ui/Sheet.tsx` and/or `src/ui/App.tsx` (the sheet's header stack)
+- Modify: `src/ui/theme.css` if the spacing scale needs a token
+
+- [ ] **Step 1: Look at it at both widths first**
+
+Screenshot the sheet at 390px wide (phone) and at the current desktop width
+before changing anything, so the phone layout can be checked against the same
+bar afterwards. The phone case is the primary target — this app is for a rider
+standing at a stop — so desktop must not win at its expense.
+
+- [ ] **Step 2: Add vertical rhythm at wide widths only**
+
+Use a container query or a `min-width` media query so the phone layout is
+untouched. Increase the gap between the header controls and give the
+`Next departures` heading room above it. Do not change font sizes; this is a
+spacing problem, not a type problem.
+
+- [ ] **Step 3: Verify both widths and commit**
+
+Re-screenshot at 390px and desktop. `npx tsc --noEmit && npx vitest run` clean.
+`test/Sheet.test.tsx` must still pass — it covers the detents.
+
+```bash
+git commit -m "feat: give the sheet header room to breathe on wide windows"
+```
+
+---
+
 ### Task 4: Never let two routes overlap, with a minimum gap in pixels
 
 Near-parallel routes currently draw on top of each other when zoomed out.
