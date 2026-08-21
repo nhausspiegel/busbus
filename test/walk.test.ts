@@ -1,8 +1,42 @@
 import { describe, it, expect } from "vitest";
-import { haversineMeters, nearestStops, decodePolyline6 } from "../src/routing/walk";
+import { readFileSync } from "node:fs";
+import { haversineMeters, nearestStops, decodePolyline6, parseWalkRoute } from "../src/routing/walk";
 import type { Stop } from "../src/data/types";
 
 const s = (id: string, lat: number, lng: number): Stop => ({ id, name: id, lat, lng });
+
+describe("parseWalkRoute", () => {
+  // A real Valhalla pedestrian response, frozen. The same call already supplied
+  // the drawn walking line and threw the maneuvers away.
+  const raw = JSON.parse(readFileSync("test/fixtures/valhalla-walk-route.json", "utf8"));
+  const got = parseWalkRoute(raw);
+
+  it("reads the walking directions out of the response the map already fetched", () => {
+    expect(got.steps.length).toBe(19);
+    expect(got.steps[0]!.instruction).toBe("Walk west on the walkway.");
+    expect(got.steps[got.steps.length - 1]!.instruction)
+      .toBe("You have arrived at your destination.");
+  });
+
+  it("converts Valhalla's kilometres to metres", () => {
+    // `length` is 0.008 for the first maneuver and `units` is "kilometers".
+    // Passing that through as metres would tell a rider to walk 8mm.
+    expect(got.steps[0]!.metres).toBeCloseTo(8, 0);
+    const total = got.steps.reduce((m, x) => m + x.metres, 0);
+    expect(total).toBeGreaterThan(1200);      // the trip summary says 1.265 km
+    expect(total).toBeLessThan(1350);
+  });
+
+  it("still returns the drawable line", () => {
+    expect(got.path.length).toBeGreaterThan(10);
+    expect(got.path[0]!.lat).toBeGreaterThan(41.7);
+    expect(got.path[0]!.lat).toBeLessThan(41.9);
+  });
+
+  it("returns nothing usable rather than throwing on an empty response", () => {
+    expect(parseWalkRoute({})).toEqual({ path: [], steps: [] });
+  });
+});
 
 describe("haversineMeters", () => {
   it("measures a known campus distance within tolerance", () => {
