@@ -55,12 +55,21 @@ class FakeMarker {
   lngLat: [number, number] = [0, 0];
   constructor(public opts: { element: HTMLElement }) { markers.push(this); }
   setLngLat(v: [number, number]) { this.lngLat = v; return this; }
+  getLngLat() { return { lng: this.lngLat[0], lat: this.lngLat[1] }; }
   addTo() { return this; }
   remove() { return this; }
   getElement() { return this.opts.element; }
 }
 
 let map: FakeMap;
+const frames = new Map<number, FrameRequestCallback>();
+let nextFrame = 1;
+/** Runs every frame queued so far, at time `now`. */
+const tick = (now: number) => {
+  const due = [...frames.values()];
+  frames.clear();
+  act(() => { for (const cb of due) cb(now); });
+};
 vi.mock("maplibre-gl", () => ({
   setWorkerUrl: () => {},
   Map: class { constructor() { return map as unknown as object; } },
@@ -92,12 +101,22 @@ const buses = [{
   label: "1", bearing: 0, paxLoad: 0, totalCap: 0,
 }] as never;
 
+let reduceMotion = false;
+
 beforeEach(() => {
   map = new FakeMap();
   markers.length = 0;
+  frames.clear();
+  nextFrame = 1;
+  reduceMotion = false;
+  globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+    frames.set(nextFrame, cb); return nextFrame++;
+  }) as never;
+  globalThis.cancelAnimationFrame = ((h: number) => { frames.delete(h); }) as never;
   globalThis.ResizeObserver = class { observe() {} disconnect() {} } as never;
-  window.matchMedia = (() => ({
-    matches: false, addEventListener() {}, removeEventListener() {},
+  window.matchMedia = ((q: string) => ({
+    matches: q.includes("reduced-motion") ? reduceMotion : false,
+    addEventListener() {}, removeEventListener() {},
   })) as never;
 });
 afterEach(cleanup);
@@ -156,5 +175,72 @@ describe("TransitMap", () => {
     mount();
     map.fire("load");
     expect(markers[0]!.opts.element.style.position).toBe("absolute");
+  });
+});
+
+/** Passio speaks once every ten seconds, so a marker set straight from the feed
+ *  teleports the length of a block. These cover the glide that replaces that. */
+describe("TransitMap live bus movement", () => {
+  const at = (lat: number) => [{
+    id: "bus1", routeId: "A", lat, lng: -71.4002,
+    label: "1", bearing: 0, paxLoad: 0, totalCap: 0,
+  }] as never;
+
+  /** Mid-shape, so the next fix has line left to run along. */
+  const start = 41.8210, next = 41.8216;
+
+  const mountAt = (lat: number) => render(
+    <TransitMap feed={feed} buses={at(lat)} me={null} destination={null} overlay={null}
+      focus={null} highlightRouteId={null} activeRouteIds={new Set(["A", "B"])} />);
+  const rerenderAt = (r: ReturnType<typeof render>, lat: number) => r.rerender(
+    <TransitMap feed={feed} buses={at(lat)} me={null} destination={null} overlay={null}
+      focus={null} highlightRouteId={null} activeRouteIds={new Set(["A", "B"])} />);
+
+  it("glides to a new fix over the update interval instead of jumping", () => {
+    const r = mountAt(start);
+    map.fire("load");
+    const mk = markers[0]!;
+    expect(mk.lngLat[1]).toBeCloseTo(start, 6);
+
+    act(() => rerenderAt(r, next));
+    // Nothing has been painted yet: the marker must still be where it was.
+    expect(mk.lngLat[1]).toBeCloseTo(start, 6);
+
+    tick(0);                                    // first frame starts the clock
+    expect(mk.lngLat[1]).toBeCloseTo(start, 6);
+    tick(5_000);                                // halfway through the interval
+    expect(mk.lngLat[1]).toBeCloseTo((start + next) / 2, 5);
+    tick(10_000);                               // arrived
+    expect(mk.lngLat[1]).toBeCloseTo(next, 6);
+    expect(frames.size).toBe(0);                // and stopped asking for frames
+  });
+
+  it("jumps when the rider has asked for reduced motion", () => {
+    reduceMotion = true;
+    const r = mountAt(start);
+    map.fire("load");
+    act(() => rerenderAt(r, next));
+    expect(markers[0]!.lngLat[1]).toBeCloseTo(next, 6);
+    expect(frames.size).toBe(0);
+  });
+
+  it("drops a glide when a newer fix arrives, rather than running two at once", () => {
+    const r = mountAt(start);
+    map.fire("load");
+    act(() => rerenderAt(r, next));
+    tick(0);
+    tick(5_000);
+    act(() => rerenderAt(r, 41.8220));
+    expect(frames.size).toBe(1);
+  });
+
+  it("stops asking for frames once the map is gone", () => {
+    // A leaked loop keeps calling setLngLat on a marker the map has removed.
+    const r = mountAt(start);
+    map.fire("load");
+    act(() => rerenderAt(r, next));
+    expect(frames.size).toBe(1);
+    act(() => r.unmount());
+    expect(frames.size).toBe(0);
   });
 });
