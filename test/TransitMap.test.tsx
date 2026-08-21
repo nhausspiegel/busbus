@@ -119,9 +119,42 @@ describe("TransitMap", () => {
     }
   });
 
-  it("puts each bus exactly where the feed reports it", () => {
+  it("puts each bus on the line drawn for its own route", () => {
+    // The feed puts this bus off its shape, as a real GPS fix does. It has to
+    // land ON the polyline -- and on the polyline as DRAWN, which is the raw
+    // shape, so this holds at every zoom without the map's scale entering into
+    // it anywhere.
     mount();
     map.fire("load");
-    expect(markers[0]!.lngLat).toEqual([-71.4002, 41.8228]);
+    const [lng, lat] = markers[0]!.lngLat;
+    const shape = feed.routes.get("A")!.shape;
+    let nearest = Infinity;
+    for (let i = 1; i < shape.length; i++) {
+      const a = shape[i - 1]!, b = shape[i]!;
+      const k = 111_320, kx = k * Math.cos(a.lat * Math.PI / 180);
+      const dx = (b.lng - a.lng) * kx, dy = (b.lat - a.lat) * k;
+      const px = (lng - a.lng) * kx, py = (lat - a.lat) * k;
+      const len = dx * dx + dy * dy;
+      const t = len === 0 ? 0 : Math.max(0, Math.min(1, (px * dx + py * dy) / len));
+      nearest = Math.min(nearest, Math.hypot(px - dx * t, py - dy * t));
+    }
+    expect(nearest).toBeLessThan(0.5);
+    // ...and genuinely moved, so this cannot pass by the bus already being there.
+    expect(Math.abs(lat - 41.8228) + Math.abs(lng - -71.4002)).toBeGreaterThan(1e-6);
+  });
+
+  it("leaves the bus marker absolutely positioned, as MapLibre needs", () => {
+    // MapLibre positions markers with a transform inside a positioned layer;
+    // `.maplibregl-marker` is `position: absolute` for that reason. Setting the
+    // element's cssText wholesale replaces that, and an inline
+    // `position: relative` beats the stylesheet -- which drops every marker
+    // into normal document flow, where they lay out side by side. Measured on
+    // the live map: bus 1 was correct, bus 2 painted 30px right of its
+    // coordinate, bus 3 60px, bus 4 90px, one marker width each. The dot needs
+    // to be a positioning context for the heading arrow, and `absolute` is one
+    // just as well as `relative` is.
+    mount();
+    map.fire("load");
+    expect(markers[0]!.opts.element.style.position).toBe("absolute");
   });
 });

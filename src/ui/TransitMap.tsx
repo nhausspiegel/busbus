@@ -5,6 +5,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { StaticFeed, LatLng } from "../data/types";
 import type { Bus } from "../data/vehicles";
 import { basemapStyle } from "./mapStyle";
+import { snapToShape } from "../routing/shape";
 
 // MapLibre's worker is a separate ES module that imports a sibling. Rollup
 // cannot see it (the path is built from a runtime string) and ?url would copy
@@ -292,10 +293,14 @@ export function TransitMap({
     if (!m || !ready) return;
     for (const b of buses) {
       const color = feed?.routes.get(b.routeId)?.color ?? "#241C17";
-      // Where Passio reports it. Buses used to be projected onto the drawn
-      // route line; that only ever moved them further off, because the line
-      // itself was being moved.
-      const at = { lat: b.lat, lng: b.lng };
+      // Onto the route's own shape -- the exact polyline drawn under it, so
+      // the dot sits centred on its line at every zoom. Snapping was removed
+      // once before and rightly so: back then it projected onto a SYNTHETIC
+      // line that this code had offset and rebuilt per zoom, so it dragged the
+      // buses off with it. Snapping to the drawn shape has no scale in it at
+      // all.
+      const at = snapToShape({ lat: b.lat, lng: b.lng },
+        feed?.routes.get(b.routeId)?.shape ?? []);
       let mk = busMarks.current.get(b.id);
       if (!mk) {
         // A real button: role="button" on a div is announced but cannot be
@@ -309,8 +314,20 @@ export function TransitMap({
         el.dataset["routeId"] = b.routeId;
         // 30x30 box, dot centred in it, so MapLibre's centre anchor lands the
         // dot on the coordinate.
+        //
+        // position MUST stay absolute. Assigning cssText replaces the whole
+        // inline style, and an inline `position: relative` overrides
+        // `.maplibregl-marker { position: absolute }` -- which takes every
+        // marker out of the layer MapLibre positions and drops it into normal
+        // document flow, where the markers lay out side by side. Measured on
+        // the live map: the first bus sat on its route and each next one was
+        // painted a further 30px right of its coordinate, one marker width
+        // apart. It reads exactly like "the buses are off their routes", and it
+        // survived because the marker's transform still held the RIGHT
+        // coordinate -- only the painted pixel was wrong. Absolute is a
+        // positioning context for the arrow just as relative was.
         el.style.cssText =
-          "position:relative;width:30px;height:30px;padding:0;border:0;background:none;cursor:pointer";
+          "position:absolute;width:30px;height:30px;padding:0;border:0;background:none;cursor:pointer";
         // A heading arrow answers "is it coming towards me or leaving", which
         // a plain dot cannot. Bearing is in the feed and was going unused.
         const arrow = document.createElement("div");
