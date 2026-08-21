@@ -31,6 +31,10 @@ const LONG_PRESS_MS = 500;
  *  showing motion and what Apple pays too. */
 const GLIDE_MS = 10_000;
 
+/** Centre-to-centre gap between coincident routes at z13, in screen pixels.
+ *  Faded to nothing by z16, where the shapes separate on their own. */
+const LANE_GAP_PX = 5;
+
 const OVERLAY_SOURCES = ["itin-walk", "itin-ride"] as const;
 const OVERLAY_LAYERS = ["itin-walk", "itin-ride-case", "itin-ride-line"] as const;
 
@@ -122,11 +126,15 @@ export function TransitMap({
    * to those lines there too.
    */
   function drawRoutes(m: maplibregl.Map, routes: { id: string; color: string; shape: LatLng[] }[]) {
+    // One lane per route, centred on zero, in sorted id order so the map never
+    // reshuffles between renders. Spent by line-offset below, in pixels.
+    const ordered = [...routes].sort((a, b) => a.id.localeCompare(b.id));
+    const mid = (ordered.length - 1) / 2;
     const data: GeoJSON.FeatureCollection = {
       type: "FeatureCollection",
-      features: routes.map((r) => ({
+      features: ordered.map((r, i) => ({
         type: "Feature",
-        properties: { routeId: r.id, color: r.color },
+        properties: { routeId: r.id, color: r.color, lane: i - mid },
         geometry: { type: "LineString", coordinates: r.shape.map((q) => [q.lng, q.lat]) },
       })),
     };
@@ -143,18 +151,32 @@ export function TransitMap({
     //
     // So the radius is set by the stroke width, and this is why the line is as
     // thick as it is: Apple's transit lines are heavy for exactly this reason.
+    // Fan coincident routes apart, in PIXELS, and only where they need it.
+    //
+    // Zoomed out, Brown's routes collapse onto each other: the ~7m by which
+    // Passio's shapes already differ is half a pixel at z13. Zoomed in, that
+    // same 7m is 16px and separates them on its own, so any offset there is
+    // pure error -- it is what put earlier versions of this on the pavement.
+    // So the lane is worth a few pixels at z13 and nothing from z16 up, which
+    // MapLibre interpolates itself. No coordinate is touched and nothing is
+    // recomputed in JS.
+    const offset: maplibregl.ExpressionSpecification = [
+      "interpolate", ["linear"], ["zoom"],
+      13, ["*", ["get", "lane"], LANE_GAP_PX],
+      16, 0,
+    ];
     m.addLayer({
       id: "routes-case", type: "line", source: "routes",
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
         "line-color": darkRef.current ? "#15110F" : "#FFFFFF",
-        "line-width": 10, "line-opacity": 0.9,
+        "line-width": 10, "line-opacity": 0.9, "line-offset": offset,
       },
     });
     m.addLayer({
       id: "routes-line", type: "line", source: "routes",
       layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": ["get", "color"], "line-width": 6 },
+      paint: { "line-color": ["get", "color"], "line-width": 6, "line-offset": offset },
     });
   }
 
