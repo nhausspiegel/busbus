@@ -254,6 +254,7 @@ export default function App() {
         onRouteClick={(r) => { setRouteId(r); setStopId(null); setDetent("half"); }}
         onStopClick={(id) => { setStopId(id); setRouteId(null); setDetent("half"); }}
         onMapClick={(p) => pickDestination(p, "Dropped pin")}
+        onPlaceClick={(p) => pickDestination(p.at, p.name)}
         onClearDestination={() => {
           setDest(null); setChosen(null); setPreview(null); setItineraries(null);
           setDetent("peek");

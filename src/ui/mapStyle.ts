@@ -1,4 +1,4 @@
-import type { StyleSpecification } from "maplibre-gl";
+import type { StyleSpecification, FilterSpecification, ExpressionSpecification } from "maplibre-gl";
 
 /** Basemap style for busbus.
  *
@@ -30,6 +30,16 @@ const DARK: Palette = {
 };
 
 const SRC = "openmaptiles";
+
+/** OSM tags its own transit stops as POIs. We draw Brown's shuttle stops
+ *  ourselves, and RIPTA's "Thayer before Cushing" markers sitting beside them
+ *  are noise a rider would misread as ours. */
+const NOT_TRANSIT: ExpressionSpecification =
+  ["!", ["in", ["get", "class"], ["literal", ["bus", "railway", "ferry_terminal", "aerialway"]]]];
+
+/** Named, reasonably prominent, and not a transit stop. */
+const placeFilter = (maxRank: number): FilterSpecification =>
+  ["all", ["has", "name"], ["<=", ["get", "rank"], maxRank], NOT_TRANSIT];
 
 /** Attribution required by OpenFreeMap and OpenStreetMap. */
 export const BASEMAP_ATTRIBUTION =
@@ -125,6 +135,39 @@ export function basemapStyle(dark: boolean): StyleSpecification {
       { id: "water-label", type: "symbol", source: SRC, "source-layer": "water_name",
         layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Italic"], "text-size": 12 },
         paint: { "text-color": c.labelMinor, "text-halo-color": c.labelHalo, "text-halo-width": 1.2 } },
+
+      // Places you can actually go: libraries, cafes, shops, halls. A rider
+      // says "take me to the Ratty", not "take me to 41.826, -71.402", so the
+      // map has to offer named destinations rather than only bare coordinates.
+      // Only once the rider is actually looking at a block, and only the
+      // higher-ranked places -- every corner shop at overview zoom competes
+      // with the shuttle stops, which are what this map is for.
+      { id: "poi", type: "circle", source: SRC, "source-layer": "poi",
+        minzoom: 15,
+        filter: placeFilter(12),
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 14, 2.5, 17, 4.5],
+          "circle-color": c.labelMinor,
+          "circle-opacity": 0.7,
+        } },
+      { id: "poi-label", type: "symbol", source: SRC, "source-layer": "poi",
+        minzoom: 15.5,
+        filter: placeFilter(8),
+        layout: {
+          "text-field": ["get", "name"],
+          "text-font": ["Noto Sans Regular"],
+          "text-size": 11,
+          "text-anchor": "top",
+          "text-offset": [0, 0.6],
+          "text-max-width": 8,
+          "text-optional": true,
+        },
+        paint: { "text-color": c.labelMinor, "text-halo-color": c.labelHalo, "text-halo-width": 1.4 } },
+      // Wide invisible tap target, same trick as the stops layer.
+      { id: "poi-hit", type: "circle", source: SRC, "source-layer": "poi",
+        minzoom: 15,
+        filter: placeFilter(12),
+        paint: { "circle-radius": 13, "circle-opacity": 0 } },
 
       { id: "place-label", type: "symbol", source: SRC, "source-layer": "place",
         filter: ["in", "class", "city", "town", "suburb", "neighbourhood"],
