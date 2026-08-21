@@ -5,7 +5,8 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { StaticFeed, LatLng } from "../data/types";
 import type { Bus } from "../data/vehicles";
 import { basemapStyle } from "./mapStyle";
-import { offsetColinearRoutes } from "../routing/parallel";
+import { offsetColinearRoutes, type OffsetPiece } from "../routing/parallel";
+import { snapToLane, metresPerPixel } from "../routing/snap";
 
 // MapLibre's worker is a separate ES module that imports a sibling. Rollup
 // cannot see it (the path is built from a runtime string) and ?url would copy
@@ -48,7 +49,7 @@ export interface Overlay {
 
 export function TransitMap({
   feed, buses, me, destination, overlay, focus, highlightRouteId, routeStopIds, activeRouteIds,
-  onMapClick, onClearDestination, onRouteClick, onStopClick,
+  onMapClick, onClearDestination, onRouteClick, onStopClick, onPlaceClick,
 }: {
   feed: StaticFeed | null;
   buses: Bus[];
@@ -68,6 +69,9 @@ export function TransitMap({
   onMapClick?: (p: LatLng) => void;
   onRouteClick?: (routeId: string) => void;
   onStopClick?: (stopId: string) => void;
+  /** A named place tapped on the map -- a destination with a name attached,
+   *  rather than an anonymous dropped pin. */
+  onPlaceClick?: (place: { name: string; at: LatLng }) => void;
 }) {
   const div = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -82,12 +86,18 @@ export function TransitMap({
   stopCb.current = onStopClick;
   const clearCb = useRef(onClearDestination);
   clearCb.current = onClearDestination;
+  const placeCb = useRef(onPlaceClick);
+  placeCb.current = onPlaceClick;
   const hasDest = useRef(false);
   hasDest.current = destination !== null;
   // A counter, not a boolean: setStyle falls back to a full reload when its
   // diff is not applicable, which drops every layer we added. Incrementing on
   // each styledata lets the drawing effects re-run and rebuild them.
   const [ready, setReady] = useState(0);
+  /** The lane-split route geometry, shared with the bus markers so vehicles
+   *  ride exactly the line that is drawn rather than the unoffset centreline. */
+  const piecesRef = useRef<OffsetPiece[]>([]);
+  const [zoom, setZoom] = useState(14.2);
   const dark = usePrefersDark();
   const darkRef = useRef(dark);
   darkRef.current = dark;
@@ -109,7 +119,27 @@ export function TransitMap({
     // OpenFreeMap both require it to be visible. Search moved into the sheet,
     // which freed this corner.
     m.addControl(new maplibregl.AttributionControl({ compact: true }), "top-left");
-    m.on("load", () => setReady((n) => n + 1));
+    // Lane offsets are in pixels, so the geographic position a bus must sit at
+    // changes with zoom.
+    m.on("zoomend", () => setZoom(m.getZoom()));
+    m.on("load", () => {
+      setReady((n) => n + 1);
+      // Tapping a named place selects it. Registered once here rather than in
+      // the drawing effect because these layers come from the basemap style,
+      // not from us.
+      m.on("click", "poi-hit", (e: maplibregl.MapLayerMouseEvent) => {
+        const f = e.features?.[0];
+        const name = f?.properties?.["name"];
+        if (!name) return;
+        const g = f!.geometry;
+        const at = g.type === "Point"
+          ? { lng: g.coordinates[0] as number, lat: g.coordinates[1] as number }
+          : { lat: e.lngLat.lat, lng: e.lngLat.lng };
+        placeCb.current?.({ name: String(name), at });
+      });
+      m.on("mouseenter", "poi-hit", () => { m.getCanvas().style.cursor = "pointer"; });
+      m.on("mouseleave", "poi-hit", () => { m.getCanvas().style.cursor = ""; });
+    });
     // Read the handler from a ref so changing it never tears down the map.
     m.on("click", (e) => {
       // Ask what was actually hit rather than relying on preventDefault:
@@ -184,6 +214,7 @@ export function TransitMap({
     const active = [...feed.routes.values()].filter(
       (r) => activeRouteIds.has(r.id) && r.shape.length >= 2);
     const pieces = offsetColinearRoutes(active.map((r) => ({ id: r.id, shape: r.shape })));
+    piecesRef.current = pieces;
     const colorOf = new Map(active.map((r) => [r.id, r.color]));
 
     const data: GeoJSON.FeatureCollection = {
@@ -261,8 +292,12 @@ export function TransitMap({
   useEffect(() => {
     const m = map.current;
     if (!m || !ready || !m.isStyleLoaded()) return;
+    const mpp = metresPerPixel(CAMPUS.lat, zoom);
     for (const b of buses) {
       const color = feed?.routes.get(b.routeId)?.color ?? "#241C17";
+      // Snap onto the route and shift into its lane: GPS leaves buses tens of
+      // metres off their own shape, and the drawn line is itself offset.
+      const at = snapToLane({ lat: b.lat, lng: b.lng }, b.routeId, piecesRef.current, mpp, LANE_PX);
       let mk = busMarks.current.get(b.id);
       if (!mk) {
         // A real button: role="button" on a div is announced but cannot be
@@ -302,10 +337,10 @@ export function TransitMap({
         });
         // offset shifts the element so the DOT's centre sits on the coordinate.
         mk = new maplibregl.Marker({ element: el, offset: [0, 4] })
-          .setLngLat([b.lng, b.lat]).addTo(m);
+          .setLngLat([at.lng, at.lat]).addTo(m);
         busMarks.current.set(b.id, mk);
       } else {
-        mk.setLngLat([b.lng, b.lat]);
+        mk.setLngLat([at.lng, at.lat]);
         const el = mk.getElement();
         const arrow = el.firstElementChild as HTMLElement | null;
         if (arrow) arrow.style.transform = `rotate(${b.bearing}deg)`;
@@ -316,7 +351,7 @@ export function TransitMap({
     }
     for (const [id, mk] of busMarks.current)
       if (!buses.some((b) => b.id === id)) { mk.remove(); busMarks.current.delete(id); }
-  }, [buses, feed, ready]);
+  }, [buses, feed, ready, zoom]);
 
   // the rider
   useEffect(() => {

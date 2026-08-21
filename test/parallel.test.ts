@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { offsetColinearRoutes } from "../src/routing/parallel";
 import { parseStaticFeed } from "../src/data/gtfs";
+import { haversineMeters } from "../src/routing/walk";
 import type { LatLng } from "../src/data/types";
 
 /** A straight run north along one longitude, from lat0 for `metres`. */
@@ -102,5 +103,60 @@ describe("against the real Brown route shapes", () => {
   it("does not hand the renderer thousands of features", () => {
     // One feature per resampled segment would be unusable on a phone.
     expect(pieces.length).toBeLessThan(200);
+  });
+});
+
+describe("emitted geometry stays smooth", () => {
+  const feed = parseStaticFeed(new Uint8Array(readFileSync("test/fixtures/gtfs.zip")));
+  const routes = ["3302", "3469", "3470", "62487"]
+    .map((id) => feed.routes.get(id))
+    .filter((r): r is NonNullable<typeof r> => !!r && r.shape.length >= 2)
+    .map((r) => ({ id: r.id, shape: r.shape }));
+
+  it("does not multiply a route's vertex count", () => {
+    // Resampling to 12m for ANALYSIS is necessary -- shapes arrive at wildly
+    // different densities. Emitting those samples is not: MapLibre applies
+    // line-offset per vertex, so a smooth 500m arc turned into 40 points
+    // scallops visibly. Route 3469 went from 24 vertices to 311.
+    const pieces = offsetColinearRoutes(routes);
+    for (const r of routes) {
+      const emitted = pieces
+        .filter((p) => p.routeId === r.id)
+        .reduce((n, p) => n + p.path.length, 0);
+      // Lane splits duplicate a vertex at each join, so allow modest growth.
+      expect(emitted).toBeLessThanOrEqual(r.shape.length + 40);
+    }
+  });
+
+  it("keeps segments as long as the source geometry", () => {
+    const pieces = offsetColinearRoutes(routes);
+    const lengths: number[] = [];
+    for (const p of pieces)
+      for (let i = 1; i < p.path.length; i++)
+        lengths.push(haversineMeters(p.path[i - 1]!, p.path[i]!));
+    const mean = lengths.reduce((a, b) => a + b, 0) / lengths.length;
+    // 12m resampling produced a mean of 11.8m; real shapes are far coarser.
+    expect(mean).toBeGreaterThan(25);
+  });
+
+  it("emits vertices that exist in the source shape", () => {
+    const pieces = offsetColinearRoutes(routes);
+    const src = new Set(
+      routes.flatMap((r) => r.shape.map((p) => `${p.lat.toFixed(6)},${p.lng.toFixed(6)}`)));
+    for (const p of pieces)
+      for (const q of p.path)
+        expect(src.has(`${q.lat.toFixed(6)},${q.lng.toFixed(6)}`)).toBe(true);
+  });
+
+  it("still leaves no gap where the lane changes", () => {
+    const pieces = offsetColinearRoutes(routes);
+    for (const r of routes) {
+      const mine = pieces.filter((p) => p.routeId === r.id);
+      for (let i = 1; i < mine.length; i++) {
+        const a = mine[i - 1]!.path[mine[i - 1]!.path.length - 1]!;
+        const b = mine[i]!.path[0]!;
+        expect(haversineMeters(a, b)).toBeLessThan(1);
+      }
+    }
   });
 });

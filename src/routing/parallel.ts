@@ -99,7 +99,10 @@ export function offsetColinearRoutes(
     }
   }
 
-  // Pass 2: per segment, this route's lane within its corridor.
+  // Pass 2: decide each route's lane along its length, then emit the ORIGINAL
+  // vertices. The resampled points exist only to make corridors comparable
+  // across shapes of very different density -- rendering them would hand
+  // MapLibre a vertex every 12m, and line-offset scallops at every vertex.
   const pieces: OffsetPiece[] = [];
   for (const r of usable) {
     const pts = sampled.get(r.id)!;
@@ -109,14 +112,38 @@ export function offsetColinearRoutes(
     for (let i = 1; i < pts.length; i++) lanes.push(laneAt(pts, i, r.id, occupants));
     smoothLanes(lanes);
 
+    // Carry the lane decision back onto the source vertices: each original
+    // vertex takes the lane of the resampled segment nearest to it.
+    const cum = cumulativeDistances(r.shape);
+    const sampleStep = cum[cum.length - 1]! / Math.max(1, lanes.length);
+    const laneForVertex = (vertexIndex: number): number => {
+      const along = cum[vertexIndex]!;
+      const idx = Math.min(lanes.length - 1, Math.max(0, Math.floor(along / sampleStep)));
+      return lanes[idx]!;
+    };
+
     let runStart = 0;
-    for (let i = 1; i <= lanes.length; i++) {
-      if (i < lanes.length && lanes[i] === lanes[runStart]) continue;
-      pieces.push({ routeId: r.id, path: pts.slice(runStart, i + 1), lane: lanes[runStart]! });
+    let runLane = laneForVertex(0);
+    for (let i = 1; i < r.shape.length; i++) {
+      const lane = laneForVertex(i);
+      if (lane === runLane) continue;
+      // Overlap by one vertex so the drawn lines meet rather than leaving a
+      // notch where the lane changes.
+      pieces.push({ routeId: r.id, path: r.shape.slice(runStart, i + 1), lane: runLane });
       runStart = i;
+      runLane = lane;
     }
+    pieces.push({ routeId: r.id, path: r.shape.slice(runStart), lane: runLane });
   }
-  return pieces;
+  return pieces.filter((p) => p.path.length >= 2);
+}
+
+/** Distance along a polyline at each vertex. */
+function cumulativeDistances(shape: LatLng[]): number[] {
+  const out = [0];
+  for (let i = 1; i < shape.length; i++)
+    out.push(out[i - 1]! + metresBetween(shape[i - 1]!, shape[i]!));
+  return out;
 }
 
 /** Shortest run of segments worth drawing in its own lane. */
