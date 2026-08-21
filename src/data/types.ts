@@ -48,6 +48,11 @@ export interface RideLeg {
   arriveTime: number;   // epoch seconds
   live: boolean;
   numStops: number;
+  /** Which visit to `boardStopId` this ride starts at, as a static
+   *  stop_sequence. Shuttle routes are loops and a trip calls at the same stop
+   *  twice; without this, a rider joining on the second lap is resolved to the
+   *  first visit and shown a whole lap they have already ridden past. */
+  boardSeq: number;
 }
 
 export interface Itinerary {

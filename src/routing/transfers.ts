@@ -83,7 +83,12 @@ export function planWithTransfers(
           routeId: dep.routeId, tripId: dep.tripId,
           boardStopId: firstStopId, alightStopId: mid.stopId,
           departTime: dep.time, arriveTime: arriveMid,
-          live: dep.live, numStops: mid.seq - dep.seq,
+          // Both ends of this subtraction must come from the STATIC trip.
+          // dep.seq is Passio's realtime sequence, which numbers the same trip
+          // differently -- mixing the two produced stop counts that were
+          // simply wrong, and negative ones where the RT seq ran higher.
+          live: dep.live, numStops: mid.seq - boardSched.seq,
+          boardSeq: boardSched.seq,
         };
 
         twoLeg.push({
