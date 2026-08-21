@@ -120,85 +120,36 @@ panel above 820px, so those tests pin a 390px viewport.
 
 ## 4. The two broken things, in detail
 
-### 4a. Route line rendering
+### 4a / 4b. Route lines and buses -- RESOLVED BY DELETION
 
-**Where:** `src/routing/parallel.ts` (lane assignment) and the route-drawing
-effect in `src/ui/TransitMap.tsx` (renders one GeoJSON source `routes` with
-layers `routes-case` and `routes-line`, using MapLibre `line-offset` driven by
-each feature's `lane` property, `LANE_PX = 5`).
+**Do not re-implement lane offsetting without reading this.**
 
-**History of attempts — do not repeat these:**
+Four attempts were made to fan coincident routes into parallel lanes:
+per-segment lanes, rendering resampled points, one lane per whole route, and
+finally a smoothed per-point lane baked into the geometry. Every one looked
+worse than the last on screen. All four shared a false premise:
 
-1. *Per-segment lanes.* Assigned a lane per 12m resampled segment. Result:
-   wherever a route gained or lost a corridor-mate its line jumped sideways by
-   a full lane width. On screen the Connector drew as two parallel orange lines
-   meeting in an X. **Rejected.**
-2. *Rendering the resampled points.* Analysis resamples every shape to 12m so
-   corridors are comparable across very different densities (route 3469 has 24
-   points ~500m apart; 3302 has 177 at ~10m). I was also *drawing* those
-   samples — 3469 went from 24 vertices to 311 — and MapLibre applies
-   `line-offset` per vertex, so the offset line scalloped. **Fixed:** analysis
-   resamples, rendering uses original vertices.
-3. *One lane per route, whole length* (current state). Lanes assigned by
-   greedy graph colouring over which routes share any corridor, then centred:
-   `3302:-1.5, 3469:-0.5, 3470:0.5, 62487:1.5`. Fixes the jumping. **But the
-   user says it got worse**, and the likely reason is below.
+> **A route's published shape is NOT the street centreline.** Brown's Evening
+> CW and CCW shapes are already ~7m apart -- measured -- each traced down its
+> own side of the road. Offsetting outward from an already-offset shape puts
+> the line on the pavement, and snapping buses to that line puts the buses
+> there too.
 
-**Probable current defect:** with one lane per route for its entire length,
-every route is permanently displaced from the street it follows — including
-where it runs alone and has no one to be parallel to. Lane 1.5 at `LANE_PX 5`
-is 7.5px, which at z14 is roughly 46 m of ground. So all four routes now float
-beside their streets everywhere. That is very plausibly "worse".
+The verification was independently wrong, which is why this survived three
+"fixed" claims: it matched each bus to a route line **by colour**, and several
+Brown routes share a colour, so buses were being measured against lines that
+were not theirs and scoring under 1px.
 
-**The real tension:** you cannot have (a) no mid-route lane jumps, (b) no
-offset where a route runs alone, and (c) constant pixel spacing, using
-MapLibre's `line-offset` — it is constant per feature.
+**Current state:** `parallel.ts` and `snap.ts` are deleted. Routes render
+`r.shape` unchanged; buses render at their reported `lat`/`lng`. Measured by
+`route_id` on raw coordinates, every live bus is **0.6-18.2m from its own
+route line** -- ordinary GPS error. Passio's vehicle positions and its shapes
+agree; the drawing code was what moved them apart.
 
-**Suggested direction (untried):** stop using `line-offset`. Compute the offset
-into the *geometry* in lat/lng, so the offset can **taper smoothly** over
-~30–50 m where a lane changes instead of stepping. Recompute on `zoomend`
-(TransitMap already tracks `zoom` state and `metresPerPixel` exists in
-`snap.ts`) so spacing stays roughly pixel-constant. That gives all three
-properties. It is more work and needs its own tests.
-
-Whatever is tried: **look at it at several zooms and get the user to confirm.**
-
-### 4b. Buses on their routes
-
-**Where:** `src/routing/snap.ts` (`snapToLane`, `metresPerPixel`) and the bus
-marker effect in `TransitMap.tsx`.
-
-`snapToLane` projects the bus onto the nearest point of its own route and
-displaces it perpendicular by `lane * LANE_PX * metresPerPixel`, so it lands on
-the *drawn* (offset) line rather than the centreline. Recomputed on zoom.
-
-**Facts established by measurement:**
-
-- Buses are genuinely 5–45 m off their own GTFS shape (GPS). Passio's own feed
-  carries a `snapDistance` field for the same reason, so snapping is legitimate
-  and expected.
-- Measured from the marker's CSS transform on the deployed build, a bus sits
-  within ~6 px of its own route line — inside the marker's own radius.
-- A real bug was found and fixed: `Marker({offset:[0,4]})` pushed every bus 4px
-  off, because the dot is already centred in its 30×30 box (left 4 + radius 11
-  = 15 = box centre).
-
-**Measurement traps — I fell into both:**
-
-- **Do NOT use `getBoundingClientRect()` on markers.** Off-screen markers
-  return nonsense and produced contradictory readings ("64px off") that sent me
-  down a wrong path twice. Parse the anchor out of the element's
-  `style.transform`: `translate(-50%, -50%) translate(Xpx, Ypx)` — `(X, Y)` is
-  the anchor in canvas coordinates.
-- **A permanent map handle is exposed as `globalThis.__map`** in TransitMap
-  specifically so rendered geometry can be queried in a deployed build. Use
-  `m.queryRenderedFeatures([[x-pad,y-pad],[x+pad,y+pad]], {layers:['routes-line']})`
-  and check `properties.routeId` / `properties.lane`.
-
-**Still unexplained:** the user reports buses off their routes even after the
-above. Since 4a and 4b interact (the bus is offset to match a line whose offset
-may itself be wrong), fixing 4a first may resolve or change 4b. Verify buses
-*after* the line rendering is settled.
+**If parallel lanes are ever wanted again**, the prerequisite is establishing
+where the street centreline actually is (the basemap has it; the GTFS shape
+does not), and any measurement must join bus to route on `route_id`, never on
+colour.
 
 ---
 
