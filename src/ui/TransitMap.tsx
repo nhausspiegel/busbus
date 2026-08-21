@@ -58,15 +58,17 @@ export interface Overlay {
 
 export function TransitMap({
   feed, buses, me, destination, overlay, focus, highlightRouteId, routeStopIds, activeRouteIds,
-  onMapClick, onClearDestination, onRouteClick, onStopClick, onPlaceClick,
+  onMapClick, onDeselect, onRouteClick, onStopClick, onPlaceClick,
 }: {
   feed: StaticFeed | null;
   buses: Bus[];
   me: LatLng | null;
   destination: LatLng | null;
-  /** Tapping empty map with a destination set clears it, the way Apple Maps
-   *  deselects rather than dropping a second pin. */
-  onClearDestination?: () => void;
+  /** Tapping empty map backs out of whatever is selected -- a stop card, a
+   *  route, a chosen trip, a destination -- the way Apple Maps deselects
+   *  rather than dropping a second pin. The map does not track what is
+   *  selected; it reports the tap and lets App decide what to drop. */
+  onDeselect?: () => void;
   overlay: Overlay | null;
   /** Points the map should frame, e.g. the chosen trip end to end. */
   focus: LatLng[] | null;
@@ -95,12 +97,10 @@ export function TransitMap({
   routeCb.current = onRouteClick;
   const stopCb = useRef(onStopClick);
   stopCb.current = onStopClick;
-  const clearCb = useRef(onClearDestination);
-  clearCb.current = onClearDestination;
+  const clearCb = useRef(onDeselect);
+  clearCb.current = onDeselect;
   const placeCb = useRef(onPlaceClick);
   placeCb.current = onPlaceClick;
-  const hasDest = useRef(false);
-  hasDest.current = destination !== null;
   // A counter, not a boolean: setStyle falls back to a full reload when its
   // diff is not applicable, which drops every layer we added. Incrementing on
   // each styledata lets the drawing effects re-run and rebuild them.
@@ -200,9 +200,10 @@ export function TransitMap({
       // a tap on a stop was opening the stop card AND dropping a pin.
       const hitLayers = ["stops-hit", "poi-hit"].filter((l) => m.getLayer(l));
       if (hitLayers.length && m.queryRenderedFeatures(e.point, { layers: hitLayers }).length) return;
-      // A plain tap never drops a pin. With a destination set it deselects;
-      // otherwise it does nothing. Dropping a pin is a long press.
-      if (hasDest.current) clearCb.current?.();
+      // A plain tap never drops a pin -- that is a long press. It backs out of
+      // whatever is selected, and App decides what that means; if nothing is
+      // selected this does nothing.
+      clearCb.current?.();
     });
 
     // Long press (or right click) drops a pin, as on Apple Maps.

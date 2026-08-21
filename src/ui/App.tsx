@@ -263,9 +263,18 @@ export default function App() {
         onStopClick={(id) => { setStopId(id); setRouteId(null); setDetent("half"); }}
         onMapClick={(p) => pickDestination(p, "Dropped pin")}
         onPlaceClick={(p) => pickDestination(p.at, p.name)}
-        onClearDestination={() => {
-          setDest(null); setChosen(null); setPreview(null); setItineraries(null);
-          setDetent("peek");
+        onDeselect={() => {
+          // Back out one level, in the same precedence resolveMode uses, so a
+          // tap on the map undoes exactly what the Back button would. Dropping
+          // everything at once would throw away a destination the rider only
+          // wanted to look away from.
+          if (stopId) { setStopId(null); return; }
+          if (routeId) { setRouteId(null); return; }
+          if (chosen) { setChosen(null); setPreview(null); return; }
+          if (dest) {
+            setDest(null); setChosen(null); setPreview(null); setItineraries(null);
+            setDetent("peek");
+          }
         }}
       />
 

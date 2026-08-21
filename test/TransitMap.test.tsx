@@ -162,6 +162,21 @@ describe("TransitMap", () => {
     expect(Math.abs(lat - 41.8228) + Math.abs(lng - -71.4002)).toBeGreaterThan(1e-6);
   });
 
+  it("deselects when the map is tapped, so Back is not the only way out", () => {
+    // Selecting a route and then having to find a small Back button to leave it
+    // is the wrong way round: Apple Maps drops the selection when you tap the
+    // map. A tap that lands on a stop or a place must still select that,
+    // which is what the hit test above this guards.
+    const onDeselect = vi.fn();
+    render(
+      <TransitMap feed={feed} buses={buses} me={null} destination={null} overlay={null}
+        focus={null} highlightRouteId="A" activeRouteIds={new Set(["A", "B"])}
+        onDeselect={onDeselect} />);
+    map.fire("load");
+    map.fire("click", { point: { x: 10, y: 10 }, lngLat: { lat: 41.82, lng: -71.4 } });
+    expect(onDeselect).toHaveBeenCalled();
+  });
+
   it("leaves the bus marker absolutely positioned, as MapLibre needs", () => {
     // MapLibre positions markers with a transform inside a positioned layer;
     // `.maplibregl-marker` is `position: absolute` for that reason. Setting the
