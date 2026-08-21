@@ -73,24 +73,31 @@ function corridorKey(a: LatLng, b: LatLng): string {
 }
 
 /**
- * Split coincident route lines into lanes so a shared corridor draws as
- * parallel lines rather than one line hiding the rest.
+ * Give each route a lane so coincident routes draw side by side instead of one
+ * hiding the rest.
  *
- * Pure and deterministic: lanes are assigned by sorted route id, so the same
- * input always produces the same output and the map does not reshuffle
- * between renders.
+ * A route keeps ONE lane for its whole length. Assigning lanes per segment
+ * looked correct in the abstract and terrible in practice: wherever a route
+ * gained or lost a corridor-mate its line jumped sideways by the full lane
+ * width, which on the real map drew the Connector as two parallel orange lines
+ * meeting in an X. Transit maps hold a line's offset end to end, and so does
+ * this.
+ *
+ * Pure and deterministic: lanes are assigned in sorted route-id order, so the
+ * same input always produces the same output and the map never reshuffles.
  */
 export function offsetColinearRoutes(
   routes: { id: string; shape: LatLng[] }[],
 ): OffsetPiece[] {
   const usable = routes.filter((r) => r.shape.length >= 2);
+  if (usable.length === 0) return [];
 
-  // Pass 1: which routes occupy each corridor cell.
-  const sampled = new Map<string, LatLng[]>();
+  // Which routes share any corridor with which. Resampling to a common
+  // spacing first is what makes this work at all -- shapes arrive at wildly
+  // different densities and raw vertices never coincide.
   const occupants = new Map<string, Set<string>>();
   for (const r of usable) {
     const pts = resample(r.shape);
-    sampled.set(r.id, pts);
     for (let i = 1; i < pts.length; i++) {
       const key = corridorKey(pts[i - 1]!, pts[i]!);
       const set = occupants.get(key) ?? new Set<string>();
@@ -99,93 +106,33 @@ export function offsetColinearRoutes(
     }
   }
 
-  // Pass 2: decide each route's lane along its length, then emit the ORIGINAL
-  // vertices. The resampled points exist only to make corridors comparable
-  // across shapes of very different density -- rendering them would hand
-  // MapLibre a vertex every 12m, and line-offset scallops at every vertex.
-  const pieces: OffsetPiece[] = [];
-  for (const r of usable) {
-    const pts = sampled.get(r.id)!;
-    if (pts.length < 2) continue;
-
-    const lanes: number[] = [];
-    for (let i = 1; i < pts.length; i++) lanes.push(laneAt(pts, i, r.id, occupants));
-    smoothLanes(lanes);
-
-    // Carry the lane decision back onto the source vertices: each original
-    // vertex takes the lane of the resampled segment nearest to it.
-    const cum = cumulativeDistances(r.shape);
-    const sampleStep = cum[cum.length - 1]! / Math.max(1, lanes.length);
-    const laneForVertex = (vertexIndex: number): number => {
-      const along = cum[vertexIndex]!;
-      const idx = Math.min(lanes.length - 1, Math.max(0, Math.floor(along / sampleStep)));
-      return lanes[idx]!;
-    };
-
-    let runStart = 0;
-    let runLane = laneForVertex(0);
-    for (let i = 1; i < r.shape.length; i++) {
-      const lane = laneForVertex(i);
-      if (lane === runLane) continue;
-      // Overlap by one vertex so the drawn lines meet rather than leaving a
-      // notch where the lane changes.
-      pieces.push({ routeId: r.id, path: r.shape.slice(runStart, i + 1), lane: runLane });
-      runStart = i;
-      runLane = lane;
-    }
-    pieces.push({ routeId: r.id, path: r.shape.slice(runStart), lane: runLane });
+  const shares = new Map<string, Set<string>>(usable.map((r) => [r.id, new Set<string>()]));
+  for (const set of occupants.values()) {
+    if (set.size < 2) continue;
+    for (const a of set)
+      for (const b of set)
+        if (a !== b) shares.get(a)?.add(b);
   }
-  return pieces.filter((p) => p.path.length >= 2);
-}
 
-/** Distance along a polyline at each vertex. */
-function cumulativeDistances(shape: LatLng[]): number[] {
-  const out = [0];
-  for (let i = 1; i < shape.length; i++)
-    out.push(out[i - 1]! + metresBetween(shape[i - 1]!, shape[i]!));
-  return out;
-}
-
-/** Shortest run of segments worth drawing in its own lane. */
-const MIN_RUN = 5;
-
-/** Absorb runs too short to be a real corridor.
- *
- *  Cell boundaries make lane assignment flicker: a route crossing the corner
- *  of a shared cell picks up a lane for one 12m segment and drops it again.
- *  Left alone that produced 82 pieces for a 24-point route and a visible
- *  stutter in the line. Short runs adopt the lane before them. */
-function smoothLanes(lanes: number[]): void {
-  let start = 0;
-  while (start < lanes.length) {
-    let end = start;
-    while (end + 1 < lanes.length && lanes[end + 1] === lanes[start]) end++;
-    const runLength = end - start + 1;
-    if (runLength < MIN_RUN && start > 0) {
-      const prev = lanes[start - 1]!;
-      for (let i = start; i <= end; i++) lanes[i] = prev;
-    }
-    start = end + 1;
+  // Smallest slot not taken by a route this one shares with. Routes that never
+  // share anything all sit in slot 0, on the street centreline.
+  const slot = new Map<string, number>();
+  for (const r of [...usable].sort((a, b) => a.id.localeCompare(b.id))) {
+    const taken = new Set<number>();
+    for (const other of shares.get(r.id) ?? [])
+      if (slot.has(other)) taken.add(slot.get(other)!);
+    let s = 0;
+    while (taken.has(s)) s++;
+    slot.set(r.id, s);
   }
-  // A short opening run adopts whatever follows it.
-  if (lanes.length > MIN_RUN) {
-    let firstChange = 0;
-    while (firstChange + 1 < lanes.length && lanes[firstChange + 1] === lanes[0]) firstChange++;
-    if (firstChange + 1 < MIN_RUN) {
-      const next = lanes[firstChange + 1]!;
-      for (let i = 0; i <= firstChange; i++) lanes[i] = next;
-    }
-  }
+
+  // Centre each bundle so a pair straddles the street rather than both sitting
+  // to one side of it.
+  const maxSlot = Math.max(...slot.values());
+  return usable.map((r) => ({
+    routeId: r.id,
+    path: r.shape,
+    lane: slot.get(r.id)! - maxSlot / 2,
+  }));
 }
 
-function laneAt(
-  pts: LatLng[], i: number, routeId: string, occupants: Map<string, Set<string>>,
-): number {
-  const key = corridorKey(pts[i - 1]!, pts[i]!);
-  const set = occupants.get(key);
-  if (!set || set.size <= 1) return 0;
-  const ids = [...set].sort();
-  const idx = ids.indexOf(routeId);
-  // Centre the bundle: 2 routes -> -0.5/+0.5, 3 -> -1/0/+1.
-  return idx - (ids.length - 1) / 2;
-}

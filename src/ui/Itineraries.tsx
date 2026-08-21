@@ -1,6 +1,8 @@
 /** Ranked itinerary list and the detail view for one trip. */
+import { useState, type ReactNode } from "react";
 import { clock, minsUntil, durationMins } from "./format";
-import type { Itinerary, StaticFeed } from "../data/types";
+import { rideStops } from "../routing/rideStops";
+import type { Itinerary, RideLeg, StaticFeed } from "../data/types";
 
 /** A filled badge in the route's own colour, the way transit apps label lines.
  *  An outlined chip with a dot made every route look the same at a glance. */
@@ -131,7 +133,7 @@ export function ItineraryDetail({
             color={feed?.routes.get(r.routeId)?.color}
             title={feed?.routes.get(r.routeId)?.name ?? r.routeId}
             detail={`${clock(r.departTime)} ${nameOf(r.boardStopId)} → ${clock(r.arriveTime)} ${nameOf(r.alightStopId)}`}
-            note={`${r.numStops} stop${r.numStops === 1 ? "" : "s"}${r.live ? " · live" : " · scheduled"}`}
+            note={<RideStopsNote feed={feed} ride={r} />}
           />
         ))}
         {itinerary.rides.length > 0 && (
@@ -155,9 +157,75 @@ export function ItineraryDetail({
   );
 }
 
+/** The stops a ride passes through, named only when asked for.
+ *
+ *  A Brown shuttle announces nothing, so "7 stops" does not tell a rider which
+ *  one is theirs. The list is long and this view is read standing at a stop on
+ *  a phone, so it stays collapsed until tapped -- the default height is
+ *  unchanged from the plain "7 stops · live" line it replaces.
+ *
+ *  The boarding and alighting stops are dropped: the step's own detail line
+ *  right above already names both, with their times. */
+function RideStopsNote({ feed, ride }: { feed: StaticFeed | null; ride: RideLeg }) {
+  const [open, setOpen] = useState(false);
+  const between = feed ? rideStops(feed, ride).filter((s) => !s.boarding && !s.alighting) : [];
+  const count = `${ride.numStops} stop${ride.numStops === 1 ? "" : "s"}`;
+  const liveness = ride.live ? " · live" : " · scheduled";
+
+  // No feed yet, an unknown trip, or a ride straight to the next stop: nothing
+  // to disclose, so do not offer a control that opens onto an empty list.
+  if (between.length === 0) return <>{count}{liveness}</>;
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        style={{
+          border: 0, background: "transparent", font: "inherit", fontWeight: 600,
+          color: "var(--accent)", cursor: "pointer", display: "inline-flex",
+          alignItems: "center", gap: 4,
+          // Padding for a thumb, cancelled by margin so the row keeps its height.
+          padding: "5px 6px", margin: "-5px -6px",
+        }}
+      >
+        {count}
+        <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true" style={{
+          transform: open ? "rotate(90deg)" : "none", transition: "transform .15s ease",
+        }}>
+          <path d="M2.5 1 5.5 4 2.5 7" fill="none" stroke="currentColor"
+                strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {liveness}
+      {open && (
+        <>
+          <ol style={{ listStyle: "none", margin: "6px 0 0", padding: "6px 0 0",
+                       borderTop: "1px solid var(--hairline)" }}>
+            {between.map((s, i) => (
+              <li key={i} style={{ display: "flex", gap: 10, padding: "2px 0" }}>
+                <span style={{ fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+                  {clock(s.time)}
+                </span>
+                <span style={{ color: "var(--ink)" }}>{s.stop.name}</span>
+              </li>
+            ))}
+          </ol>
+          {/* Even on a live ride only the boarding time is reported by a bus;
+              everything in between is that time plus a timetable offset. */}
+          <p style={{ margin: "5px 0 0", fontSize: 11 }}>
+            Times between stops come from the timetable.
+          </p>
+        </>
+      )}
+    </>
+  );
+}
+
 function Step({
   dot, color, title, detail, note,
-}: { dot: "walk" | "ride"; color?: string; title: string; detail: string; note?: string }) {
+}: { dot: "walk" | "ride"; color?: string; title: string; detail: string; note?: ReactNode }) {
   return (
     <li style={{ display: "flex", gap: 12, padding: "10px 0", borderTop: "1px solid var(--hairline)" }}>
       <span aria-hidden="true" style={{

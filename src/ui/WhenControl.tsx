@@ -1,30 +1,51 @@
-/** Leave now, or plan for a later time today.
+export type WhenMode = "leave" | "arrive";
+
+/** Leave now, leave at a time, or arrive by one.
  *
  *  Uses a native time input: it is the platform's own picker, already
  *  accessible and already familiar, and there is nothing here worth
  *  reimplementing. */
+const pill = (active: boolean) => ({
+  border: `1px solid ${active ? "var(--accent)" : "var(--hairline)"}`,
+  background: active ? "var(--accent-wash)" : "var(--raised)",
+  color: active ? "var(--accent)" : "var(--ink)",
+  borderRadius: 999, padding: "4px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+});
+
 export function WhenControl({
-  at, onChange,
-}: { at: Date | null; onChange: (d: Date | null) => void }) {
+  at, mode = "leave", onChange, onModeChange,
+}: {
+  at: Date | null;
+  mode?: WhenMode;
+  onChange: (d: Date | null) => void;
+  /** Omitted until a caller wires arrive-by; the toggle stays hidden rather
+   *  than rendering a button that does nothing. */
+  onModeChange?: (m: WhenMode) => void;
+}) {
   const value = at
     ? `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`
     : "";
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-      <label style={{ fontSize: 13, color: "var(--muted)" }} htmlFor="leave-at">Leave</label>
-      <button
-        onClick={() => onChange(null)}
-        aria-pressed={at === null}
-        style={{
-          border: `1px solid ${at === null ? "var(--accent)" : "var(--hairline)"}`,
-          background: at === null ? "var(--accent-wash)" : "var(--raised)",
-          color: at === null ? "var(--accent)" : "var(--ink)",
-          borderRadius: 999, padding: "4px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer",
-        }}
-      >now</button>
+      {onModeChange ? (
+        <div role="group" aria-label="Plan by" style={{ display: "flex", gap: 4 }}>
+          <button onClick={() => onModeChange("leave")} aria-pressed={mode === "leave"}
+            style={pill(mode === "leave")}>Leave</button>
+          <button onClick={() => onModeChange("arrive")} aria-pressed={mode === "arrive"}
+            style={pill(mode === "arrive")}>Arrive by</button>
+        </div>
+      ) : (
+        <label style={{ fontSize: 13, color: "var(--muted)" }} htmlFor="when-at">Leave</label>
+      )}
+      {/* "now" is only a departure. There is no arriving-by-now. */}
+      {mode === "leave" && (
+        <button onClick={() => onChange(null)} aria-pressed={at === null}
+          style={pill(at === null)}>now</button>
+      )}
       <input
-        id="leave-at" type="time" value={value}
+        id="when-at" type="time" value={value}
+        aria-label={mode === "arrive" ? "Arrive by" : "Leave at"}
         onChange={(e) => {
           const [h, m] = e.target.value.split(":").map(Number);
           if (!Number.isFinite(h) || !Number.isFinite(m)) return onChange(null);

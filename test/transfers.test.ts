@@ -167,3 +167,49 @@ describe("transfer result quality", () => {
     expect(got.some((i) => i.rides.length === 0)).toBe(true);
   });
 });
+
+describe("planWithTransfers with an arrive-by deadline", () => {
+  it("excludes a transfer that arrives after the deadline", () => {
+    // The fixture's transfer reaches the destination at NOW+960.
+    const f = twoLegFixture();
+    expect(planWithTransfers({ ...opts(f), arriveBy: NOW + 960 })[0]!.transfers).toBe(1);
+    expect(planWithTransfers({ ...opts(f), arriveBy: NOW + 959 })).toEqual([]);
+  });
+
+  it("prefers a transfer that leaves later over a direct ride that arrives sooner", () => {
+    // Under earliest-arrival the direct ride wins; under a deadline the
+    // transfer is the improvement, because it lets the rider leave later.
+    const f = twoLegFixture();
+    f.board.set("A", [{ stopId: "A", tripId: "T1", routeId: "R1", seq: 1, time: NOW + 300, live: false }]);
+    f.board.set("X", [{ stopId: "X", tripId: "T2", routeId: "R2", seq: 1, time: NOW + 700, live: false }]);
+    f.board.set("B", [{ stopId: "B", tripId: "T2", routeId: "R2", seq: 2, time: NOW + 1000, live: false }]);
+    // Transfer: leave +240, reach X at +600, connect at +700, arrive +1060.
+    f.feed.routes.set("R3", { id: "R3", name: "R3", shortName: "3", color: "#333333", shape: [] });
+    f.feed.trips.set("T3", { id: "T3", routeId: "R3", stops: [
+      { stopId: "A", seq: 1, time: 0 }, { stopId: "B", seq: 2, time: 600 }] });
+    f.board.get("A")!.push({ stopId: "A", tripId: "T3", routeId: "R3", seq: 1, time: NOW + 120, live: false });
+    f.board.get("B")!.push({ stopId: "B", tripId: "T3", routeId: "R3", seq: 2, time: NOW + 720, live: false });
+    // Direct R3: leave +60, arrive +780.
+
+    expect(planWithTransfers(opts(f))[0]!.transfers).toBe(0);
+
+    const byDeadline = planWithTransfers({ ...opts(f), arriveBy: NOW + 1100 });
+    expect(byDeadline[0]!.transfers).toBe(1);
+    expect(byDeadline[0]!.rides.map((r) => r.routeId)).toEqual(["R1", "R2"]);
+    expect(byDeadline[0]!.departTime).toBe(NOW + 240);
+  });
+
+  it("still ranks the walk among the options under a deadline", () => {
+    const f = twoLegFixture();
+    const got = planWithTransfers({ ...opts(f), directWalkSeconds: 900, arriveBy: NOW + 1000 });
+    // Walking can start at +100; the transfer forces a +60 departure.
+    expect(got[0]!.rides).toHaveLength(0);
+    expect(got[0]!.departTime).toBe(NOW + 100);
+    expect(got.some((i) => i.transfers === 1)).toBe(true);
+  });
+
+  it("returns empty for a deadline nothing can meet, rather than throwing", () => {
+    const f = twoLegFixture();
+    expect(planWithTransfers({ ...opts(f), directWalkSeconds: 900, arriveBy: NOW + 10 })).toEqual([]);
+  });
+});

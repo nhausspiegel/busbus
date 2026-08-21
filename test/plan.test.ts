@@ -187,3 +187,87 @@ describe("planTrips", () => {
     expect(got[0]!.rides[0]!.arriveTime).toBeLessThan(got[1]!.rides[0]!.arriveTime);
   });
 });
+
+describe("planTrips with an arrive-by deadline", () => {
+  it("excludes an itinerary that arrives after the deadline", () => {
+    const f = fixture(NOW + 300);            // reaches the destination at NOW+1080
+    expect(planTrips({ feed: f.feed, board: f.board, ...base(), arriveBy: NOW + 1080 })).toHaveLength(1);
+    expect(planTrips({ feed: f.feed, board: f.board, ...base(), arriveBy: NOW + 1079 })).toEqual([]);
+  });
+
+  it("ranks the latest departure first under a deadline, the earliest arrival without one", () => {
+    // Same board, same everything: only the presence of arriveBy flips the order.
+    const f = fixture(NOW + 300);            // R1: leave +180, ride 600, arrive +1080
+    f.feed.routes.set("RX", { id: "RX", name: "Express", shortName: "X", color: "#111111", shape: [] });
+    f.feed.trips.set("TX", {
+      id: "TX", routeId: "RX",
+      stops: [{ stopId: "A", seq: 1, time: 0 }, { stopId: "B", seq: 2, time: 120 }],
+    });
+    f.board.get("A")!.push({ stopId: "A", tripId: "TX", routeId: "RX", seq: 1, time: NOW + 900, live: false });
+    f.board.get("B")!.push({ stopId: "B", tripId: "TX", routeId: "RX", seq: 2, time: NOW + 1020, live: false });
+    // RX: leave +780, ride 120, arrive +1200 -- later arrival, much later departure.
+
+    expect(planTrips({ feed: f.feed, board: f.board, ...base() })[0]!.rides[0]!.routeId).toBe("R1");
+
+    const byDeadline = planTrips({ feed: f.feed, board: f.board, ...base(), arriveBy: NOW + 1200 });
+    expect(byDeadline.map((i) => i.rides[0]!.routeId)).toEqual(["RX", "R1"]);
+    expect(byDeadline[0]!.departTime).toBe(NOW + 780);
+  });
+
+  it("keeps the latest bus on a route that still makes the deadline", () => {
+    const f = fixture(NOW + 300);
+    f.feed.trips.set("T2", {
+      id: "T2", routeId: "R1",
+      stops: [{ stopId: "A", seq: 1, time: 0 }, { stopId: "B", seq: 2, time: 600 }],
+    });
+    f.board.get("A")!.push({ stopId: "A", tripId: "T2", routeId: "R1", seq: 1, time: NOW + 900, live: false });
+    f.board.get("B")!.push({ stopId: "B", tripId: "T2", routeId: "R1", seq: 2, time: NOW + 1500, live: false });
+    // T1 arrives NOW+1080, T2 arrives NOW+1680.
+    const got = planTrips({ feed: f.feed, board: f.board, ...base(), arriveBy: NOW + 1680 });
+    expect(got).toHaveLength(1);
+    expect(got[0]!.rides[0]!.tripId).toBe("T2");
+
+    // Tightening the deadline must fall back to the earlier bus on that route,
+    // not drop the route because its latest bus no longer fits.
+    const tight = planTrips({ feed: f.feed, board: f.board, ...base(), arriveBy: NOW + 1200 });
+    expect(tight[0]!.rides[0]!.tripId).toBe("T1");
+  });
+
+  it("offers the walk under a deadline, timed to start as late as it can", () => {
+    const f = fixture(NOW + 300);            // bus: leave +180
+    const got = planTrips({
+      feed: f.feed, board: f.board, ...base({ directWalkSeconds: 480 }), arriveBy: NOW + 3600,
+    });
+    expect(got[0]!.rides).toHaveLength(0);
+    expect(got[0]!.departTime).toBe(NOW + 3120);
+    expect(got[0]!.arriveTime).toBe(NOW + 3600);
+    expect(got.some((i) => i.rides.length > 0)).toBe(true);   // the bus is still offered
+  });
+
+  it("ranks a bus above the walk when the bus lets the rider leave later", () => {
+    const f = fixture(NOW + 2400);           // leave +2280, arrive +3180
+    const got = planTrips({
+      feed: f.feed, board: f.board, ...base({ directWalkSeconds: 1800 }), arriveBy: NOW + 3600,
+    });
+    expect(got[0]!.rides.length).toBeGreaterThan(0);          // walking would mean leaving at +1800
+    expect(got[0]!.departTime).toBe(NOW + 2280);
+    expect(got.some((i) => i.rides.length === 0)).toBe(true);
+  });
+
+  it("never proposes a walk that would have had to start in the past", () => {
+    // Ten-minute walk, five minutes left. Anchoring the walk on the deadline
+    // without clamping to `now` invents a departure before the search began.
+    const f = fixture(NOW + 300);
+    const got = planTrips({
+      feed: f.feed, board: new Map(), ...base({ directWalkSeconds: 600 }), arriveBy: NOW + 300,
+    });
+    expect(got).toEqual([]);
+  });
+
+  it("returns empty for a deadline nothing can meet, rather than throwing", () => {
+    const f = fixture(NOW + 300);
+    expect(planTrips({
+      feed: f.feed, board: f.board, ...base({ directWalkSeconds: 480 }), arriveBy: NOW + 60,
+    })).toEqual([]);
+  });
+});

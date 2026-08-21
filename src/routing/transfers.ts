@@ -13,7 +13,9 @@ const MIN_TRANSFER_SECONDS = 60;
  *
  *  A transfer is only surfaced when it arrives strictly earlier than the best
  *  direct ride -- riders dislike transfers, so an equal-arrival transfer is
- *  strictly worse. */
+ *  strictly worse. Under `arriveBy` that test inverts with the ranking: the
+ *  transfer has to let the rider LEAVE later, since arriving sooner than
+ *  necessary buys nothing once the deadline is met. */
 export function planWithTransfers(
   opts: PlanOptions & { maxTransfers?: number },
 ): Itinerary[] {
@@ -22,6 +24,12 @@ export function planWithTransfers(
   if (maxTransfers < 1) return direct;
 
   const { feed, board, now } = opts;
+  // The second leg is planned WITHOUT the deadline. Once the first bus is
+  // fixed, the connection cannot change when the rider leaves home, so latest
+  // departure is the wrong question for it -- earliest arrival is both the
+  // least standing around at the transfer stop and the option most likely to
+  // beat the deadline. The whole itinerary is checked against it below.
+  const { arriveBy, ...noDeadline } = opts;
   const twoLeg: Itinerary[] = [];
 
   for (const [firstStopId, walkSecs] of opts.walkFromOrigin) {
@@ -56,7 +64,7 @@ export function planWithTransfers(
         if (!midStop) continue;
 
         const second = planTrips({
-          ...opts,
+          ...noDeadline,
           origin: midStop,
           walkFromOrigin: new Map([[mid.stopId, 0]]),
           now: arriveMid + MIN_TRANSFER_SECONDS,
@@ -95,7 +103,11 @@ export function planWithTransfers(
   // Compare transfers against the best option that actually rides a bus; the
   // walk-only entry is not something a transfer can improve on.
   const bestDirect = direct.find((d) => d.rides.length > 0);
-  const worthwhile = twoLeg.filter((t) => !bestDirect || t.arriveTime < bestDirect.arriveTime);
+  const worthwhile = twoLeg.filter((t) =>
+    (arriveBy === undefined || t.arriveTime <= arriveBy) &&
+    (!bestDirect || (arriveBy === undefined
+      ? t.arriveTime < bestDirect.arriveTime
+      : t.departTime > bestDirect.departTime)));
 
   // One itinerary per route pair. Every intermediate stop on the first bus
   // produced its own near-identical two-leg trip, and since transfers sort
@@ -105,8 +117,11 @@ export function planWithTransfers(
   for (const t of worthwhile) {
     const key = t.rides.map((r) => r.routeId).join(">");
     const prev = bestByPair.get(key);
-    if (!prev || t.arriveTime < prev.arriveTime ||
-        (t.arriveTime === prev.arriveTime && t.totalWalkSeconds < prev.totalWalkSeconds)) {
+    if (!prev) { bestByPair.set(key, t); continue; }
+    const gain = arriveBy === undefined
+      ? prev.arriveTime - t.arriveTime      // positive when t arrives earlier
+      : t.departTime - prev.departTime;     // positive when t leaves later
+    if (gain > 0 || (gain === 0 && t.totalWalkSeconds < prev.totalWalkSeconds)) {
       bestByPair.set(key, t);
     }
   }
@@ -114,5 +129,5 @@ export function planWithTransfers(
   // Same horizon as planTrips: a transfer arriving tonight is not an
   // alternative to walking there this morning, even though it beats every
   // other RIDE.
-  return rankAndTrim([...direct, ...bestByPair.values()], opts.maxResults ?? 5);
+  return rankAndTrim([...direct, ...bestByPair.values()], opts.maxResults ?? 5, arriveBy);
 }
