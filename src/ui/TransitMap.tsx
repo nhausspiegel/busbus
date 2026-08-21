@@ -303,9 +303,12 @@ export function TransitMap({
         const el = document.createElement("button");
         el.type = "button";
         el.className = "display";
-        // 30x30 box whose lower 22px is the dot; anchoring the box centre put
-        // the dot ~4px north of the bus's real position, which at street zoom
-        // reads as "the bus is not on its route".
+        // So a bus can be joined to its route when checking what got drawn.
+        // Matching them by COLOUR instead is how a broken layout measured
+        // clean three times running: several Brown routes share one.
+        el.dataset["routeId"] = b.routeId;
+        // 30x30 box, dot centred in it, so MapLibre's centre anchor lands the
+        // dot on the coordinate.
         el.style.cssText =
           "position:relative;width:30px;height:30px;padding:0;border:0;background:none;cursor:pointer";
         // A heading arrow answers "is it coming towards me or leaving", which
@@ -318,7 +321,11 @@ export function TransitMap({
           `<path d="M15 0.5 L19 6 L11 6 Z" fill="${color}"/></svg>`;
         const dot = document.createElement("div");
         dot.style.cssText =
-          `position:absolute;left:4px;top:4px;width:22px;height:22px;border-radius:50%;` +
+          // border-box, or the 2.5px border grows the 22px dot to 27px and its
+          // centre lands at 17.5 in a box whose centre is 15 -- every bus drawn
+          // 2.5px down and right of where the feed put it.
+          `position:absolute;left:4px;top:4px;width:22px;height:22px;box-sizing:border-box;` +
+          `border-radius:50%;` +
           `background:${color};color:#fff;` +
           `border:2.5px solid ${darkRef.current ? "#15110F" : "#FFFFFF"};` +
           `box-shadow:0 1px 5px rgb(0 0 0 / 45%);` +

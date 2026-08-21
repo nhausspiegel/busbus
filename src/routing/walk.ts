@@ -104,6 +104,29 @@ export async function walkSeconds(from: LatLng, to: LatLng): Promise<number | nu
   return typeof t === "number" ? t : null;
 }
 
+/** One turn of a walking leg, as Valhalla words it. */
+export interface WalkStep { instruction: string; metres: number; seconds: number }
+
+/** Pull the drawable line AND the turn-by-turn out of one /route response.
+ *
+ *  Split out from the fetch so it can be tested against a frozen response:
+ *  Valhalla is volunteer-run and tests never call it. */
+export function parseWalkRoute(data: unknown): { path: LatLng[]; steps: WalkStep[] } {
+  const leg = (data as { trip?: { legs?: { shape?: string;
+    maneuvers?: { instruction?: string; length?: number; time?: number }[] }[] } })
+    ?.trip?.legs?.[0];
+  return {
+    path: leg?.shape ? decodePolyline6(leg.shape) : [],
+    // `length` is kilometres -- the response says so in trip.units. Passing it
+    // through as metres would tell a rider to walk eight millimetres.
+    steps: (leg?.maneuvers ?? []).map((mv) => ({
+      instruction: mv.instruction ?? "",
+      metres: (mv.length ?? 0) * 1000,
+      seconds: mv.time ?? 0,
+    })),
+  };
+}
+
 /** Sidewalk-following polyline for drawing one walking leg. */
 export async function walkGeometry(from: LatLng, to: LatLng): Promise<LatLng[]> {
   const res = await fetch(`${VALHALLA}/route`, {
@@ -118,9 +141,7 @@ export async function walkGeometry(from: LatLng, to: LatLng): Promise<LatLng[]> 
     }),
   });
   if (!res.ok) throw new Error(`valhalla route -> HTTP ${res.status}`);
-  const data = await res.json();
-  const shape: string | undefined = data?.trip?.legs?.[0]?.shape;
-  return shape ? decodePolyline6(shape) : [];
+  return parseWalkRoute(await res.json()).path;
 }
 
 /** Valhalla encodes shapes as Google polyline at precision 6, not the
