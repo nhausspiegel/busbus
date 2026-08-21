@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sliceShape, snapToShape } from "../src/routing/shape";
+import { pointAlongShape, sliceShape, snapToShape } from "../src/routing/shape";
 import { haversineMeters } from "../src/routing/walk";
 import type { LatLng } from "../src/data/types";
 
@@ -76,5 +76,64 @@ describe("sliceShape", () => {
 
   it("returns empty for a degenerate shape rather than throwing", () => {
     expect(sliceShape([], { lat: 0, lng: 0 }, { lat: 1, lng: 1 })).toEqual([]);
+  });
+});
+
+/** A corner of two 200m streets, at Providence's latitude. */
+const corner: LatLng[] = [
+  { lat: 41.8240, lng: -71.4002 },
+  { lat: 41.8258, lng: -71.4002 },   // 200m north
+  { lat: 41.8258, lng: -71.3978 },   // then 200m east
+];
+const midFirst: LatLng = { lat: 41.8249, lng: -71.4002 };   // 100m along the first
+const midSecond: LatLng = { lat: 41.8258, lng: -71.3990 };  // 100m along the second
+
+describe("pointAlongShape", () => {
+  it("hands back the two fixes themselves at 0 and 1", () => {
+    expect(pointAlongShape(corner, midFirst, midSecond, 0)).toEqual(midFirst);
+    expect(pointAlongShape(corner, midFirst, midSecond, 1)).toEqual(midSecond);
+  });
+
+  it("follows the street round the corner instead of cutting across it", () => {
+    // 100m to the corner then 100m east is a 200m path, so halfway is the
+    // corner itself. A straight line between the same two fixes would be
+    // through the block, ~70m from it.
+    const got = pointAlongShape(corner, midFirst, midSecond, 0.5);
+    expect(haversineMeters(got, corner[1]!)).toBeLessThan(2);
+    const chordMid = { lat: (midFirst.lat + midSecond.lat) / 2, lng: (midFirst.lng + midSecond.lng) / 2 };
+    expect(haversineMeters(got, chordMid)).toBeGreaterThan(50);
+  });
+
+  it("covers the path at a steady pace", () => {
+    expect(haversineMeters(pointAlongShape(corner, midFirst, midSecond, 0.25),
+      { lat: 41.82535, lng: -71.4002 })).toBeLessThan(2);
+    expect(haversineMeters(pointAlongShape(corner, midFirst, midSecond, 0.75),
+      { lat: 41.8258, lng: -71.39960 })).toBeLessThan(2);
+  });
+
+  it("goes straight when the new fix is behind the old one on the shape", () => {
+    // A parked bus's fix jitters back and forth by a couple of metres. Read as
+    // "forwards", that is a whole lap of the loop at speed.
+    const back: LatLng = { lat: 41.8258, lng: -71.3995 };
+    const got = pointAlongShape(corner, midSecond, back, 0.5);
+    expect(haversineMeters(got, { lat: 41.8258, lng: -71.39925 })).toBeLessThan(2);
+  });
+
+  it("goes straight when the path between the fixes is too long to be one bus's motion", () => {
+    // Out and back down two streets 91m apart. A fix that jitters onto the
+    // other pass is 91m away, but 1300m along the shape.
+    const outAndBack: LatLng[] = [
+      { lat: 41.8240, lng: -71.4002 }, { lat: 41.8350, lng: -71.4002 },
+      { lat: 41.8350, lng: -71.4013 }, { lat: 41.8240, lng: -71.4013 },
+    ];
+    const got = pointAlongShape(outAndBack,
+      { lat: 41.8295, lng: -71.4002 }, { lat: 41.8295, lng: -71.4013 }, 0.5);
+    expect(haversineMeters(got, { lat: 41.8295, lng: -71.40075 })).toBeLessThan(2);
+  });
+
+  it("goes straight when there is no shape to follow", () => {
+    const a = { lat: 41.8240, lng: -71.4002 }, b = { lat: 41.8258, lng: -71.4002 };
+    expect(haversineMeters(pointAlongShape([], a, b, 0.5), { lat: 41.8249, lng: -71.4002 }))
+      .toBeLessThan(2);
   });
 });

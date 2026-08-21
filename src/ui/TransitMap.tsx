@@ -5,7 +5,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { StaticFeed, LatLng } from "../data/types";
 import type { Bus } from "../data/vehicles";
 import { basemapStyle } from "./mapStyle";
-import { snapToShape } from "../routing/shape";
+import { pointAlongShape, snapToShape } from "../routing/shape";
 
 // MapLibre's worker is a separate ES module that imports a sibling. Rollup
 // cannot see it (the path is built from a runtime string) and ?url would copy
@@ -19,6 +19,17 @@ export const CAMPUS: LatLng = { lat: 41.8265, lng: -71.4015 };
 /** Overlay layers are torn down and rebuilt whenever the chosen trip changes. */
 /** Hold this long to drop a pin. Matches the platform's own press delay. */
 const LONG_PRESS_MS = 500;
+
+/** How long a bus takes to reach a new fix.
+ *
+ *  Passio's vehicle feed only speaks every ten seconds (App's VEHICLE_POLL_MS),
+ *  so setting the marker straight from it teleports the bus a block at a time.
+ *  Apple Maps spreads the move across the whole interval instead, which is why
+ *  its vehicles read as driving rather than blinking. Matching the interval
+ *  means the dot is always somewhere between two fixes the feed actually gave
+ *  -- it trails the newest one by up to an interval, which is the price of
+ *  showing motion and what Apple pays too. */
+const GLIDE_MS = 10_000;
 
 const OVERLAY_SOURCES = ["itin-walk", "itin-ride"] as const;
 const OVERLAY_LAYERS = ["itin-walk", "itin-ride-case", "itin-ride-line"] as const;
@@ -74,6 +85,8 @@ export function TransitMap({
   const div = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const busMarks = useRef<Map<string, maplibregl.Marker>>(new Map());
+  /** Bus id -> the frame its glide is waiting on. */
+  const busGlides = useRef<Map<string, number>>(new Map());
   const meMark = useRef<maplibregl.Marker | null>(null);
   const destMark = useRef<maplibregl.Marker | null>(null);
   const clickCb = useRef(onMapClick);
@@ -291,6 +304,7 @@ export function TransitMap({
   useEffect(() => {
     const m = map.current;
     if (!m || !ready) return;
+    const jump = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     for (const b of buses) {
       const color = feed?.routes.get(b.routeId)?.color ?? "#241C17";
       // Onto the route's own shape -- the exact polyline drawn under it, so
@@ -299,8 +313,8 @@ export function TransitMap({
       // line that this code had offset and rebuilt per zoom, so it dragged the
       // buses off with it. Snapping to the drawn shape has no scale in it at
       // all.
-      const at = snapToShape({ lat: b.lat, lng: b.lng },
-        feed?.routes.get(b.routeId)?.shape ?? []);
+      const shape = feed?.routes.get(b.routeId)?.shape ?? [];
+      const at = snapToShape({ lat: b.lat, lng: b.lng }, shape);
       let mk = busMarks.current.get(b.id);
       if (!mk) {
         // A real button: role="button" on a div is announced but cannot be
@@ -365,7 +379,32 @@ export function TransitMap({
           .setLngLat([at.lng, at.lat]).addTo(m);
         busMarks.current.set(b.id, mk);
       } else {
-        mk.setLngLat([at.lng, at.lat]);
+        // Glide, rather than teleport. The coordinate is what moves: MapLibre
+        // rewrites the element's transform on every map move, so a CSS
+        // transition on that transform would also smear the bus across the
+        // screen whenever the rider pans or zooms.
+        //
+        // From where the dot is NOW, not from the last fix -- interrupting a
+        // glide mid-way and restarting from the old fix would jerk it
+        // backwards. pointAlongShape walks the route's polyline between the
+        // two, so a bus rounding a corner goes round it.
+        const here = mk.getLngLat();
+        const from = { lat: here.lat, lng: here.lng };
+        const marker = mk;
+        if (jump || (from.lat === at.lat && from.lng === at.lng)) {
+          marker.setLngLat([at.lng, at.lat]);
+        } else {
+          let began: number | null = null;
+          const frame = (now: number) => {
+            began ??= now;
+            const t = Math.min(1, (now - began) / GLIDE_MS);
+            const p = pointAlongShape(shape, from, at, t);
+            marker.setLngLat([p.lng, p.lat]);
+            if (t < 1) busGlides.current.set(b.id, requestAnimationFrame(frame));
+            else busGlides.current.delete(b.id);
+          };
+          busGlides.current.set(b.id, requestAnimationFrame(frame));
+        }
         const el = mk.getElement();
         const arrow = el.firstElementChild as HTMLElement | null;
         if (arrow) arrow.style.transform = `rotate(${b.bearing}deg)`;
@@ -376,6 +415,14 @@ export function TransitMap({
     }
     for (const [id, mk] of busMarks.current)
       if (!buses.some((b) => b.id === id)) { mk.remove(); busMarks.current.delete(id); }
+
+    // Runs before the next pass of this effect as well as on unmount, so it is
+    // both "a newer fix supersedes the glide in flight" and "do not leave a
+    // loop calling setLngLat on a marker the map has already removed".
+    return () => {
+      for (const h of busGlides.current.values()) cancelAnimationFrame(h);
+      busGlides.current.clear();
+    };
   }, [buses, feed, ready]);
 
   // the rider
