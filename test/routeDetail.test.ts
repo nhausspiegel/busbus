@@ -31,6 +31,40 @@ function fixture(): { feed: StaticFeed; board: DepartureBoard } {
   return { feed, board };
 }
 
+describe("routeStops with more than one bus running", () => {
+  it("reads as one bus going round, not the soonest at each stop", () => {
+    // Two buses on the same loop. Taking the soonest departure at each stop
+    // independently is correct per row and nonsense as a column: measured on
+    // the live Connector view it ran 4, 7, 10, 13, 14, 18, now, 5, 10, 12, 14,
+    // 18, now, 2 -- the count restarting each time the list passed a bus.
+    const feed: StaticFeed = {
+      routes: new Map([["R1", { id: "R1", name: "R1", shortName: "1", color: "#111", shape: [] }]]),
+      stops: new Map([["A", mk("A")], ["B", mk("B")], ["C", mk("C")], ["D", mk("D")]]),
+      trips: new Map([["full", { id: "full", routeId: "R1", stops: [
+        { stopId: "A", seq: 1, time: 0 }, { stopId: "B", seq: 2, time: 60 },
+        { stopId: "C", seq: 3, time: 120 }, { stopId: "D", seq: 4, time: 180 }] }]]),
+      feedEndDate: "20991231",
+    };
+    const dep = (stopId: string, tripId: string, mins: number) => ({
+      stopId, tripId, routeId: "R1", seq: 1, time: NOW + mins * 60, live: true,
+    });
+    // Bus "near" is just behind A; bus "far" is already round at C.
+    const board: DepartureBoard = new Map([
+      ["A", [dep("A", "near", 2), dep("A", "far", 14)]],
+      ["B", [dep("B", "near", 4), dep("B", "far", 16)]],
+      ["C", [dep("C", "far", 1), dep("C", "near", 6)]],
+      ["D", [dep("D", "far", 3), dep("D", "near", 8)]],
+    ]);
+
+    const got = routeStops(feed, board, "R1", NOW);
+    const times = got.map((s) => s.next?.time ?? null);
+    expect(times.every((t) => t !== null)).toBe(true);
+    for (let i = 1; i < times.length; i++)
+      expect(times[i]!).toBeGreaterThan(times[i - 1]!);
+    expect(new Set(got.map((s) => s.next!.tripId)).size).toBe(1);
+  });
+});
+
 describe("routeStops", () => {
   it("uses the longest trip so skipped stops still appear", () => {
     const { feed, board } = fixture();

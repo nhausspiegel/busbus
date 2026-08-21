@@ -350,9 +350,12 @@ export default function App() {
           <>
             <WhenControl at={leaveAt} mode={whenMode}
                          onChange={setLeaveAt} onModeChange={setWhenMode} />
-            <NearbyBoard feed={feed} nearby={nearby} buses={buses} now={planNow}
-                         loading={!feed} me={!!me} onRouteClick={setRouteId}
-                         onLocate={locate} />
+            {/* The nearby board is hidden, not deleted -- the user found it
+                useless but may want it back. NearbyBoard.tsx and its tests are
+                untouched; restore it by putting this element back:
+                <NearbyBoard feed={feed} nearby={nearby} buses={buses}
+                             now={planNow} loading={!feed} me={!!me}
+                             onRouteClick={setRouteId} onLocate={locate} /> */}
           </>
         )}
 
