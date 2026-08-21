@@ -118,7 +118,7 @@ export function planTrips(opts: PlanOptions): Itinerary[] {
               routeId: dep.routeId, tripId: dep.tripId,
               boardStopId: dep.stopId, alightStopId: alightRt.stopId,
               departTime: dep.time, arriveTime: alightRt.time,
-              live: true, numStops: i - boardIdx,
+              live: true, numStops: i - boardIdx, boardSeq: dep.seq,
             }],
             walkFromStop: { from: alightStop, to: destination, seconds: finalWalk },
             totalWalkSeconds: walkSecs + finalWalk,
@@ -165,6 +165,7 @@ export function planTrips(opts: PlanOptions): Itinerary[] {
           arriveTime: arriveStop,
           live: dep.live,
           numStops: alight.seq - boardSched.seq,
+          boardSeq: boardSched.seq,
         };
 
         found.push({

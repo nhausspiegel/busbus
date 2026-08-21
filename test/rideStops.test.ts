@@ -13,14 +13,16 @@ const feed: StaticFeed = {
     { stopId: "B", seq: 2, time: 120 },
     { stopId: "C", seq: 3, time: 300 },
     { stopId: "D", seq: 4, time: 480 },
-    { stopId: "A", seq: 5, time: 600 },   // loop returns to A
+    { stopId: "A", seq: 5, time: 600 },   // loop returns to A and goes round again
+    { stopId: "B", seq: 6, time: 800 },   // second lap runs slower
+    { stopId: "C", seq: 7, time: 900 },
   ] }]]),
   feedEndDate: "20991231",
 };
 
 const ride = (o: Partial<RideLeg> = {}): RideLeg => ({
   routeId: "R1", tripId: "T1", boardStopId: "A", alightStopId: "C",
-  departTime: NOW, arriveTime: NOW + 300, live: false, numStops: 2, ...o,
+  departTime: NOW, arriveTime: NOW + 300, live: false, numStops: 2, boardSeq: 1, ...o,
 });
 
 describe("rideStops", () => {
@@ -54,6 +56,24 @@ describe("rideStops", () => {
     const got = rideStops(feed, ride({ alightStopId: "A", numStops: 4 }));
     expect(got.map((r) => r.stop.id)).toEqual(["A", "B", "C", "D", "A"]);
     expect(got[got.length - 1]!.alighting).toBe(true);
+  });
+
+  it("starts from the lap the rider actually boards on", () => {
+    // T1 calls at A twice, seq 1 and seq 5. A rider joining on the second lap
+    // was resolved to the first visit, so the list opened with a whole
+    // spurious lap of stops they have already ridden past.
+    const second = rideStops(feed, ride({ boardSeq: 5, alightStopId: "C", numStops: 2 }));
+    expect(second.map((r) => r.stop.id)).toEqual(["A", "B", "C"]);
+    // The second lap is slower: B is 200s after A, not 120s. Resolving to the
+    // first visit produces the same stop NAMES, so only the timings catch it.
+    expect(second[1]!.time).toBe(NOW + 200);
+  });
+
+  it("falls back to the first visit when the sequence does not match the trip", () => {
+    // A live ride carries Passio's REALTIME sequence, which does not match the
+    // static trip. Better the first visit than nothing at all.
+    const got = rideStops(feed, ride({ boardSeq: 99 }));
+    expect(got.map((r) => r.stop.id)).toEqual(["A", "B", "C"]);
   });
 
   it("returns empty for an unknown trip rather than throwing", () => {

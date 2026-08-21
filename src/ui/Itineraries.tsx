@@ -201,8 +201,15 @@ function RideStopsNote({ feed, ride }: { feed: StaticFeed | null; ride: RideLeg 
       {liveness}
       {open && (
         <>
-          <ol style={{ listStyle: "none", margin: "6px 0 0", padding: "6px 0 0",
-                       borderTop: "1px solid var(--hairline)" }}>
+          {/* "3 stops" is the length of the ride, which is what Apple Maps
+              means by it too. The list is what you pass ON the way, one fewer.
+              Both are right; unlabelled, a reader counts the rows against the
+              number and decides one of them is broken. */}
+          <p style={{ margin: "6px 0 0", paddingTop: 6, fontSize: 11,
+                      borderTop: "1px solid var(--hairline)" }}>
+            Stops on the way
+          </p>
+          <ol style={{ listStyle: "none", margin: "4px 0 0", padding: 0 }}>
             {between.map((s, i) => (
               <li key={i} style={{ display: "flex", gap: 10, padding: "2px 0" }}>
                 <span style={{ fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>

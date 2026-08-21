@@ -31,7 +31,7 @@ const feed: StaticFeed = {
 
 const ride = (o: Partial<RideLeg> = {}): RideLeg => ({
   routeId: "R1", tripId: "T1", boardStopId: "A", alightStopId: "D",
-  departTime: NOW + 300, arriveTime: NOW + 780, live: true, numStops: 3, ...o,
+  departTime: NOW + 300, arriveTime: NOW + 780, live: true, numStops: 3, boardSeq: 1, ...o,
 });
 
 const itinerary = (r: RideLeg): Itinerary => ({
@@ -95,6 +95,17 @@ describe("ItineraryDetail ride stops", () => {
     expect(list).not.toBeNull();
     expect(list?.textContent).not.toContain("Thayer & Waterman");
     expect(list?.textContent).not.toContain("Trader Joe's");
+  });
+
+  it("says what the disclosed list is, so the ride length is not counted as rows", () => {
+    // "3 stops" is the length of the ride, the same thing Apple Maps means by
+    // it. The list below is what you pass ON the way, which is one fewer. Both
+    // numbers are right; without a label the reader counts rows and concludes
+    // one of them is wrong.
+    show();
+    fireEvent.click(toggle());
+    expect(screen.getByText(/3 stops/)).toBeTruthy();
+    expect(screen.getByText(/on the way/i)).toBeTruthy();
   });
 
   it("offers no control when there is nothing between the two stops", () => {

@@ -14,7 +14,11 @@ export function rideStops(feed: StaticFeed, ride: RideLeg): RideStop[] {
   const trip = feed.trips.get(ride.tripId);
   if (!trip) return [];
 
-  const board = trip.stops.find((s) => s.stopId === ride.boardStopId);
+  // By sequence, not by stop id alone: a loop calls at the same stop twice.
+  // A live ride carries Passio's realtime sequence, which does not exist in
+  // the static trip, so fall back to the first visit rather than nothing.
+  const board = trip.stops.find((s) => s.stopId === ride.boardStopId && s.seq === ride.boardSeq)
+    ?? trip.stops.find((s) => s.stopId === ride.boardStopId);
   const alight = trip.stops.find((s) => s.stopId === ride.alightStopId && s.seq > (board?.seq ?? -1));
   if (!board || !alight) return [];
 
