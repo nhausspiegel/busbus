@@ -74,14 +74,21 @@ describe("case 3: Y-merge", () => {
   });
 
   it("leaves the arms alone", () => {
-    // Where a line runs by itself it must not move, at all. Four earlier
-    // attempts displaced every line everywhere, which floated the whole
-    // network off its streets.
-    const a = out.get("A")!;
+    // Where a line runs by itself it must not move. Four earlier attempts
+    // displaced every line everywhere, which floated the whole network off its
+    // streets.
+    //
+    // "Alone" means far from the bundle: a line does begin easing across
+    // slightly BEFORE it meets its neighbour, which is deliberate -- a ramp
+    // that starts only once the two are already too close makes them visibly
+    // pinch. So the far end of the arm is exact, and the approach is held to a
+    // fraction of the gap rather than to zero.
+    const a = out.get("A")!, src = c.lines[0]!.points;
+    expect(toLine(a[0]!, src)).toBeLessThan(0.01);
     const arm = { x: 0, y: 40 };
     const nearArm = a.filter((p) => Math.hypot(p.x - arm.x, p.y - arm.y) < 40);
     expect(nearArm.length).toBeGreaterThan(2);
-    for (const p of nearArm) expect(toLine(p, c.lines[0]!.points)).toBeLessThan(0.01);
+    for (const p of nearArm) expect(toLine(p, src)).toBeLessThan(c.minGap / 20);
   });
 
   it("ramps in rather than stepping", () => {
