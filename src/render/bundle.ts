@@ -56,7 +56,7 @@ export const DEFAULT_OPTIONS: BundleOptions = {
   thresholdM: 25,
   headingTolDeg: 30,
   stepM: 10,
-  taperM: 70,
+  taperM: 140,
 };
 
 /** Everything about one line that does not depend on the gap, computed once. */
@@ -159,6 +159,36 @@ function miters(path: Pt[], segNormals: Pt[], closed: boolean): number[] {
 function parallel(a: Pt, b: Pt, tolDeg: number): boolean {
   const c = Math.abs(dot(a, b));                    // |cos| folds direction away
   return c >= Math.cos((tolDeg * Math.PI) / 180);
+}
+
+/**
+ * Widen each run of displacement to the taper window before smoothing it.
+ *
+ * Because the gap is a MINIMUM, a line's wanted displacement is zero right up
+ * until it is already too close to its neighbour -- so a ramp that begins there
+ * is always late, and the two lines visibly pinch together just before they
+ * separate. Taking the largest displacement in a window either side lets a line
+ * start moving BEFORE it needs to, which is what makes a merge read as two
+ * lines converging rather than two lines colliding and recoiling.
+ *
+ * It also protects the plateau: smoothing a run shorter than the window would
+ * otherwise never reach full displacement, which is why a long taper used to
+ * stop a short shared stretch from ever reaching the gap.
+ */
+function dilate(v: number[], window: number, closed: boolean): number[] {
+  if (window < 2) return v;
+  const half = Math.floor(window / 2);
+  const n = v.length;
+  return v.map((_, i) => {
+    let best = 0;
+    for (let k = -half; k <= half; k++) {
+      let j = i + k;
+      if (closed) j = ((j % n) + n) % n;
+      else if (j < 0 || j >= n) continue;
+      if (Math.abs(v[j]!) > Math.abs(best)) best = v[j]!;
+    }
+    return best;
+  });
 }
 
 /** Moving average, which is what turns a lane change into a ramp. Smoothing a
@@ -373,7 +403,9 @@ export function applyLanes(p: LaneProfile, minGap: number): Pt[] {
     return (target[p.self[i]!]! - positions[p.self[i]!]!) * p.canonSign[i]!;
   });
   // Ease in and out, so entering a bundle is a ramp rather than a step.
-  const eased = smooth(wanted, p.smoothWindow, p.closed);
+  // Widen first, then round off. Smoothing alone always ramps too late, and
+  // rounding a widened run keeps the plateau at full height.
+  const eased = smooth(dilate(wanted, p.smoothWindow, p.closed), p.smoothWindow, p.closed);
   // The miter is applied AFTER smoothing: it is a property of the corner, not
   // of the lane, and averaging it would round off the very corners it exists
   // to hold square.
