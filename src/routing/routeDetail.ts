@@ -6,6 +6,22 @@ export interface RouteStop {
   next: Departure | null;   // next departure from this stop on this route
 }
 
+/** Which routes call at each stop.
+ *
+ *  Subway maps colour a stop by its line and draw interchanges neutrally, so
+ *  the map needs to know which stops serve more than one route. Built from the
+ *  trips because GTFS has no stop-to-route table. */
+export function stopRoutes(feed: StaticFeed): Map<string, string[]> {
+  const sets = new Map<string, Set<string>>();
+  for (const trip of feed.trips.values())
+    for (const ts of trip.stops) {
+      const set = sets.get(ts.stopId) ?? new Set<string>();
+      set.add(trip.routeId);
+      sets.set(ts.stopId, set);
+    }
+  return new Map([...sets].map(([id, set]) => [id, [...set].sort()]));
+}
+
 /** The stops a route serves, in riding order, each with its next departure.
  *
  *  Order comes from the longest trip on the route: short trips skip stops, so

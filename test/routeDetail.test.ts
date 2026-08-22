@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { routeStops } from "../src/routing/routeDetail";
+import { routeStops, stopRoutes } from "../src/routing/routeDetail";
 import type { StaticFeed, DepartureBoard, Stop } from "../src/data/types";
 
 const NOW = 1_700_000_000;
@@ -30,6 +30,34 @@ function fixture(): { feed: StaticFeed; board: DepartureBoard } {
   ]);
   return { feed, board };
 }
+
+describe("stopRoutes", () => {
+  it("lists every route calling at a stop, de-duplicated and sorted", () => {
+    // Subway maps colour a stop by its line and draw interchanges neutrally,
+    // so the map has to know which stops serve more than one route. GTFS has
+    // no stop-to-route table, so it comes from the trips.
+    const feed = {
+      routes: new Map(), stops: new Map(),
+      trips: new Map([
+        ["t1", { id: "t1", routeId: "R2", stops: [
+          { stopId: "A", seq: 1, time: 0 }, { stopId: "B", seq: 2, time: 60 }] }],
+        ["t2", { id: "t2", routeId: "R1", stops: [
+          { stopId: "B", seq: 1, time: 0 }, { stopId: "C", seq: 2, time: 60 }] }],
+        // A second trip on a route already seen must not duplicate it, and a
+        // loop calling twice at one stop must not either.
+        ["t3", { id: "t3", routeId: "R1", stops: [
+          { stopId: "B", seq: 1, time: 0 }, { stopId: "B", seq: 2, time: 60 }] }],
+      ]),
+      feedEndDate: "20991231",
+    } as unknown as StaticFeed;
+
+    const got = stopRoutes(feed);
+    expect(got.get("A")).toEqual(["R2"]);
+    expect(got.get("B")).toEqual(["R1", "R2"]);   // the interchange
+    expect(got.get("C")).toEqual(["R1"]);
+    expect(got.get("nope")).toBeUndefined();
+  });
+});
 
 describe("routeStops with more than one bus running", () => {
   it("reads as one bus going round, not the soonest at each stop", () => {

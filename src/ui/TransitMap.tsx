@@ -31,8 +31,10 @@ const LONG_PRESS_MS = 500;
  *  showing motion and what Apple pays too. */
 const GLIDE_MS = 10_000;
 
-/** Centre-to-centre gap between coincident routes at z13, in screen pixels.
- *  Faded to nothing by z16, where the shapes separate on their own. */
+/** Centre-to-centre gap between coincident routes, in screen pixels, at every
+ *  zoom. Bigger offsets visibly scallop the line: MapLibre applies line-offset
+ *  per vertex, and Brown's shapes are sparse enough that a large one bends the
+ *  curves. 5px per lane is four routes spanning 15px. */
 const LANE_GAP_PX = 5;
 
 const OVERLAY_SOURCES = ["itin-walk", "itin-ride"] as const;
@@ -151,32 +153,50 @@ export function TransitMap({
     //
     // So the radius is set by the stroke width, and this is why the line is as
     // thick as it is: Apple's transit lines are heavy for exactly this reason.
-    // Fan coincident routes apart, in PIXELS, and only where they need it.
+    // Fan coincident routes apart by a CONSTANT number of pixels.
     //
-    // Zoomed out, Brown's routes collapse onto each other: the ~7m by which
-    // Passio's shapes already differ is half a pixel at z13. Zoomed in, that
-    // same 7m is 16px and separates them on its own, so any offset there is
-    // pure error -- it is what put earlier versions of this on the pavement.
-    // So the lane is worth a few pixels at z13 and nothing from z16 up, which
-    // MapLibre interpolates itself. No coordinate is touched and nothing is
-    // recomputed in JS.
+    // Constant is the whole point: a gap that changes with zoom is the same
+    // mistake as sizing anything else in metres. An earlier version faded the
+    // offset out by z16, reasoning that the ~7m by which Passio's shapes
+    // already differ separates them on its own up close -- which is true, and
+    // irrelevant, because it made the gap grow as you zoomed out. line-offset
+    // is already in screen pixels, so the lane alone is the whole expression.
+    // Constant from z13 up -- interpolate holds its last stop, so the gap does
+    // not change as the rider zooms in. Below z13 it winds down to nothing.
+    //
+    // That lower taper is not decoration, it is the only way to avoid a spike.
+    // MapLibre places an offset vertex on the MITER, so a corner of interior
+    // angle t extends by offset / sin(t/2): Brown's sharpest corner is 60
+    // degrees, which turns a 5px offset into a 10px whisker. The whisker is a
+    // fixed pixel length whatever the zoom, so once the whole network is only
+    // ~150px across at z11 it is 7% of the map and the routes read as a spiky
+    // blob. Verified by setting the offset to 0 at runtime: the spikes vanish.
+    //
+    // Nothing is lost by tapering it: at city zoom the routes are a few pixels
+    // apart regardless and a lane cannot be read anyway.
     const offset: maplibregl.ExpressionSpecification = [
       "interpolate", ["linear"], ["zoom"],
+      11.5, 0,
       13, ["*", ["get", "lane"], LANE_GAP_PX],
-      16, 0,
     ];
+    // Thin the stroke when zoomed out, as any transit map does -- a 6px line
+    // on a network 150px wide is 4% of it and reads as a blob.
+    const lineWidth: maplibregl.ExpressionSpecification =
+      ["interpolate", ["linear"], ["zoom"], 11, 2, 14, 6];
+    const caseWidth: maplibregl.ExpressionSpecification =
+      ["interpolate", ["linear"], ["zoom"], 11, 3.5, 14, 10];
     m.addLayer({
       id: "routes-case", type: "line", source: "routes",
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
         "line-color": darkRef.current ? "#15110F" : "#FFFFFF",
-        "line-width": 10, "line-opacity": 0.9, "line-offset": offset,
+        "line-width": caseWidth, "line-opacity": 0.9, "line-offset": offset,
       },
     });
     m.addLayer({
       id: "routes-line", type: "line", source: "routes",
       layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": ["get", "color"], "line-width": 6, "line-offset": offset },
+      paint: { "line-color": ["get", "color"], "line-width": lineWidth, "line-offset": offset },
     });
   }
 
