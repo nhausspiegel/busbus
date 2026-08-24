@@ -6,7 +6,7 @@ import type { StaticFeed, LatLng } from "../data/types";
 import type { Bus } from "../data/vehicles";
 import { basemapStyle } from "./mapStyle";
 import { pointAlongShape, snapToShape } from "../routing/shape";
-import { stopRoutes } from "../routing/routeDetail";
+import { stations } from "../routing/routeDetail";
 import { laneProfiles, applyLanes, DEFAULT_OPTIONS, type LaneProfile, type Pt }
   from "../render/bundle";
 
@@ -146,6 +146,41 @@ export function TransitMap({
   darkRef.current = dark;
 
   /**
+   * One marker per PLACE, positioned on the line as DRAWN.
+   *
+   * Passio splits a stop into a pair per direction, so joined on stop_id those
+   * read as two single-route dots where there is really one interchange.
+   * `stations` merges them.
+   *
+   * Rebuilt whenever the routes are, because the bundler moves a route
+   * wherever it shares a street and the geometry it produces depends on the
+   * zoom -- a stop placed once and left alone drifts off the line as soon as
+   * the rider zooms. Nothing positioned along a route may read `route.shape`.
+   */
+  function stationFeatures(f: StaticFeed): GeoJSON.Feature[] {
+    return stations(f, activeRouteIds).map((st) => {
+      const line = drawnRef.current.get(st.routeIds[0]!);
+      const at = line && line.length > 1
+        ? snapToShape({ lat: st.lat, lng: st.lng }, line)
+        : { lat: st.lat, lng: st.lng };
+      return {
+        type: "Feature" as const,
+        properties: {
+          name: st.name,
+          // The tap target still needs a real stop, so it keeps the first
+          // member id -- the halves are genuinely different boarding points.
+          id: st.stopIds[0]!,
+          interchange: st.routeIds.length > 1,
+          color: st.routeIds.length === 1
+            ? (f.routes.get(st.routeIds[0]!)?.color ?? "#6F625A")
+            : (darkRef.current ? "#C6BAB1" : "#241C17"),
+        },
+        geometry: { type: "Point" as const, coordinates: [at.lng, at.lat] },
+      };
+    });
+  }
+
+  /**
    * Draw each route, fanned apart only where it genuinely shares a street.
    *
    * The lane geometry comes from src/render/bundle.ts, which enforces a
@@ -177,6 +212,11 @@ export function TransitMap({
     for (const p of profiles)
       drawn.set(p.id, applyLanes(p, minGap, radius).map(fromPlane));
     drawnRef.current = drawn;
+    // Same geometry, same moment: the stops are placed from `drawn` right here
+    // rather than once at startup, so they cannot drift off the line.
+    const stopSrc = m.getSource("stops") as maplibregl.GeoJSONSource | undefined;
+    if (stopSrc && feed)
+      stopSrc.setData({ type: "FeatureCollection", features: stationFeatures(feed) });
 
     const data: GeoJSON.FeatureCollection = {
       type: "FeatureCollection",
@@ -377,30 +417,13 @@ export function TransitMap({
       drawRoutes(m, zoomRef.current);
 
       if (!m.getSource("stops")) {
-        // Colour each stop by the line it serves, and draw an interchange
-        // neutrally -- the convention both the Underground and the NYC subway
-        // map use, because a stop on three lines belongs to none of their
-        // colours.
-        const serving = stopRoutes(feed);
-        m.addSource("stops", { type: "geojson", data: { type: "FeatureCollection",
-          features: [...feed.stops.values()].flatMap((s) => {
-            const ids = (serving.get(s.id) ?? []).filter((id) => activeRouteIds.has(id));
-            // Brown's GTFS ships 70 stops but only 33 sit on a route that
-            // actually runs; the other 37 were being drawn as dots no bus will
-            // ever call at. A stop with no service is not a stop.
-            if (ids.length === 0) return [];
-            return [{
-              type: "Feature" as const,
-              properties: {
-                name: s.name, id: s.id,
-                interchange: ids.length > 1,
-                color: ids.length === 1
-                  ? (feed.routes.get(ids[0]!)?.color ?? "#6F625A")
-                  : (darkRef.current ? "#C6BAB1" : "#241C17"),
-              },
-              geometry: { type: "Point" as const, coordinates: [s.lng, s.lat] },
-            }];
-          }) } });
+        // One marker per PLACE, not per stop_id: Passio splits a stop into a
+        // pair per direction, and joined on id those read as two single-route
+        // dots where there is really one interchange. Coloured by the line it
+        // serves, neutral and larger when it serves several -- the convention
+        // the Underground and the NYC subway map both use.
+        m.addSource("stops", { type: "geojson",
+          data: { type: "FeatureCollection", features: stationFeatures(feed) } });
         // Stops on the route being viewed, drawn larger and in the route colour.
         m.addLayer({ id: "stops-active", type: "circle", source: "stops",
           filter: ["in", ["get", "id"], ["literal", []]],
