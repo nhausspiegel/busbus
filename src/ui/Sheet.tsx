@@ -166,7 +166,12 @@ export function Sheet({
         <div style={{ width: 38, height: 5, borderRadius: 3, background: "var(--hairline)", margin: "0 auto" }} />
       </button>}
       {header && (
-        <div style={{ padding: wide ? "0 18px 10px" : "0 16px 10px", flexShrink: 0 }}>
+        // The grabber above is what holds the search field off the top edge,
+        // and it only exists when the sheet can be dragged. On a wide screen
+        // there is no grabber, so the header has to supply that space itself
+        // or the field sits flush against the panel's top with 18px either
+        // side of it. Matching the horizontal padding keeps the inset even.
+        <div style={{ padding: wide ? "18px 18px 10px" : "0 16px 10px", flexShrink: 0 }}>
           {header}
         </div>
       )}
