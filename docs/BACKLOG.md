@@ -1,144 +1,117 @@
 # Backlog
 
-Triaged, with the root cause where it is known rather than the symptom. Written
-so it survives a compaction: anything here can be picked up cold.
+Root causes, not symptoms. Written so it can be picked up cold after a
+compaction: everything needed to act is here or named by file.
 
-The point of the grouping below is that most of these are not separate bugs.
-Four architectural changes cover eight reported problems.
+**Read `docs/HANDOFF.md` too** — it records the map-rendering failures and the
+approaches already ruled out, which is what stops the next session repeating
+them.
 
 ---
 
-## A. Everything on a route rides the DRAWN geometry
+## Still to do
 
-**Covers:** stops not sitting on the route lines; the whole recurring class of
-"the buses are off their routes".
-
-`src/render/bundle.ts` moves route coordinates on purpose — routes sharing a
-street are fanned apart. The route line is drawn from that output, and buses are
-snapped to it. **Stops are not**: they are still drawn at their raw GTFS
-coordinates, so wherever a route has been fanned, its stops are left behind by
-up to half the lane gap. The itinerary overlay has the same exposure.
-
-This is the third time this exact mistake has cost a day: drawing one geometry
-while placing something else from another. The fix is not another patch, it is
-a rule with one implementation:
-
-> Anything positioned along a route — the line, its stops, the vehicles on it,
-> the highlighted itinerary — is placed by projecting onto `drawnRef`, the
-> geometry that was actually drawn at the current zoom. Nothing reads
-> `route.shape` directly for display.
-
-Make it hard to get wrong: have `drawRoutes` return/publish the drawn paths and
-have a single `placeOnRoute(routeId, latLng)` helper that every caller uses.
-
-## B. Stations, not stop rows
-
-**Covers:** stops that are not colour-coded; multi-route stops not reading as
-interchanges; some of the visual clutter.
-
-Passio models one physical stop as several stop_ids, one per direction or per
-route. Measured on the real feed: **20 pairs of stop_ids sit within 25m of each
-other**, e.g. `8399 "Barbour Hall/Public Safety CCW"` and `8386 "...CW"` 11m
-apart, and `7869/7867 "225 Dyer (to College Hill)" / "(to South Street
-Landing)"` 17m apart.
-
-Consequences today:
-
-- Interchange detection joins on stop_id, so those pairs look like two separate
-  single-route stops. Only 5 of 33 drawn stops register as interchanges.
-- Each half gets one route's colour, so a place served by two routes shows as
-  two small dots of different colours rather than one neutral interchange.
-- `Athletic Center` (8380) genuinely IS served by three routes — 62487, 3470,
-  3469 — and that case does work. It is the split pairs that do not.
-
-Fix: cluster stops by location (~25m) into a display "station", union the routes
-serving the members, and draw one marker per station. Colour by the single
-serving route, or neutral and larger for an interchange. Keep the underlying
-stop_ids for departures — this is a display concern only, and the halves are
-genuinely different boarding points.
-
-Also worth knowing: **`Daytime Express` (3302) has 1 trip and 2 stops** in GTFS
-despite a 177-point shape. Its line is drawn with almost no stops on it. That is
-upstream data, not a rendering bug, but it explains "some routes have no
-coloured stops".
-
-## C. One selection model
-
-**Covers:** no visual indication when a stop is selected; selecting a route
-should fade the others.
-
-There is already a `highlightRouteId` prop that dims other routes, but nothing
-equivalent for stops, and the two are not expressed as one idea. Replace both
-with a single `selection: { kind: "route" | "stop"; id: string } | null`, and
-compute emphasis for every layer — route lines, stops, bus markers — in one
-place from it.
-
-Behaviour to match Apple Maps: the selected thing goes to full strength and
-grows slightly; everything else drops to a low opacity; tapping the map clears
-it (already implemented via `onDeselect`).
-
-## D. Never draw a fake path as if it were real
-
-**Covers:** walking directions rendering as a straight line, sometimes
-permanently.
-
-`src/ui/App.tsx` draws straight lines between the endpoints immediately, then
-replaces them when Valhalla answers. Two faults:
-
-1. The placeholder is drawn in the same style as the real path, so a rider
-   cannot tell a guess from a route.
-2. If the Valhalla call fails — and it will, it is a volunteer instance and a
-   throttled response arrives as a CORS error — the `catch` swallows it and the
-   straight line stays forever.
-
-Fix: draw the provisional line in a visibly provisional style, retry once on
-failure, and if it still fails say so rather than leaving a fabricated path on
-screen. This is the same principle as the hollow-vs-solid departure times: never
-present a guess with the confidence of a measurement.
-
-## E. Active routes from data, not a constant
-
-**Covers:** a route running right now that does not appear at all.
+### 1. A running route does not appear on the map — UNVERIFIED, needs daylight
 
 `ACTIVE` in `src/ui/App.tsx` is a hardcoded set of five route ids. Anything
-Passio starts running that is not in that list is invisible — no line, no buses,
-and since stops with no active route are now filtered out, no stops either.
+Passio runs that is not in it is invisible: no line, no buses, and — since
+stops with no active route are now filtered out — no stops either.
 
-Checked so far:
+**Established:**
+- Not a staleness problem. The shipped `public/gtfs/google_transit.zip` is
+  5 days behind the live feed (feedEndDate 20260917 vs 20260922) with
+  **identical routes and trip counts**.
+- Only four of the ten routes in the feed have any trips: 62487 (38),
+  3469 (86), 3470 (62), 3302 (1).
+- `22427 Brown Stadium Loop` is in `ACTIVE` with **0 trips and no shape**, so it
+  can never draw.
+- `3302 Daytime Express` has **1 trip and 2 stops** against a 177-point shape,
+  which is why its line has almost no stops on it. Upstream data, not a bug.
 
-- The shipped GTFS is **not** stale (feedEndDate 20260917 vs live 20260922,
-  identical routes and trip counts), so this is not a refresh problem.
-- Of the ten routes in the feed, only four have any trips at all: 62487 (38),
-  3469 (86), 3470 (62), 3302 (1). `22427 Brown Stadium Loop` is in `ACTIVE` but
-  has no trips and no shape, so it can never draw.
+**The check to run, during service hours (Brown runs ~7am–7pm weekdays):**
+list `routeId` from GTFS-RT vehiclePositions and compare against the static
+route ids. There were **0 vehicles reporting** when this was investigated, so it
+could not be settled.
 
-**Unverified:** whether the route the user saw is one that reports live vehicles
-without appearing in the static feed. There were 0 live vehicles when this was
-investigated — outside Brown's service hours — so it could not be checked. Do
-this during service hours: list `routeId` from GTFS-RT vehiclePositions and
-compare against the static route ids. If RT carries routes the static feed does
-not, the fix is to derive the drawn set from trips-today ∪ routes-with-vehicles,
-and to accept that such a route has no shape to draw.
+- If RT carries route ids the static feed lacks → derive the drawn set from
+  *trips-today ∪ routes-with-live-vehicles* instead of the constant, and accept
+  that such a route has no shape to draw (show its buses, not a line).
+- If not → the missing route is something else; re-open with fresh evidence.
+
+### 2. Duplicate rows in the stop card
+
+Sciences Library lists `Evening CW Route · 4 min · 9:37 PM` **twice**,
+identical. Seen after the station merge but almost certainly not caused by it —
+`StopCard` is still passed a single stop_id, so the duplicate is in the board
+for that stop. Look at `buildBoard` in `src/data/departures.ts`: likely a loop
+trip calling twice, or a live departure not de-duplicated against the scheduled
+one it replaces.
+
+### 3. Corner radius is an unpicked knob
+
+`CORNER_RADIUS_PX` in `src/ui/TransitMap.tsx` is 10, chosen by me not by eye.
+`npx tsx scripts/bundle-knobs.ts` renders 0 / 8 / 16 / 28 to
+`docs/bundle-knobs.svg`. Ask which.
+
+### 4. Route rendering polish
+
+The bundler is much better but not perfect. `npx tsx scripts/bundle-cases.ts`
+draws the five reference cases to `docs/bundle-cases.svg`; both that and
+`test/bundle.test.ts` are driven by `test/fixtures/bundleCases.ts`, so the
+picture and the assertions cannot drift. Known soft spots:
+- The Y-merge reaches 9.9 of a 12 gap and pinches slightly at the merge, which
+  is partly unavoidable — two lines that merge genuinely touch.
+- `trimFolds` drops vertices where an offset self-intersects; at sampling steps
+  well below the offset it still leaves a sharp corner. Guarded at the
+  densities actually used (10, 20), not below.
+
+### 5. Apple-style route detail view — the biggest remaining feature
+
+From the user's own screenshots of Apple Maps (recorded in `README.md`):
+- **Upcoming Departures chips** replacing the `Bus 105` / `Bus 106` vehicle
+  labels: `10 min · On-time` (live, red, radiating glyph), `52 min · Scheduled`
+  (grey), plus a right-aligned `Every N min` headway.
+- The **vehicle's position** drawn inline in the stop list, stops behind it
+  dimmed.
+- **Connecting-route badges** under each stop name — `stations()` already
+  supplies the route ids.
+- **Distant stops collapsed** to `23 previous stops` / `41 additional stops`.
+- **Absolute clock times** in the column rather than `N min · H:MM`.
+
+### 6. Map-matching shapes to street centrelines — deliberately deferred
+
+Would fix "the routes aren't quite on their roads", which is upstream shape
+data. Needs Valhalla map-matching run **offline at build time** and committed —
+one request per user action rules out doing it live. Risks matching to the
+wrong parallel street, which is worse than the current few metres. Does **not**
+fix spikes or gaps; those belong to the offsetting.
 
 ---
 
-## Smaller, not yet grouped
+## Done, and the rule each one established
 
-- **Duplicate rows in the stop card.** Sciences Library lists "Evening CW
-  Route · 4 min · 9:37 PM" twice, identical. Seen after the station merge but
-  almost certainly not caused by it — `StopCard` is still passed a single
-  stop_id, so the duplicate is in the departure board for that stop. Likely a
-  loop trip calling twice, or a live departure not de-duplicated against the
-  scheduled one it replaces. Check `buildBoard` in `src/data/departures.ts`.
+Kept because the *rules* are what stop the bugs coming back.
 
-- **Route rendering polish.** The bundler is much better but not perfect.
-  Corner radius is still an unpicked knob (`CORNER_RADIUS_PX`, currently 10;
-  `npx tsx scripts/bundle-knobs.ts` renders 0/8/16/28 to choose from).
-- **Apple-style route detail view.** Departure chips instead of vehicle labels,
-  the bus's position inline in the stop list, connecting-route badges under stop
-  names, distant stops collapsed to "23 previous stops", absolute clock times.
-  Written up in the plan file as Task 6.
-- **Map-matching route shapes to street centrelines.** Would fix "the routes
-  aren't quite on their roads", which is upstream shape data. Needs Valhalla
-  map-matching run offline at build time and committed. Risks matching to the
-  wrong parallel street. Deferred deliberately.
+- **Everything positioned along a route reads the geometry that was DRAWN,
+  never `route.shape`.** The bundler moves routes; the line, its stops, the
+  vehicles and the itinerary all project onto `drawnRef`, rebuilt per zoom.
+  Three separate bugs had this one shape — buses twice, stops once. Stops went
+  from a median 4.3m / worst 24m off the line to **0px at every zoom**.
+- **One marker per PLACE, not per stop_id.** Passio splits a stop per
+  direction — 20 pairs within 25m. `stations()` in `src/routing/routeDetail.ts`
+  merges them and unions their routes: 33 markers → 23, interchanges 5 → 12.
+- **One `selection` drives emphasis on every layer.** Routes, stops and bus
+  markers all derive from it, so they cannot disagree.
+- **Never present a guess with the confidence of a measurement.** Walking legs
+  retry once, and a provisional straight line is drawn faint and loosely dotted.
+  Same rule as hollow-vs-solid departure times.
+- **Symbology in device pixels and zoom-invariant; geometry in world
+  coordinates, never edited to fake a visual effect.** Five attempts at the
+  parallel-route styling failed by breaking this.
+- **Measure the painted pixel, not a value upstream of it.** A marker's
+  transform held the right coordinate while the browser painted it 30px per
+  index away — an inline `position: relative` had knocked every marker into
+  normal document flow. Guarded by a test.
+- **A check that cannot fail proves nothing.** Join bus to route on
+  `data-route-id`, never colour (Brown's routes share colours). Revert the fix
+  and watch the test go red.
