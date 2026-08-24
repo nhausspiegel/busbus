@@ -29,6 +29,19 @@ export type Selection =
 /** Overlay layers are torn down and rebuilt whenever the chosen trip changes. */
 /** Hold this long to drop a pin. Matches the platform's own press delay. */
 const LONG_PRESS_MS = 500;
+/** How long the selected stop takes to grow. */
+const SELECT_MS = 240;
+
+/** Dot sizing with the selected stop `grow` of the way to its full size.
+ *  One place, so the tween and the selection effect cannot disagree. */
+function selectedRadius(
+  id: string | null, grow: number,
+): maplibregl.ExpressionSpecification {
+  const at = (base: number, big: number) => base + (big - base) * grow;
+  return ["interpolate", ["linear"], ["zoom"],
+    13, ["case", ["==", ["get", "id"], id ?? ""], at(2.5, 4), 2.5],
+    16, ["case", ["==", ["get", "id"], id ?? ""], at(4.5, 6.5), 4.5]];
+}
 
 /** How long a bus takes to reach a new fix.
  *
@@ -167,6 +180,10 @@ export function TransitMap({
   const drawnRef = useRef<Map<string, LatLng[]>>(new Map());
   /** The current itinerary, so the per-zoom redraw can rebuild its ride line
    *  from the same geometry as everything else. */
+  /** How far the selected stop has grown, 0 to 1. */
+  const growRef = useRef(0);
+  /** The stop being shrunk back, so it can be animated after deselection. */
+  const lastFocus = useRef<string | null>(null);
   const overlayRef = useRef<Overlay | null>(null);
   overlayRef.current = overlay ?? null;
   // A counter, not a boolean: setStyle falls back to a full reload when its
@@ -1014,9 +1031,9 @@ export function TransitMap({
         // the old branching, silently overriding the layer's own unified
         // sizing: measured at z14.2, an interchange dot came out at 3.5 and a
         // lone stop's at 2.5 while their white shapes matched at 14.2px.
-        m.setPaintProperty("stops", "circle-radius", ["interpolate", ["linear"], ["zoom"],
-          13, ["case", ["==", ["get", "id"], stopFocus ?? ""], 4, 2.5],
-          16, ["case", ["==", ["get", "id"], stopFocus ?? ""], 6.5, 4.5]]);
+        // Sized through `growRef`, which a tween walks from 0 to 1. Setting the
+        // final radius here directly is what made selecting a stop snap.
+        m.setPaintProperty("stops", "circle-radius", selectedRadius(stopFocus, growRef.current));
       }
       for (const id of ["stops-base"]) {
         if (!m.getLayer(id)) continue;
@@ -1063,6 +1080,41 @@ export function TransitMap({
       maxZoom: 16.5, duration: 650,
     });
   }, [focus, ready]);
+
+  // Grow the selected dot into place rather than jumping to it.
+  //
+  // Not a paint transition and not a DOM marker. MapLibre's transitions were
+  // measurable on a line layer but never visibly moved these circles, and the
+  // marker attempt fought MapLibre for the element's `transform` -- the same
+  // failure that once laid the bus markers out in document flow. A tween that
+  // writes the radius every frame is a thing that can be watched happening.
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready) return;
+    const target = selection?.kind === "stop" ? selection.id : null;
+    // Nothing selected and nothing to shrink back: do not ask for frames at
+    // all. An animation loop that runs when there is nothing to animate is
+    // just a battery drain with a timer attached.
+    if (!target && !lastFocus.current) return;
+    let raf = 0;
+    let start = 0;
+    const step = (now: number) => {
+      if (!start) start = now;
+      const k = Math.min(1, (now - start) / SELECT_MS);
+      // Ease out: quick off the mark, settling rather than stopping dead.
+      growRef.current = target ? 1 - (1 - k) ** 3 : (1 - k) ** 3;
+      try {
+        if (m.getLayer("stops"))
+          m.setPaintProperty("stops", "circle-radius",
+            selectedRadius(target ?? lastFocus.current, growRef.current));
+      } catch { /* style churn; the next selection re-applies */ }
+      if (k < 1) raf = requestAnimationFrame(step);
+      else if (!target) lastFocus.current = null;
+    };
+    raf = requestAnimationFrame(step);
+    if (target) lastFocus.current = target;
+    return () => cancelAnimationFrame(raf);
+  }, [selection, ready]);
 
   // Frame a selected route the same way. Picking a route used to leave the
   // camera wherever it was, so most of the line sat behind the sheet and the
