@@ -2,7 +2,12 @@
 import { useState, type ReactNode } from "react";
 import { clock, minsUntil, durationMins } from "./format";
 import { rideStops } from "../routing/rideStops";
+import type { WalkStep } from "../routing/walk";
 import type { Itinerary, RideLeg, StaticFeed } from "../data/types";
+
+/** Turn-by-turn for the two walking legs, as Valhalla worded them. Empty until
+ *  the /route calls the map already makes come back, or if they fail. */
+export interface WalkDirections { toStop: WalkStep[]; fromStop: WalkStep[] }
 
 /** A filled badge in the route's own colour, the way transit apps label lines.
  *  An outlined chip with a dot made every route look the same at a glance. */
@@ -92,8 +97,11 @@ export function ItineraryList({
 }
 
 export function ItineraryDetail({
-  itinerary, feed, now, onBack,
-}: { itinerary: Itinerary; feed: StaticFeed | null; now: number; onBack: () => void }) {
+  itinerary, feed, now, directions, onBack,
+}: {
+  itinerary: Itinerary; feed: StaticFeed | null; now: number;
+  directions?: WalkDirections; onBack: () => void;
+}) {
   const nameOf = (id: string) => feed?.stops.get(id)?.name ?? id;
   const leaveIn = minsUntil(itinerary.departTime, now);
 
@@ -112,18 +120,25 @@ export function ItineraryDetail({
       </h2>
 
       <ol style={{ listStyle: "none", margin: 0, padding: 0 }}>
+        {/* The walk-only trip is the same first leg as far as Valhalla is
+            concerned -- one /route from where you are -- so it reads the same
+            `toStop` directions. */}
         {itinerary.rides.length === 0 ? (
           <Step
             dot="walk"
             title={`Walk ${durationMins(itinerary.totalWalkSeconds)} min`}
             detail="straight to your destination"
-            note="Faster than waiting for a shuttle"
+            note={<>
+              Faster than waiting for a shuttle
+              <WalkDirectionsNote steps={directions?.toStop ?? []} />
+            </>}
           />
         ) : (
         <Step
           dot="walk"
           title={`Walk ${durationMins(itinerary.walkToStop.seconds)} min`}
           detail={`to ${nameOf(itinerary.rides[0]?.boardStopId ?? "")}`}
+          note={<WalkDirectionsNote steps={directions?.toStop ?? []} />}
         />
         )}
         {itinerary.rides.map((r, i) => (
@@ -141,6 +156,7 @@ export function ItineraryDetail({
             dot="walk"
             title={`Walk ${durationMins(itinerary.walkFromStop.seconds)} min`}
             detail="to your destination"
+            note={<WalkDirectionsNote steps={directions?.fromStop ?? []} />}
           />
         )}
       </ol>
@@ -227,6 +243,69 @@ function RideStopsNote({ feed, ride }: { feed: StaticFeed | null; ride: RideLeg 
         </>
       )}
     </>
+  );
+}
+
+/** Valhalla measures to the millimetre; a sidewalk does not.
+ *  "Turn left onto Thayer Street · 119.8 m" reads like a survey, not a walk. */
+function farAs(metres: number): string {
+  if (metres >= 1000) return `${(metres / 1000).toFixed(1)} km`;
+  // Tens only once the number is big enough for the last digit to be noise:
+  // rounding a 5 m crosswalk to the nearest ten would erase it entirely.
+  return `${metres >= 100 ? Math.round(metres / 10) * 10 : Math.round(metres)} m`;
+}
+
+/** The turns of one walking leg, named only when asked for.
+ *
+ *  Same disclosure as RideStopsNote and for the same reason: a Valhalla walk
+ *  across campus is 19 maneuvers, and this view is read standing at a stop on
+ *  a phone. Collapsed, the step's height is unchanged. */
+function WalkDirectionsNote({ steps }: { steps: WalkStep[] }) {
+  const [open, setOpen] = useState(false);
+
+  // The map's /route call has not answered yet, or it failed. Nothing to
+  // disclose, so do not offer a control that opens onto an empty list.
+  if (steps.length === 0) return null;
+
+  return (
+    <div style={{ marginTop: 2 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        style={{
+          border: 0, background: "transparent", font: "inherit", fontWeight: 600,
+          color: "var(--accent)", cursor: "pointer", display: "inline-flex",
+          alignItems: "center", gap: 4,
+          // Padding for a thumb, cancelled by margin so the row keeps its height.
+          padding: "5px 6px", margin: "-5px -6px",
+        }}
+      >
+        Directions
+        <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true" style={{
+          transform: open ? "rotate(90deg)" : "none", transition: "transform .15s ease",
+        }}>
+          <path d="M2.5 1 5.5 4 2.5 7" fill="none" stroke="currentColor"
+                strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && (
+        <ol style={{ listStyle: "none", margin: "6px 0 0", padding: "6px 0 0",
+                     borderTop: "1px solid var(--hairline)" }}>
+          {steps.map((s, i) => (
+            <li key={i} style={{ display: "flex", gap: 8, padding: "2px 0" }}>
+              <span style={{ color: "var(--ink)" }}>{s.instruction}</span>
+              {/* The arriving maneuver is zero-length: "· 0 m" is noise. */}
+              {s.metres > 0 && (
+                <span style={{ flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                  · {farAs(s.metres)}
+                </span>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
   );
 }
 
