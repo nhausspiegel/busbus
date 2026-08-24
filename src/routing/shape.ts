@@ -109,11 +109,37 @@ function forwardPath(shape: LatLng[], from: LatLng, to: LatLng): LatLng[] | null
  *  is not going round the loop. Shuttle routes are loops, so when the alight
  *  point comes before the boarding point in the shape the correct segment wraps
  *  around the end rather than running backwards. */
+/** Close enough to count as "the bus is at this stop". Stops sit within a few
+ *  metres of the line they are snapped onto; 60m is generous without being
+ *  wide enough to catch the other side of a street. */
+const AT_STOP_M = 60;
+
 export function sliceShape(shape: LatLng[], from: LatLng, to: LatLng): LatLng[] {
   if (shape.length < 2) return [];
   const a = nearestIndex(shape, from);
-  const b = nearestIndex(shape, to);
-  if (a === b) return [];
+  const n = shape.length;
+
+  // The FIRST time the shape reaches the alight stop after boarding -- not the
+  // globally nearest vertex to it.
+  //
+  // Brown's routes double back: sampled every other vertex, 27 points of the
+  // Connector's shape sit within 15m of a non-adjacent point of the same
+  // shape, and the line as DRAWN is resampled every 10m, which puts the two
+  // passes about 7m apart. A global nearest match then lands on the return
+  // pass and the ride is drawn the long way round. Measured: Sciences Library
+  // to Brook St/Fox Point came out as 5,916m of a 7,917m route -- 7.4x the
+  // 802m between the stops -- which is the highlight carrying on well past the
+  // last stop the rider was shown.
+  let b = -1, best = Infinity;
+  for (let k = 1; k <= n; k++) {
+    const j = (a + k) % n;
+    const d = haversineMeters(shape[j]!, to);
+    if (d < best) { best = d; b = j; }
+    // Once it has been alongside the stop and started moving away again, that
+    // approach was the one the rider gets off at.
+    else if (best <= AT_STOP_M) break;
+  }
+  if (b < 0 || b === a) return [];
   if (a < b) return shape.slice(a, b + 1);
   // Loop wrap: ride to the end of the shape, then on from the start.
   return [...shape.slice(a), ...shape.slice(0, b + 1)];

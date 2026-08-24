@@ -165,3 +165,43 @@ describe("distanceAlongShape", () => {
       .toBeCloseTo(distanceAlongShape(line, { lat: 41.826, lng: -71.400 + 1.5 * 0.0012 }), 0);
   });
 });
+
+describe("sliceShape on a route that revisits a street", () => {
+  // Brown's routes double back, and the line as DRAWN is resampled every 10m,
+  // which leaves the two passes about 7m apart. A global nearest match then
+  // lands on the RETURN pass and the ride is drawn the long way round --
+  // measured on the real Connector, Sciences Library to Brook St/Fox Point
+  // came out as 5,916m of a 7,917m route, 7.4x the 802m between the stops.
+  // Reported as the highlight carrying on past the last stop shown.
+  const M_PER_DEG = 111_320;
+  const metres = (m: number) => m / M_PER_DEG;
+
+  /** Out and back along one street, the two passes 7m apart, sampled at 10m. */
+  const shape: { lat: number; lng: number }[] = [];
+  for (let i = 0; i <= 100; i++) shape.push({ lat: 41.820 + metres(i * 10), lng: -71.400 });
+  for (let i = 100; i >= 0; i--)
+    shape.push({ lat: 41.820 + metres(i * 10), lng: -71.400 + metres(7) });
+
+  it("gets off the first time the bus reaches the stop", () => {
+    const board = { lat: 41.820 + metres(100), lng: -71.400 };      // 100m along, outbound
+    // Dead between the passes, a shade nearer the RETURN one -- the case that
+    // sent the old slice all the way round.
+    const alight = { lat: 41.820 + metres(500), lng: -71.400 + metres(4) };
+    const got = sliceShape(shape, board, alight);
+    expect(got.length).toBeGreaterThan(1);
+    // ~400m of ride, not ~1.6km round the whole out-and-back.
+    expect(shapeLength(got)).toBeLessThan(600);
+    // And it must stop where the rider gets off, not carry on past it.
+    expect(got[got.length - 1]!.lat).toBeLessThan(41.820 + metres(560));
+  });
+
+  it("still wraps a loop when the ride genuinely passes the end", () => {
+    const loop = [
+      { lat: 41.820, lng: -71.400 }, { lat: 41.820, lng: -71.395 },
+      { lat: 41.825, lng: -71.395 }, { lat: 41.825, lng: -71.400 },
+    ];
+    const got = sliceShape(loop, { lat: 41.825, lng: -71.3995 }, { lat: 41.8201, lng: -71.3999 });
+    expect(got.length).toBeGreaterThan(1);
+    expect(got[got.length - 1]!.lat).toBeCloseTo(41.820, 2);
+  });
+});
