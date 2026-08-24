@@ -234,3 +234,69 @@ describe("headwayMinutes", () => {
     expect(headwayMinutes([])).toBeNull();
   });
 });
+
+describe("routeStops keeps the column in time order", () => {
+  // Reported with a screenshot: a route page read 3:38, 3:54, 4:18, blank,
+  // 3:42, 3:46, 3:48 down the column. Two separate causes, both here.
+  const mkStop = (id: string): Stop => ({ id, name: `Stop ${id}`, lat: 41.82, lng: -71.40 });
+  const loopFeed: StaticFeed = {
+    routes: new Map([["R1", { id: "R1", name: "R1", shortName: "1", color: "#111", shape: [] }]]),
+    stops: new Map(["A", "B", "C", "D"].map((id) => [id, mkStop(id)])),
+    trips: new Map([["full", { id: "full", routeId: "R1", stops: [
+      { stopId: "A", seq: 1, time: 0 }, { stopId: "B", seq: 2, time: 60 },
+      { stopId: "C", seq: 3, time: 120 }, { stopId: "D", seq: 4, time: 180 }] }]]),
+    feedEndDate: "20991231",
+  };
+  const dep = (stopId: string, tripId: string, mins: number) => ({
+    stopId, tripId, routeId: "R1", seq: 1, time: NOW + mins * 60, live: true,
+  });
+
+  it("never fills a gap with a different bus", () => {
+    // Bus "one" is the vehicle being followed but does not report at C.
+    // Borrowing bus "two"'s time for that row is right for the row and
+    // nonsense for the column -- it sends the clock backwards mid-list.
+    const board: DepartureBoard = new Map([
+      ["A", [dep("A", "one", 2)]],
+      ["B", [dep("B", "one", 6)]],
+      ["C", [dep("C", "two", 1)]],
+      ["D", [dep("D", "one", 14)]],
+    ]);
+    const got = routeStops(loopFeed, board, "R1", NOW);
+    const times = got.map((s) => s.next?.time ?? null);
+    expect(got.find((s) => s.stop.id === "C")!.next).toBeNull();
+    const present = times.filter((t): t is number => t !== null);
+    for (let i = 1; i < present.length; i++)
+      expect(present[i]!).toBeGreaterThan(present[i - 1]!);
+  });
+
+  it("starts a loop where the bus actually is", () => {
+    // One vehicle part-way round: it reaches C and D next, then comes back to
+    // A and B on the following lap. Listed in raw route order that reads
+    // 14, 18, 2, 6 -- the wrap is what put 3:42 below 4:18 on screen.
+    const board: DepartureBoard = new Map([
+      ["A", [dep("A", "one", 14)]],
+      ["B", [dep("B", "one", 18)]],
+      ["C", [dep("C", "one", 2)]],
+      ["D", [dep("D", "one", 6)]],
+    ]);
+    const got = routeStops(loopFeed, board, "R1", NOW);
+    expect(got.map((s) => s.stop.id)).toEqual(["C", "D", "A", "B"]);
+    const times = got.map((s) => s.next!.time);
+    for (let i = 1; i < times.length; i++)
+      expect(times[i]!).toBeGreaterThan(times[i - 1]!);
+  });
+
+  it("follows the bus that covers the most of the route", () => {
+    // A vehicle just entering service reports at one stop only. Anchoring on
+    // the first stop's soonest departure would follow it and blank the rest.
+    const board: DepartureBoard = new Map([
+      ["A", [dep("A", "fresh", 1), dep("A", "main", 5)]],
+      ["B", [dep("B", "main", 9)]],
+      ["C", [dep("C", "main", 13)]],
+      ["D", [dep("D", "main", 17)]],
+    ]);
+    const got = routeStops(loopFeed, board, "R1", NOW);
+    expect(new Set(got.map((s) => s.next?.tripId)).size).toBe(1);
+    expect(got[0]!.next!.tripId).toBe("main");
+  });
+});
