@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { routeStops, stopRoutes, stations } from "../src/routing/routeDetail";
+import { routeStops, stopRoutes, stations, nextStopIndex, headwayMinutes } from "../src/routing/routeDetail";
 import type { StaticFeed, DepartureBoard, Stop } from "../src/data/types";
 
 const NOW = 1_700_000_000;
@@ -182,5 +182,55 @@ describe("routeStops", () => {
   it("returns empty for a route with no trips", () => {
     const { feed, board } = fixture();
     expect(routeStops(feed, board, "22427", NOW)).toEqual([]);
+  });
+});
+
+describe("nextStopIndex", () => {
+  // A square loop, one stop at each corner, so the wrap from the last stop
+  // back to the first is exercised -- Brown's routes are all loops.
+  const c = [
+    { lat: 41.820, lng: -71.400 }, { lat: 41.820, lng: -71.395 },
+    { lat: 41.825, lng: -71.395 }, { lat: 41.825, lng: -71.400 },
+  ];
+  const shape = [...c, c[0]!];
+  const stops = c;
+
+  it("names the stop the bus is heading for, not the one it just left", () => {
+    // Just past the first corner, on the leg towards the second.
+    const at = { lat: 41.820, lng: -71.3985 };
+    expect(nextStopIndex(shape, stops, at)).toBe(1);
+  });
+
+  it("wraps at the end of a loop", () => {
+    // On the final leg, heading back to where the list starts.
+    const at = { lat: 41.8225, lng: -71.400 };
+    expect(nextStopIndex(shape, stops, at)).toBe(0);
+  });
+
+  it("is unmoved by a bus sitting a few metres off its own line", () => {
+    const on = { lat: 41.820, lng: -71.3985 };
+    const off = { lat: 41.82005, lng: -71.3985 };
+    expect(nextStopIndex(shape, stops, off)).toBe(nextStopIndex(shape, stops, on));
+  });
+
+  it("reports null when there is no shape to measure against", () => {
+    // 22427 Brown Stadium Loop is active with no shape at all.
+    expect(nextStopIndex([], stops, c[0]!)).toBeNull();
+  });
+});
+
+describe("headwayMinutes", () => {
+  it("is the typical gap between departures, not a bunched one", () => {
+    // Gaps of 20, 2 and 20 minutes: two buses arriving together in the middle
+    // of an otherwise even service. Taking the middle gap as it falls would
+    // advertise "every 2 min" to a rider who will wait twenty, so the gaps
+    // have to be sorted before the median is read off them.
+    const t = (m: number) => NOW + m * 60;
+    expect(headwayMinutes([t(0), t(20), t(22), t(42)])).toBe(20);
+  });
+
+  it("is null when there are not two departures to compare", () => {
+    expect(headwayMinutes([NOW])).toBeNull();
+    expect(headwayMinutes([])).toBeNull();
   });
 });

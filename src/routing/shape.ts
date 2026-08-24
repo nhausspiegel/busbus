@@ -118,3 +118,26 @@ export function sliceShape(shape: LatLng[], from: LatLng, to: LatLng): LatLng[] 
   // Loop wrap: ride to the end of the shape, then on from the start.
   return [...shape.slice(a), ...shape.slice(0, b + 1)];
 }
+
+/** Total length of a polyline, metres. */
+export function shapeLength(shape: LatLng[]): number {
+  let d = 0;
+  for (let i = 1; i < shape.length; i++) d += haversineMeters(shape[i - 1]!, shape[i]!);
+  return d;
+}
+
+/**
+ * How far along the shape a point falls, metres from the first vertex.
+ *
+ * Projects onto the segments, like `snapToShape`, so a bus a few metres to one
+ * side of its own line has the same progress as one exactly on it. This is
+ * what lets a vehicle be placed between two stops in a list: compare its
+ * distance along the shape with each stop's.
+ */
+export function distanceAlongShape(shape: LatLng[], p: LatLng): number {
+  if (shape.length < 2) return 0;
+  const { i, t } = locate(shape, p);
+  let d = 0;
+  for (let k = 1; k < i; k++) d += haversineMeters(shape[k - 1]!, shape[k]!);
+  return d + haversineMeters(shape[i - 1]!, shape[i]!) * t;
+}

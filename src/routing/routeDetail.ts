@@ -1,4 +1,5 @@
-import type { StaticFeed, DepartureBoard, Departure, Stop } from "../data/types";
+import type { StaticFeed, DepartureBoard, Departure, Stop, LatLng } from "../data/types";
+import { distanceAlongShape, shapeLength } from "./shape";
 
 export interface RouteStop {
   stop: Stop;
@@ -137,4 +138,46 @@ export function routeStops(
       ?? here[0] ?? null;
     return { stop, seq, next };
   });
+}
+
+/**
+ * Which stop in the list a vehicle is heading for.
+ *
+ * Apple Maps draws the bus itself into the stop list, between the stop it has
+ * left and the one it is approaching, and dims the stops behind it. That needs
+ * the vehicle placed in the SAME order the list is in, which a straight-line
+ * distance to each stop cannot do -- on a loop, the nearest stop to a bus is
+ * often the one it passed a minute ago.
+ *
+ * Measured along the shape instead, so it is the route's own order that
+ * decides, and a bus a few metres to one side of its line is unaffected.
+ * Compared modulo the shape's length, because every Brown route is a loop and
+ * the last stop's successor is the first one.
+ */
+export function nextStopIndex(
+  shape: LatLng[], stops: { lat: number; lng: number }[], at: { lat: number; lng: number },
+): number | null {
+  if (shape.length < 2 || stops.length === 0) return null;
+  const total = shapeLength(shape);
+  if (total === 0) return null;
+  const here = distanceAlongShape(shape, at);
+  let best = 0, bestAhead = Infinity;
+  for (let i = 0; i < stops.length; i++) {
+    // How far the bus still has to travel to reach this stop, going forwards.
+    const ahead = ((distanceAlongShape(shape, stops[i]!) - here) % total + total) % total;
+    if (ahead < bestAhead) { bestAhead = ahead; best = i; }
+  }
+  return best;
+}
+
+/** The typical gap between departures, whole minutes.
+ *
+ *  The median, not the mean and not the first gap: buses bunch, and one pair
+ *  two minutes apart would otherwise advertise a route as "every 2 min" when
+ *  the rider who misses them waits twenty. */
+export function headwayMinutes(times: number[]): number | null {
+  if (times.length < 2) return null;
+  const t = [...times].sort((a, b) => a - b);
+  const gaps = t.slice(1).map((v, i) => v - t[i]!).sort((a, b) => a - b);
+  return Math.round(gaps[Math.floor((gaps.length - 1) / 2)]! / 60);
 }
