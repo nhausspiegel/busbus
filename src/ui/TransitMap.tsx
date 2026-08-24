@@ -64,9 +64,10 @@ const mPerDegLng = M_PER_DEG_LAT * Math.cos((41.8265 * Math.PI) / 180);
 const toPlane = (p: LatLng): Pt => ({ x: p.lng * mPerDegLng, y: p.lat * M_PER_DEG_LAT });
 const fromPlane = (p: Pt): LatLng => ({ lng: p.x / mPerDegLng, lat: p.y / M_PER_DEG_LAT });
 
-const OVERLAY_SOURCES = ["itin-walk", "itin-ride"] as const;
+const OVERLAY_SOURCES = ["itin-walk", "itin-ride", "itin-ends"] as const;
 const OVERLAY_LAYERS =
-  ["itin-walk", "itin-walk-guess", "itin-ride-case", "itin-ride-line"] as const;
+  ["itin-walk", "itin-walk-guess", "itin-ride-case", "itin-ride-line",
+   "itin-end", "itin-end-dot"] as const;
 
 /** Watch the system colour scheme so the map can follow it. */
 function usePrefersDark(): boolean {
@@ -89,7 +90,12 @@ export interface Overlay {
   /** Ridden portions of route shapes, with the route's own colour. The route
    *  id lets the map lay the itinerary over the line as DRAWN -- offset into
    *  its lane -- instead of the raw centreline beside it. */
-  rides: { path: LatLng[]; color: string; routeId: string }[];
+  rides: {
+    path: LatLng[]; color: string; routeId: string;
+    /** Where the rider boards and alights, so the map can mark the ends of
+     *  the ride rather than leaving them to be guessed from the line. */
+    boardStopId?: string; alightStopId?: string;
+  }[];
 }
 
 export function TransitMap({
@@ -837,6 +843,41 @@ export function TransitMap({
                    "line-width": 4, "line-opacity": 0.35,
                    "line-dasharray": [0.2, 2.6] } });
       }
+      // The ends of the ride. Without these the rider has to work out where
+      // to get on and off by comparing the coloured line against the stop
+      // beads underneath it, which is the bulk of why this view read as messy.
+      // Drawn on TOP of the beads, and only for the boarding and alighting
+      // stops -- every intermediate stop stays visible underneath.
+      const endPts: GeoJSON.Feature[] = [];
+      for (const r of overlay.rides)
+        for (const [id, role] of [[r.boardStopId, "board"], [r.alightStopId, "alight"]] as const) {
+          const stop = id ? feed?.stops.get(id) : undefined;
+          if (!stop) continue;
+          const line = drawnRef.current.get(r.routeId);
+          const at = line && line.length > 1
+            ? snapToShape({ lat: stop.lat, lng: stop.lng }, line)
+            : { lat: stop.lat, lng: stop.lng };
+          endPts.push({
+            type: "Feature",
+            properties: { role, color: r.color },
+            geometry: { type: "Point", coordinates: [at.lng, at.lat] },
+          });
+        }
+      if (endPts.length) {
+        addSource("itin-ends", endPts);
+        m.addLayer({ id: "itin-end", type: "circle", source: "itin-ends",
+          paint: {
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 6, 16, 9],
+            "circle-color": darkRef.current ? "#F0E9E3" : "#FFFFFF",
+            "circle-stroke-color": darkRef.current ? "#0B0908" : "#241C17",
+            "circle-stroke-width": 2,
+          } });
+        m.addLayer({ id: "itin-end-dot", type: "circle", source: "itin-ends",
+          paint: {
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 3, 16, 4.5],
+            "circle-color": ["get", "color"],
+          } });
+      }
     } catch { /* style churn; the next render redraws */ }
 
   }, [overlay, ready, feed]);
@@ -879,6 +920,13 @@ export function TransitMap({
     if (!m || !ready || !feed) return;
     const routeFocus = selection?.kind === "route" ? selection.id : null;
     const stopFocus = selection?.kind === "stop" ? selection.id : null;
+    // A chosen trip narrows the map the same way selecting a route does. It
+    // did not before, so the itinerary's own line was drawn over a full-
+    // strength network and the rider had to pick their ride out of five
+    // equally bright lines -- most of why this view read as messy.
+    const ridden = overlay?.rides.map((r) => r.routeId) ?? [];
+    const tripLit: maplibregl.ExpressionSpecification | null = ridden.length
+      ? ["in", ["get", "routeId"], ["literal", ridden]] : null;
     // A stop belongs to its routes, so selecting one keeps those at full
     // strength: the rider wants to see where it can take them.
     const stopRoutesLit = stopFocus
@@ -897,6 +945,7 @@ export function TransitMap({
           routeFocus ? ["case", ["==", ["get", "routeId"], routeFocus], 1, DIM]
           : stopFocus ? ["case", ["in", ["concat", "|", ["get", "routeId"], "|"],
                                   stopRoutesLit], 1, DIM]
+          : tripLit ? ["case", tripLit, 1, DIM]
           : 1);
         m.setPaintProperty("routes-line", "line-width",
           routeFocus ? ["case", ["==", ["get", "routeId"], routeFocus], 8, 4] : 6);
@@ -909,12 +958,20 @@ export function TransitMap({
           : ["literal", true];
         // The tapped stop grows and stays solid; everything else recedes. That
         // is the whole answer to "which one did I just tap".
+        // During a trip the ridden routes' stops stay legible; everything
+        // else recedes. Intermediate stops are deliberately NOT hidden -- a
+        // rider wants to see what they are passing.
+        const onTrip: maplibregl.ExpressionSpecification | null = ridden.length
+          ? ["any", ...ridden.map((r): maplibregl.ExpressionSpecification =>
+              ["in", `|${r}|`, ["get", "routes"]])] : null;
         m.setPaintProperty("stops", "circle-opacity",
           stopFocus ? ["case", ["==", ["get", "id"], stopFocus], 1, DIM]
-          : routeFocus ? ["case", mine, 1, DIM] : 1);
+          : routeFocus ? ["case", mine, 1, DIM]
+          : onTrip ? ["case", onTrip, 1, DIM] : 1);
         m.setPaintProperty("stops", "circle-stroke-opacity",
           stopFocus ? ["case", ["==", ["get", "id"], stopFocus], 1, DIM]
-          : routeFocus ? ["case", mine, 1, DIM] : 1);
+          : routeFocus ? ["case", mine, 1, DIM]
+          : onTrip ? ["case", onTrip, 1, DIM] : 1);
         // No `interchange` branch here. The dot is the same size in both
         // cases -- what differs is the lozenge underneath it. This effect
         // re-set the radius on every selection change and was still carrying

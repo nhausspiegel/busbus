@@ -141,19 +141,22 @@ button { font: inherit; color: inherit; }
  * can be asked which.
  */
 .stop-halo {
-  width: 46px;
-  height: 46px;
-  margin: -23px 0 0 -23px;
+  /* No negative margin: MapLibre centres a marker element on its own, and
+   * offsetting it again put the ring 23px away from the stop it was meant to
+   * be marking -- it read as a stray circle rather than a selection. */
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
-  border: 3px solid var(--accent);
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border: 2px solid var(--ink);
   pointer-events: none;
+  opacity: .55;
   animation: stop-halo-in 260ms cubic-bezier(.22, 1, .28, 1);
 }
 
+/* A ring closing onto the stop, not a coloured disc sitting beside it. */
 @keyframes stop-halo-in {
-  from { transform: scale(.45); opacity: 0; }
-  to   { transform: scale(1);   opacity: 1; }
+  from { transform: scale(1.9); opacity: 0; }
+  to   { transform: scale(1);   opacity: .55; }
 }
 
 /* A rider who has asked for reduced motion gets the same information without
