@@ -17,7 +17,6 @@ import { fetchVehicles, type Bus } from "../data/vehicles";
 import { fetchOccupancy, mergeOccupancy } from "../data/occupancy";
 import { serviceDayStart, scheduledDepartures, buildBoard, groupLiveTrips } from "../data/departures";
 import { nearbyDepartures } from "../routing/nearby";
-import { routeStops } from "../routing/routeDetail";
 import { walkRoute, type WalkStep } from "../routing/walk";
 import { planBetween } from "../routing/trip";
 import { sliceShape } from "../routing/shape";
@@ -246,11 +245,6 @@ export default function App() {
     return pts.length ? pts : null;
   }, [overlay]);
 
-  // Stops on the route being viewed, so the map can draw them as stations.
-  const routeStopIds = useMemo(() => {
-    if (!feed || !routeId) return undefined;
-    return routeStops(feed, board, routeId, planNow).map((r) => r.stop.id);
-  }, [feed, board, routeId, planNow]);
 
   /** `mode` is derived by precedence stop > route > chosen > dest, so setting a
    *  destination while a stop card or route page is open left the old view on
@@ -270,7 +264,9 @@ export default function App() {
       <TransitMap
         feed={feed} buses={buses} me={me}
         destination={dest?.at ?? null} overlay={overlay} focus={focus}
-        highlightRouteId={routeId} routeStopIds={routeStopIds} activeRouteIds={ACTIVE}
+        selection={stopId ? { kind: "stop", id: stopId }
+          : routeId ? { kind: "route", id: routeId } : null}
+        activeRouteIds={ACTIVE}
         onRouteClick={(r) => { setRouteId(r); setStopId(null); setDetent("half"); }}
         onStopClick={(id) => { setStopId(id); setRouteId(null); setDetent("half"); }}
         onMapClick={(p) => pickDestination(p, "Dropped pin")}
