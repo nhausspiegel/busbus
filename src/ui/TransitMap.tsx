@@ -512,19 +512,29 @@ export function TransitMap({
         // beads on a wire. Two layers because a MapLibre line has no stroke:
         // the wider one is the outline, the narrower one the body -- the same
         // white-bar-with-a-dark-edge the Underground map uses.
+        // The bar has to be WIDER than the beads, not narrower. A first attempt
+        // drew it 11px across under beads 17px across spread over a 23px span:
+        // it rendered, and not one pixel of it was ever visible. Sized to the
+        // bead's own outer diameter (2 * radius + stroke) the body sits flush
+        // with them and the case shows as an outline all the way round, which
+        // is the enclosing capsule the Underground map draws.
+        const beadOuter: maplibregl.ExpressionSpecification =
+          ["interpolate", ["linear"], ["zoom"], 13, 8.5, 16, 17];
+        const beadOuterCase: maplibregl.ExpressionSpecification =
+          ["interpolate", ["linear"], ["zoom"], 13, 12.5, 16, 21];
         m.addLayer({ id: "station-tick-case", type: "line", source: "station-ticks",
           minzoom: 13,
           layout: { "line-cap": "round" },
           paint: {
             "line-color": darkRef.current ? "#C6BAB1" : "#241C17",
-            "line-width": ["interpolate", ["linear"], ["zoom"], 13, 8, 16, 17],
+            "line-width": beadOuterCase,
           } });
         m.addLayer({ id: "station-tick", type: "line", source: "station-ticks",
           minzoom: 13,
           layout: { "line-cap": "round" },
           paint: {
             "line-color": darkRef.current ? "#15110F" : "#FFFFFF",
-            "line-width": ["interpolate", ["linear"], ["zoom"], 13, 5, 16, 11],
+            "line-width": beadOuter,
           } });
         m.addLayer({ id: "stops", type: "circle", source: "stops", minzoom: 13,
           paint: {
