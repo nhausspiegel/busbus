@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { haversineMeters, nearestStops, decodePolyline6, parseWalkRoute } from "../src/routing/walk";
+import { haversineMeters, nearestStops, decodePolyline6, parseWalkRoute , walkLegs } from "../src/routing/walk";
 import type { Stop } from "../src/data/types";
 
 const s = (id: string, lat: number, lng: number): Stop => ({ id, name: id, lat, lng });
@@ -114,5 +114,35 @@ describe("decodePolyline6", () => {
 
   it("returns empty for an empty string", () => {
     expect(decodePolyline6("")).toEqual([]);
+  });
+});
+
+describe("walkLegs", () => {
+  const a = { lat: 41.82, lng: -71.40 };
+  const b = { lat: 41.83, lng: -71.41 };
+  const c = { lat: 41.84, lng: -71.42 };
+  const routed = [{ lat: 41.821, lng: -71.401 }, { lat: 41.825, lng: -71.405 }, b];
+
+  it("draws a leg for every leg, even when nothing routes", () => {
+    // The bug: the walk paths were filtered on "did any come back non-empty"
+    // and setOverlay was skipped when none did, so a rider already standing at
+    // the boarding stop -- or one leg that Valhalla could not route -- left the
+    // straight guess on screen permanently with no way to replace it.
+    const got = walkLegs([{ from: a, to: b }, { from: b, to: c }], [null, null]);
+    expect(got).toHaveLength(2);
+    expect(got.every((l) => l.provisional)).toBe(true);
+    expect(got[0]!.path).toEqual([a, b]);
+  });
+
+  it("keeps a routed leg real when the other one fails", () => {
+    // One verdict shared between both legs meant a single failure drew BOTH as
+    // straight lines through the buildings.
+    const got = walkLegs([{ from: a, to: b }, { from: b, to: c }], [routed, null]);
+    expect(got[0]).toEqual({ path: routed, provisional: false });
+    expect(got[1]).toEqual({ path: [b, c], provisional: true });
+  });
+
+  it("treats a path too short to draw as unrouted", () => {
+    expect(walkLegs([{ from: a, to: b }], [[a]])[0]!.provisional).toBe(true);
   });
 });

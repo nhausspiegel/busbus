@@ -17,7 +17,7 @@ import { fetchVehicles, type Bus } from "../data/vehicles";
 import { fetchOccupancy, mergeOccupancy } from "../data/occupancy";
 import { serviceDayStart, scheduledDepartures, buildBoard, groupLiveTrips } from "../data/departures";
 import { nearbyDepartures } from "../routing/nearby";
-import { walkRoute, type WalkStep } from "../routing/walk";
+import { walkRoute, walkLegs, type WalkStep } from "../routing/walk";
 import { planBetween } from "../routing/trip";
 import { sliceShape } from "../routing/shape";
 import type { Place } from "../data/geocode";
@@ -209,52 +209,54 @@ export default function App() {
     const walkOnly = shown.rides.length === 0;
     const boardStop = walkOnly ? null : feed.stops.get(shown.rides[0]?.boardStopId ?? "");
     const alightStop = walkOnly ? null : feed.stops.get(shown.rides[shown.rides.length - 1]?.alightStopId ?? "");
-    const straight: LatLng[][] = [];
-    if (walkOnly && dest) straight.push([origin, dest.at]);
-    if (boardStop) straight.push([origin, boardStop]);
-    if (alightStop && dest) straight.push([alightStop, dest.at]);
-    // Provisional until Valhalla answers. Marked as such so the map can draw
-    // it as the guess it is -- a straight line through the buildings is not a
-    // walking route, and drawing it in the same style as a real one is the same
-    // mistake as showing a timetable time as though a bus had reported it.
-    setOverlay({ walks: straight, rides, walksProvisional: true });
+    // Each walking leg is resolved on its own. Sharing one verdict between
+    // them meant a single failure left BOTH drawn as straight lines, and a
+    // filter on "did any path come back non-empty" meant that when neither did
+    // -- the rider already standing at the boarding stop, or a stop id that
+    // does not resolve -- setOverlay was never called again at all and the
+    // straight guess stayed on screen permanently. That was the bug behind
+    // "sometimes it just stays a straight line".
+    const legs: { from: LatLng; to: LatLng }[] = [];
+    if (walkOnly && dest) legs.push({ from: origin, to: dest.at });
+    else if (boardStop) legs.push({ from: origin, to: boardStop });
+    if (!walkOnly && alightStop && dest) legs.push({ from: alightStop, to: dest.at });
+
+    // No provisional line at all. Valhalla answers in about 130ms, so drawing
+    // a straight line through the buildings first only produces a flash of
+    // something false; the ride is drawn straight away and the walk appears
+    // when it is real. A straight line is used ONLY when a leg genuinely
+    // cannot be routed, and is marked as a guess when it is.
+    setOverlay({ walks: [], rides });
     // Cleared with the straight lines, not when the answer arrives: otherwise
     // the previous trip's turns sit under the new trip's walk step for as long
     // as Valhalla takes, which is a confident way to be wrong.
     setDirections({ toStop: [], fromStop: [] });
 
     (async () => {
-      const none: { path: LatLng[]; steps: WalkStep[] } = { path: [], steps: [] };
-      // One /route per walking leg, and each answer carries both the drawn line
-      // and the turn-by-turn -- the detail view asks Valhalla nothing.
-      const legs = () => Promise.all([
-        walkOnly && dest ? walkRoute(origin, dest.at)
-          : boardStop ? walkRoute(origin, boardStop) : Promise.resolve(none),
-        alightStop && dest ? walkRoute(alightStop, dest.at) : Promise.resolve(none),
-      ]);
-      try {
-        let pair;
+      const attempt = async (l: { from: LatLng; to: LatLng }) => {
         try {
-          pair = await legs();
+          return await walkRoute(l.from, l.to);
         } catch {
           // Valhalla is a volunteer instance and a throttled response arrives
-          // as a CORS error, so one failure is expected rather than fatal.
-          // Swallowing it left a straight line through the buildings on screen
-          // permanently, which is what riders were seeing.
-          if (cancelled) return;
+          // as a CORS error, so one failure is ordinary. Try once more before
+          // settling for the straight line.
           await new Promise((r) => setTimeout(r, 1500));
-          if (cancelled) return;
-          pair = await legs();
+          return walkRoute(l.from, l.to);
         }
-        if (cancelled) return;
-        const [toStop, fromStop] = pair;
-        const real = [toStop.path, fromStop.path].filter((l) => l.length > 1);
-        if (real.length) setOverlay({ walks: real, rides, walksProvisional: false });
-        setDirections({ toStop: toStop.steps, fromStop: fromStop.steps });
-      } catch {
-        // Both attempts failed. The straight lines stay, still flagged
-        // provisional, so they read as an estimate rather than a route.
-      }
+      };
+      const settled = await Promise.allSettled(legs.map(attempt));
+      if (cancelled) return;
+
+      const walks = walkLegs(legs, settled.map((r) =>
+        r.status === "fulfilled" ? r.value.path : null));
+      setOverlay({ walks, rides });
+      const steps = (i: number) => {
+        const r = settled[i];
+        return r?.status === "fulfilled" ? r.value.steps : [];
+      };
+      setDirections(walkOnly
+        ? { toStop: steps(0), fromStop: [] }
+        : { toStop: steps(0), fromStop: steps(1) });
     })();
     return () => { cancelled = true; };
   }, [chosen, preview, feed, origin, dest]);
@@ -262,7 +264,8 @@ export default function App() {
   // Everything the chosen trip touches, so the map can frame it.
   const focus = useMemo<LatLng[] | null>(() => {
     if (!overlay) return null;
-    const pts = [...overlay.walks.flat(), ...overlay.rides.flatMap((r) => r.path)];
+    const pts = [...overlay.walks.flatMap((w) => w.path),
+                 ...overlay.rides.flatMap((r) => r.path)];
     return pts.length ? pts : null;
   }, [overlay]);
 

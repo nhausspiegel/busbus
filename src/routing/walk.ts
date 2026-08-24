@@ -162,3 +162,27 @@ export function decodePolyline6(str: string): LatLng[] {
   }
   return out;
 }
+
+/**
+ * What to draw for each walking leg, given whichever ones Valhalla routed.
+ *
+ * Every leg gets a line, always: the routed path when there is one, and
+ * otherwise the straight hop marked as the guess it is. Both halves of that
+ * matter. Filtering the legs down to the ones that routed, and skipping the
+ * redraw when none did, is what left a straight line through the buildings on
+ * screen permanently -- a rider already standing at the boarding stop has a
+ * leg too short to route, and a leg over water or private land has none at
+ * all. Resolving the legs together, rather than one verdict for the pair, is
+ * what stops one failure from dragging a perfectly good path down with it.
+ */
+export function walkLegs(
+  legs: { from: LatLng; to: LatLng }[],
+  routed: (LatLng[] | null)[],
+): { path: LatLng[]; provisional: boolean }[] {
+  return legs.map((l, i) => {
+    const path = routed[i];
+    return path && path.length > 1
+      ? { path, provisional: false }
+      : { path: [l.from, l.to], provisional: true };
+  });
+}
