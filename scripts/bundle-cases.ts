@@ -37,7 +37,8 @@ function closest(a: Pt[], b: Pt[]): number {
 }
 
 const panels = CASES.map((c, idx) => {
-  const drawn = laneProfiles(c.lines, OPTS).map((p) => ({ id: p.id, pts: applyLanes(p, c.minGap) }));
+  const CORNER_RADIUS = 14;
+  const drawn = laneProfiles(c.lines, OPTS).map((p) => ({ id: p.id, pts: applyLanes(p, c.minGap, CORNER_RADIUS) }));
 
   // Where the lines actually run together, how far apart did they end up?
   let measured = Infinity;

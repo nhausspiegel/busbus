@@ -13,7 +13,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { laneProfiles, applyLanes, DEFAULT_OPTIONS, type Pt } from "../src/render/bundle";
 import { CASES } from "../test/fixtures/bundleCases";
 
-const TAPERS = [40, 70, 100, 140];
+const RADII = [0, 8, 16, 28];
 const SHOW = ["y-merge", "antiparallel-loop"];
 const COLOURS = ["#C8102E", "#1F6FEB"];
 
@@ -52,10 +52,9 @@ function kink(src: Pt[], out: Pt[]): number {
 const rowsOut: string[] = [];
 SHOW.forEach((name, row) => {
   const c = CASES.find((x) => x.name === name)!;
-  TAPERS.forEach((taperM, col) => {
-    const opts = { ...DEFAULT_OPTIONS, taperM };
-    const profiles = laneProfiles(c.lines, opts);
-    const drawn = profiles.map((p) => ({ id: p.id, src: p.path, pts: applyLanes(p, c.minGap) }));
+  RADII.forEach((radius, col) => {
+    const profiles = laneProfiles(c.lines, DEFAULT_OPTIONS);
+    const drawn = profiles.map((p) => ({ id: p.id, src: p.path, pts: applyLanes(p, c.minGap, radius) }));
 
     let gap = Infinity;
     for (let i = 0; i < drawn.length; i++)
@@ -76,7 +75,7 @@ SHOW.forEach((name, row) => {
   <g transform="translate(${ox} ${oy})">
     <rect width="${PANEL_W}" height="${PANEL_H}" rx="10" fill="#FBF8F5" stroke="#E4DDD6"/>
     <g transform="translate(0 8) scale(0.95)">${source}${result}</g>
-    <text x="12" y="${PANEL_H + 17}" font-size="13" font-weight="700" fill="#241C17">taperM ${taperM}</text>
+    <text x="12" y="${PANEL_H + 17}" font-size="13" font-weight="700" fill="#241C17">corner radius ${radius}</text>
     <text x="12" y="${PANEL_H + 32}" font-size="11" fill="#6F625A">
       gap reached ${gap === Infinity ? "n/a" : gap.toFixed(1)} of ${c.minGap}
       · kink ${worstKink.toFixed(1)}&#176;
@@ -85,12 +84,12 @@ SHOW.forEach((name, row) => {
   });
 });
 
-const width = PAD + TAPERS.length * (PANEL_W + PAD);
+const width = PAD + RADII.length * (PANEL_W + PAD);
 const height = HEADER + SHOW.length * (PANEL_H + LABEL + PAD);
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"
      viewBox="0 0 ${width} ${height}" font-family="ui-sans-serif,system-ui">
   <rect width="${width}" height="${height}" fill="#FFFFFF"/>
-  <text x="${PAD}" y="26" font-size="17" font-weight="700" fill="#241C17">Taper knob — pick one</text>
+  <text x="${PAD}" y="26" font-size="17" font-weight="700" fill="#241C17">Corner radius — pick one</text>
   <text x="${PAD}" y="44" font-size="12" fill="#6F625A">top row: Y-merge (short shared trunk) · bottom row: loop both ways · lower kink is smoother, but too long a taper never reaches the gap</text>
 ${rowsOut.join("\n")}
 </svg>
@@ -98,4 +97,4 @@ ${rowsOut.join("\n")}
 
 mkdirSync("docs", { recursive: true });
 writeFileSync("docs/bundle-knobs.svg", svg);
-console.log(`wrote docs/bundle-knobs.svg (tapers ${TAPERS.join(", ")})`);
+console.log(`wrote docs/bundle-knobs.svg (radii ${RADII.join(", ")})`);
