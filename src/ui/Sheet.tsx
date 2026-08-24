@@ -171,7 +171,7 @@ export function Sheet({
         // there is no grabber, so the header has to supply that space itself
         // or the field sits flush against the panel's top with 18px either
         // side of it. Matching the horizontal padding keeps the inset even.
-        <div style={{ padding: wide ? "18px 18px 10px" : "0 16px 10px", flexShrink: 0 }}>
+        <div style={{ padding: wide ? "20px 18px 16px" : "0 16px 10px", flexShrink: 0 }}>
           {header}
         </div>
       )}
@@ -184,6 +184,11 @@ export function Sheet({
         style={{
           overflowY: "auto", overscrollBehavior: "contain", flex: 1,
           padding: wide ? "16px 18px" : "0 16px calc(16px + var(--safe-b))",
+          // On a phone the sheet is short and every pixel of height is a line
+          // of departures, so the stack stays tight. A desktop panel is a
+          // metre of empty screen with the same controls crammed into the top
+          // of it, which reads as a wall; space them out there and only there.
+          ...(wide ? { display: "flex", flexDirection: "column", gap: 16 } : {}),
         }}
       >
         {children}
