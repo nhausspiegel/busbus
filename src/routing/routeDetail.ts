@@ -128,16 +128,47 @@ export function routeStops(
       .filter((d) => d.routeId === routeId && d.time >= now)
       .sort((a, b) => a.time - b.time);
 
-  const chosen = ordered[0] ? upcoming(ordered[0].stopId)[0]?.tripId : undefined;
+  // The vehicle that covers the most of this list, not the one that happens to
+  // reach the first stop soonest. A bus just entering service may report at a
+  // single stop; anchoring on the first stop would follow it and blank every
+  // other row.
+  const coverage = new Map<string, { count: number; first: number }>();
+  for (const { stopId } of ordered)
+    for (const d of upcoming(stopId)) {
+      const c = coverage.get(d.tripId) ?? { count: 0, first: Infinity };
+      c.count++;
+      c.first = Math.min(c.first, d.time);
+      coverage.set(d.tripId, c);
+    }
+  let chosen: string | undefined;
+  let best = { count: -1, first: Infinity };
+  for (const [tripId, c] of coverage)
+    if (c.count > best.count || (c.count === best.count && c.first < best.first)) {
+      chosen = tripId;
+      best = c;
+    }
 
-  return ordered.map(({ stop, seq, stopId }) => {
-    const here = upcoming(stopId);
-    // A short trip may skip a stop the longest trip serves, so fall back to
-    // the soonest rather than leaving a hole in the middle of the line.
-    const next = (chosen ? here.find((d) => d.tripId === chosen) : undefined)
-      ?? here[0] ?? null;
-    return { stop, seq, next };
-  });
+  // No falling back to another vehicle for a stop this one does not report.
+  // That fallback was the sawtooth coming back in through the side door: it is
+  // right for the row and sends the column backwards, which is exactly what a
+  // rider reads as broken. A gap is honest and stays a gap.
+  const rows = ordered.map(({ stop, seq, stopId }) => ({
+    stop, seq,
+    next: (chosen ? upcoming(stopId).find((d) => d.tripId === chosen) : undefined) ?? null,
+  }));
+
+  // Every Brown route is a loop, so the chosen run starts wherever the bus
+  // currently is and wraps round to the stops behind it -- which belong to the
+  // next lap and are therefore LATER, not earlier. Listed in raw route order
+  // that reads 3:38, 3:54, 4:18, 3:42. Rotating the list to begin at the
+  // vehicle's next stop is what makes the column climb.
+  let start = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const t = rows[i]!.next?.time;
+    if (t === undefined) continue;
+    if (start < 0 || t < rows[start]!.next!.time) start = i;
+  }
+  return start > 0 ? [...rows.slice(start), ...rows.slice(0, start)] : rows;
 }
 
 /**
