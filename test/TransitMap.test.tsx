@@ -19,13 +19,25 @@ class FakeMap {
   sources = new Map<string, { data: unknown; setData: (d: unknown) => void }>();
   layers = new Set<string>();
 
+  // Layer-scoped handlers are kept apart from map-level ones, because
+  // MapLibre only calls m.on("click", "some-layer", fn) when the click
+  // actually lands on that layer. Lumping both under "click" made every layer
+  // handler fire on every map click, which is the opposite of the dispatch
+  // this component's long-press guard has to cope with.
   on(ev: string, a: unknown, b?: unknown) {
+    const layer = typeof a === "string" ? a : null;
     const fn = (typeof a === "function" ? a : b) as (e?: unknown) => void;
-    this.handlers.set(ev, [...(this.handlers.get(ev) ?? []), fn]);
+    const key = layer ? `${ev}:${layer}` : ev;
+    this.handlers.set(key, [...(this.handlers.get(key) ?? []), fn]);
   }
   once(ev: string, fn: (e?: unknown) => void) { this.on(ev, fn); }
   fire(ev: string, e?: unknown) {
     act(() => { for (const fn of this.handlers.get(ev) ?? []) fn(e); });
+  }
+  /** A click that landed on `layer`. MapLibre runs these before the
+   *  map-level handler for the same click. */
+  fireLayer(ev: string, layer: string, e?: unknown) {
+    act(() => { for (const fn of this.handlers.get(`${ev}:${layer}`) ?? []) fn(e); });
   }
 
   isStyleLoaded() { return true; }
@@ -211,6 +223,41 @@ describe("TransitMap", () => {
       // A plain tap afterwards must still deselect.
       map.fire("click", at);
       expect(onDeselect).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not select a route with the click that ends a long press", () => {
+    // MapLibre dispatches layer handlers independently of the map-level one,
+    // so guarding only the map handler was not enough: a long press over a
+    // route line dropped its pin AND the trailing click selected the route
+    // under the finger, leaving the old route page open on top of the new
+    // destination. Measured in the browser -- the sheet showed "To Dropped
+    // pin" and the Evening CCW Route page at the same time.
+    vi.useFakeTimers();
+    try {
+      const onMapClick = vi.fn();
+      const onRouteClick = vi.fn();
+      render(
+        <TransitMap feed={feed} buses={buses} me={null} destination={null} overlay={null}
+          focus={null} selection={null} activeRouteIds={new Set(["A", "B"])}
+          onMapClick={onMapClick} onRouteClick={onRouteClick} />);
+      map.fire("load");
+
+      const at = { point: { x: 10, y: 10 }, lngLat: { lat: 41.82, lng: -71.4 } };
+      map.fire("mousedown", at);
+      act(() => { vi.advanceTimersByTime(600); });
+      expect(onMapClick).toHaveBeenCalledTimes(1);
+      map.fire("mouseup", at);
+      // The layer handler runs before the map-level one, on the same click.
+      map.fireLayer("click", "routes-hit", { ...at, features: [{ properties: { routeId: "A" } }] });
+      map.fire("click", at);
+      expect(onRouteClick).not.toHaveBeenCalled();
+
+      // A plain tap on the line afterwards must still select it.
+      map.fireLayer("click", "routes-hit", { ...at, features: [{ properties: { routeId: "A" } }] });
+      expect(onRouteClick).toHaveBeenCalledWith("A");
     } finally {
       vi.useRealTimers();
     }

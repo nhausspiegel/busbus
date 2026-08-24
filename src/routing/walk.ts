@@ -2,6 +2,80 @@ import type { LatLng, Stop } from "../data/types";
 
 const VALHALLA = "https://valhalla1.openstreetmap.de";
 
+/**
+ * Every Valhalla call goes through here: cached, de-duplicated, and backed off.
+ *
+ * valhalla1.openstreetmap.de is volunteer-run and throttles. A throttled
+ * response arrives WITHOUT CORS headers, so the browser cannot read its status
+ * and it surfaces as `TypeError: Failed to fetch` in about 100ms -- measured on
+ * 2026-08-24, on the very first request of a pin drop. It looks like an outage
+ * and is not one, which is why the old code kept retrying straight into it.
+ *
+ * Three things stop that:
+ *
+ * - **Cache.** The walk between two fixed points does not change, so the same
+ *   question is never asked twice. Keyed on the request body, which already
+ *   holds the coordinates.
+ * - **De-duplication.** The promise is cached, not the result, so N callers
+ *   asking at once make one request.
+ * - **Cooldown.** After a failure nothing is sent for a spell that doubles per
+ *   consecutive failure, with jitter. Retrying instantly is what turns being
+ *   throttled into staying throttled.
+ */
+const cache = new Map<string, Promise<unknown>>();
+/** Bounded so a long session cannot grow it without limit. */
+const MAX_CACHE = 200;
+let coolUntil = 0;
+let backoffMs = 0;
+const FIRST_BACKOFF_MS = 2_000;
+const MAX_BACKOFF_MS = 60_000;
+
+/** How long until Valhalla will be asked again, ms. 0 when it is ready. */
+export function valhallaCooldownMs(now = Date.now()): number {
+  return Math.max(0, coolUntil - now);
+}
+
+/** Test seam: forget every cached answer and clear any cooldown. */
+export function resetValhalla(): void {
+  cache.clear();
+  coolUntil = 0;
+  backoffMs = 0;
+}
+
+async function post(path: string, body: unknown): Promise<unknown> {
+  const key = `${path}|${JSON.stringify(body)}`;
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const waiting = valhallaCooldownMs();
+  if (waiting > 0)
+    throw new Error(`valhalla is being rested for another ${waiting}ms`);
+
+  const p = (async () => {
+    const res = await fetch(`${VALHALLA}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`valhalla ${path} -> HTTP ${res.status}`);
+    return res.json();
+  })();
+
+  cache.set(key, p);
+  if (cache.size > MAX_CACHE) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  p.then(() => { backoffMs = 0; })
+    .catch(() => {
+      // A failure must never be cached: the next attempt has to be free to
+      // succeed once the server is willing again.
+      cache.delete(key);
+      backoffMs = backoffMs ? Math.min(backoffMs * 2, MAX_BACKOFF_MS) : FIRST_BACKOFF_MS;
+      coolUntil = Date.now() + backoffMs + Math.floor(Math.random() * 500);
+    });
+  return p;
+}
+
 /** Great-circle distance in metres. Used ONLY to pre-select candidate stops
  *  before asking Valhalla for real walking times -- never as a walking
  *  estimate itself. College Hill is steep enough that straight-line distance
@@ -40,17 +114,11 @@ export async function walkMatrixMulti(
   sources: LatLng[], targets: LatLng[],
 ): Promise<(number | null)[][]> {
   if (sources.length === 0 || targets.length === 0) return [];
-  const res = await fetch(`${VALHALLA}/sources_to_targets`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      sources: sources.map((p) => ({ lat: p.lat, lon: p.lng })),
-      targets: targets.map((p) => ({ lat: p.lat, lon: p.lng })),
-      costing: "pedestrian",
-    }),
-  });
-  if (!res.ok) throw new Error(`valhalla matrix -> HTTP ${res.status}`);
-  const data = await res.json();
+  const data = await post("/sources_to_targets", {
+    sources: sources.map((p) => ({ lat: p.lat, lon: p.lng })),
+    targets: targets.map((p) => ({ lat: p.lat, lon: p.lng })),
+    costing: "pedestrian",
+  }) as { sources_to_targets?: { time?: number }[][] };
   const rows = data?.sources_to_targets ?? [];
   return sources.map((_, i) =>
     targets.map((__, j) => {
@@ -67,17 +135,11 @@ export async function walkMatrixMulti(
 export async function walkMatrix(from: LatLng, to: Stop[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (to.length === 0) return out;
-  const res = await fetch(`${VALHALLA}/sources_to_targets`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      sources: [{ lat: from.lat, lon: from.lng }],
-      targets: to.map((s) => ({ lat: s.lat, lon: s.lng })),
-      costing: "pedestrian",
-    }),
-  });
-  if (!res.ok) throw new Error(`valhalla matrix -> HTTP ${res.status}`);
-  const data = await res.json();
+  const data = await post("/sources_to_targets", {
+    sources: [{ lat: from.lat, lon: from.lng }],
+    targets: to.map((s) => ({ lat: s.lat, lon: s.lng })),
+    costing: "pedestrian",
+  }) as { sources_to_targets?: { time?: number }[][] };
   const row = data?.sources_to_targets?.[0] ?? [];
   row.forEach((cell: { time?: number }, i: number) => {
     const stop = to[i];
@@ -89,17 +151,11 @@ export async function walkMatrix(from: LatLng, to: Stop[]): Promise<Map<string, 
 /** Walking seconds between two points. Used to decide whether the rider
  *  should simply walk instead of waiting for a shuttle. */
 export async function walkSeconds(from: LatLng, to: LatLng): Promise<number | null> {
-  const res = await fetch(`${VALHALLA}/sources_to_targets`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      sources: [{ lat: from.lat, lon: from.lng }],
-      targets: [{ lat: to.lat, lon: to.lng }],
-      costing: "pedestrian",
-    }),
-  });
-  if (!res.ok) return null;
-  const data = await res.json();
+  const data = await post("/sources_to_targets", {
+    sources: [{ lat: from.lat, lon: from.lng }],
+    targets: [{ lat: to.lat, lon: to.lng }],
+    costing: "pedestrian",
+  }).catch(() => null) as { sources_to_targets?: { time?: number }[][] } | null;
   const t = data?.sources_to_targets?.[0]?.[0]?.time;
   return typeof t === "number" ? t : null;
 }
@@ -131,19 +187,13 @@ export function parseWalkRoute(data: unknown): { path: LatLng[]; steps: WalkStep
  *  turn-by-turn the detail view discloses. Both come out of this one response
  *  -- Valhalla is volunteer-run, so asking twice for the same walk is rude. */
 export async function walkRoute(from: LatLng, to: LatLng): Promise<{ path: LatLng[]; steps: WalkStep[] }> {
-  const res = await fetch(`${VALHALLA}/route`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      locations: [
-        { lat: from.lat, lon: from.lng },
-        { lat: to.lat, lon: to.lng },
-      ],
-      costing: "pedestrian",
-    }),
-  });
-  if (!res.ok) throw new Error(`valhalla route -> HTTP ${res.status}`);
-  return parseWalkRoute(await res.json());
+  return parseWalkRoute(await post("/route", {
+    locations: [
+      { lat: from.lat, lon: from.lng },
+      { lat: to.lat, lon: to.lng },
+    ],
+    costing: "pedestrian",
+  }));
 }
 
 /** Valhalla encodes shapes as Google polyline at precision 6, not the

@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
-import { haversineMeters, nearestStops, decodePolyline6, parseWalkRoute , walkLegs } from "../src/routing/walk";
+import { haversineMeters, nearestStops, decodePolyline6, parseWalkRoute , walkLegs , walkSeconds, walkRoute, resetValhalla, valhallaCooldownMs } from "../src/routing/walk";
 import type { Stop } from "../src/data/types";
 
 const s = (id: string, lat: number, lng: number): Stop => ({ id, name: id, lat, lng });
@@ -145,4 +145,73 @@ describe("walkLegs", () => {
   it("treats a path too short to draw as unrouted", () => {
     expect(walkLegs([{ from: a, to: b }], [[a]])[0]!.provisional).toBe(true);
   });
+});
+
+describe("the Valhalla request layer", () => {
+  // valhalla1.openstreetmap.de is volunteer-run and throttles. Measured on
+  // 2026-08-24: the first request of a pin drop came back as
+  // `TypeError: Failed to fetch` in 100ms, because a throttled response
+  // arrives without CORS headers and the browser cannot read its status. It
+  // reads as an outage and is not one, so the old code retried straight into
+  // it and stayed throttled.
+  const ok = { sources_to_targets: [[{ time: 120 }]] };
+  let calls = 0;
+  const original = globalThis.fetch;
+
+  const serve = (impl: () => Promise<unknown>) => {
+    globalThis.fetch = (async () => {
+      calls++;
+      return impl();
+    }) as typeof fetch;
+  };
+  const good = () => serve(async () =>
+    ({ ok: true, json: async () => ok }) as unknown as Response);
+  const throttled = () => serve(async () => { throw new TypeError("Failed to fetch"); });
+
+  beforeEach(() => { resetValhalla(); calls = 0; });
+  afterEach(() => { globalThis.fetch = original; });
+
+  const A = { lat: 41.826, lng: -71.400 };
+  const B = { lat: 41.830, lng: -71.405 };
+
+  it("asks the same question only once", async () => {
+    good();
+    await walkSeconds(A, B);
+    await walkSeconds(A, B);
+    expect(calls).toBe(1);
+  });
+
+  it("collapses simultaneous callers into one request", async () => {
+    good();
+    await Promise.all([walkSeconds(A, B), walkSeconds(A, B), walkSeconds(A, B)]);
+    expect(calls).toBe(1);
+  });
+
+  it("still asks about a different walk", async () => {
+    good();
+    await walkSeconds(A, B);
+    await walkSeconds(B, A);
+    expect(calls).toBe(2);
+  });
+
+  it("rests after a failure instead of retrying into the wall", async () => {
+    throttled();
+    await expect(walkRoute(A, B)).rejects.toThrow();
+    expect(calls).toBe(1);
+    expect(valhallaCooldownMs()).toBeGreaterThan(0);
+    // The second attempt must not reach the network at all.
+    await expect(walkRoute(A, B)).rejects.toThrow(/rested/);
+    expect(calls).toBe(1);
+  });
+
+  it("never caches a failure", async () => {
+    throttled();
+    await expect(walkRoute(A, B)).rejects.toThrow();
+    // Once the server is willing again the same question must be free to
+    // succeed -- a cached rejection would make the failure permanent.
+    resetValhalla();
+    good();
+    await expect(walkRoute(A, B)).resolves.toBeTruthy();
+  });
+
 });

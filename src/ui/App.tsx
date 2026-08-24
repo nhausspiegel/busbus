@@ -245,18 +245,21 @@ export default function App() {
     setDirections({ toStop: [], fromStop: [] });
 
     (async () => {
-      const attempt = async (l: { from: LatLng; to: LatLng }) => {
+      // No retry here any more. walkRoute() now caches, de-duplicates and backs
+      // off inside the request layer, so an immediate second attempt could only
+      // hit the cooldown it just triggered -- retrying into a throttle is what
+      // kept Valhalla refusing us in the first place. The legs also go one at a
+      // time rather than through Promise.all: two parallel requests per pin
+      // drop is precisely the burst a volunteer server rations.
+      const settled: PromiseSettledResult<{ path: LatLng[]; steps: WalkStep[] }>[] = [];
+      for (const l of legs) {
         try {
-          return await walkRoute(l.from, l.to);
-        } catch {
-          // Valhalla is a volunteer instance and a throttled response arrives
-          // as a CORS error, so one failure is ordinary. Try once more before
-          // settling for the straight line.
-          await new Promise((r) => setTimeout(r, 1500));
-          return walkRoute(l.from, l.to);
+          settled.push({ status: "fulfilled", value: await walkRoute(l.from, l.to) });
+        } catch (reason) {
+          settled.push({ status: "rejected", reason });
         }
-      };
-      const settled = await Promise.allSettled(legs.map(attempt));
+        if (cancelled) return;
+      }
       if (cancelled) return;
 
       const walks = walkLegs(legs, settled.map((r) =>
