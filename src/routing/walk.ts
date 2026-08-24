@@ -1,5 +1,25 @@
 import type { LatLng, Stop } from "../data/types";
 
+/**
+ * Two independent pedestrian routers, tried in order.
+ *
+ * This app exists to answer "how do I get there", so that answer cannot rest
+ * on a single volunteer instance. On 2026-08-24 valhalla1.openstreetmap.de
+ * accepted connections and then never replied -- HTTP 000 after 20s, on both
+ * endpoints, measured from outside the browser -- and directions stopped
+ * working entirely. It had been the only source for six days.
+ *
+ * FOSSGIS also runs an OSRM with a real foot profile, on a different host.
+ * Measured the same afternoon: 200 in 0.66s, 1105m in 884s, which is 4.5 km/h
+ * and therefore genuinely walking. That check matters: the OSRM demo server at
+ * router.project-osrm.org answers pedestrian queries with CAR routing (2.1km
+ * in 176s = 42 km/h) while still returning code "Ok", so a 200 is not by
+ * itself evidence of a foot profile.
+ *
+ * NOTE the URL says `driving`. OSRM keeps the profile slot in the path
+ * whatever the graph was built with, and routed-foot's graph is pedestrian.
+ */
+const OSRM_FOOT = "https://routing.openstreetmap.de/routed-foot";
 const VALHALLA = "https://valhalla1.openstreetmap.de";
 
 /**
@@ -44,13 +64,13 @@ export function resetValhalla(): void {
   backoffMs = 0;
 }
 
-async function post(path: string, body: unknown): Promise<unknown> {
-  const key = `${path}|${JSON.stringify(body)}`;
+async function ask(url: string, body?: unknown): Promise<unknown> {
+  const key = body === undefined ? url : `${url}|${JSON.stringify(body)}`;
   const hit = cache.get(key);
   if (hit) return hit;
   const waiting = valhallaCooldownMs();
   if (waiting > 0)
-    throw new Error(`valhalla is being rested for another ${waiting}ms`);
+    throw new Error(`routing is being rested for another ${waiting}ms`);
 
   const p = (async () => {
     // A hung request is the worse failure mode. Measured 2026-08-24: a direct
@@ -62,13 +82,15 @@ async function post(path: string, body: unknown): Promise<unknown> {
     const ctl = new AbortController();
     const bell = setTimeout(() => ctl.abort(), REQUEST_TIMEOUT_MS);
     try {
-      const res = await fetch(`${VALHALLA}${path}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+      const res = await fetch(url, {
         signal: ctl.signal,
+        ...(body === undefined ? {} : {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }),
       });
-      if (!res.ok) throw new Error(`valhalla ${path} -> HTTP ${res.status}`);
+      if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
       return await res.json();
     } finally {
       clearTimeout(bell);
@@ -129,17 +151,74 @@ export async function walkMatrixMulti(
   sources: LatLng[], targets: LatLng[],
 ): Promise<(number | null)[][]> {
   if (sources.length === 0 || targets.length === 0) return [];
-  const data = await post("/sources_to_targets", {
-    sources: sources.map((p) => ({ lat: p.lat, lon: p.lng })),
-    targets: targets.map((p) => ({ lat: p.lat, lon: p.lng })),
-    costing: "pedestrian",
-  }) as { sources_to_targets?: { time?: number }[][] };
-  const rows = data?.sources_to_targets ?? [];
-  return sources.map((_, i) =>
-    targets.map((__, j) => {
-      const t = rows[i]?.[j]?.time;
-      return typeof t === "number" ? t : null;
-    }));
+  const pts = [...sources, ...targets];
+  const coords = pts.map((p) => `${p.lng},${p.lat}`).join(";");
+  const srcIdx = sources.map((_, i) => i).join(";");
+  const dstIdx = targets.map((_, i) => sources.length + i).join(";");
+  try {
+    const data = await ask(
+      `${OSRM_FOOT}/table/v1/driving/${coords}?sources=${srcIdx}&destinations=${dstIdx}`,
+    ) as { durations?: (number | null)[][] };
+    const rows = data?.durations ?? [];
+    estimated = false;
+    return sources.map((_, i) =>
+      targets.map((__, j) => {
+        const t = rows[i]?.[j];
+        return typeof t === "number" ? t : null;
+      }));
+  } catch {
+    // Fall through to the other router rather than giving up on the question.
+  }
+  try {
+    const data = await ask(`${VALHALLA}/sources_to_targets`, {
+      sources: sources.map((p) => ({ lat: p.lat, lon: p.lng })),
+      targets: targets.map((p) => ({ lat: p.lat, lon: p.lng })),
+      costing: "pedestrian",
+    }) as { sources_to_targets?: { time?: number }[][] };
+    const rows = data?.sources_to_targets ?? [];
+    estimated = false;
+    return sources.map((_, i) =>
+      targets.map((__, j) => {
+        const t = rows[i]?.[j]?.time;
+        return typeof t === "number" ? t : null;
+      }));
+  } catch {
+    // Both routers are unreachable at once. Rank the trips on an estimate
+    // rather than showing the rider nothing -- this only affects which
+    // itinerary sorts first, and no line is ever drawn from it.
+    estimated = true;
+    return sources.map((a) => targets.map((b) => estimateSeconds(a, b)));
+  }
+}
+
+
+/**
+ * Walking seconds worked out from the map, for when Valhalla will not answer.
+ *
+ * Measured 2026-08-24: valhalla1.openstreetmap.de returned HTTP 000 -- no
+ * response at all -- on three consecutive attempts on both endpoints, from
+ * outside the browser. It is volunteer infrastructure and it goes dark. When
+ * it does, the choice is between an app that cannot answer "how do I get
+ * there" at all and one that answers approximately, and approximately is
+ * plainly more useful so long as it says so.
+ *
+ * Straight-line distance times a detour factor, over a walking speed. It is
+ * NOT a routed path and no line is ever drawn from it -- callers ask
+ * `walkTimesAreEstimated()` and say so. College Hill is steep enough that this
+ * misreports uphill walks, which is exactly why Valhalla is preferred whenever
+ * it is reachable.
+ */
+const WALK_M_PER_S = 1.35;
+/** Street grids and buildings, so real walking is longer than the crow flies. */
+const DETOUR = 1.35;
+let estimated = false;
+
+/** Whether the most recent walking times came from the estimate rather than
+ *  from Valhalla. Reset the moment a real answer arrives. */
+export function walkTimesAreEstimated(): boolean { return estimated; }
+
+function estimateSeconds(a: LatLng, b: LatLng): number {
+  return Math.round((haversineMeters(a, b) * DETOUR) / WALK_M_PER_S);
 }
 
 /** Real pedestrian walking seconds from one point to many stops, in ONE call.
@@ -150,15 +229,10 @@ export async function walkMatrixMulti(
 export async function walkMatrix(from: LatLng, to: Stop[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (to.length === 0) return out;
-  const data = await post("/sources_to_targets", {
-    sources: [{ lat: from.lat, lon: from.lng }],
-    targets: to.map((s) => ({ lat: s.lat, lon: s.lng })),
-    costing: "pedestrian",
-  }) as { sources_to_targets?: { time?: number }[][] };
-  const row = data?.sources_to_targets?.[0] ?? [];
-  row.forEach((cell: { time?: number }, i: number) => {
-    const stop = to[i];
-    if (stop && typeof cell?.time === "number") out.set(stop.id, cell.time);
+  const row = (await walkMatrixMulti([from], to))[0] ?? [];
+  to.forEach((stop, i) => {
+    const t = row[i];
+    if (typeof t === "number") out.set(stop.id, t);
   });
   return out;
 }
@@ -166,13 +240,8 @@ export async function walkMatrix(from: LatLng, to: Stop[]): Promise<Map<string, 
 /** Walking seconds between two points. Used to decide whether the rider
  *  should simply walk instead of waiting for a shuttle. */
 export async function walkSeconds(from: LatLng, to: LatLng): Promise<number | null> {
-  const data = await post("/sources_to_targets", {
-    sources: [{ lat: from.lat, lon: from.lng }],
-    targets: [{ lat: to.lat, lon: to.lng }],
-    costing: "pedestrian",
-  }).catch(() => null) as { sources_to_targets?: { time?: number }[][] } | null;
-  const t = data?.sources_to_targets?.[0]?.[0]?.time;
-  return typeof t === "number" ? t : null;
+  const row = await walkMatrixMulti([from], [to]).catch(() => []);
+  return row[0]?.[0] ?? null;
 }
 
 /** One turn of a walking leg, as Valhalla words it. */
@@ -201,14 +270,84 @@ export function parseWalkRoute(data: unknown): { path: LatLng[]; steps: WalkStep
 /** One walking leg: the sidewalk-following polyline the map draws AND the
  *  turn-by-turn the detail view discloses. Both come out of this one response
  *  -- Valhalla is volunteer-run, so asking twice for the same walk is rude. */
-export async function walkRoute(from: LatLng, to: LatLng): Promise<{ path: LatLng[]; steps: WalkStep[] }> {
-  return parseWalkRoute(await post("/route", {
+export async function walkRoute(
+  from: LatLng, to: LatLng,
+): Promise<{ path: LatLng[]; steps: WalkStep[] }> {
+  try {
+    const data = await ask(
+      `${OSRM_FOOT}/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}` +
+      `?overview=full&geometries=geojson&steps=true`);
+    return parseOsrmRoute(data);
+  } catch {
+    // Fall through to the other router.
+  }
+  return parseWalkRoute(await ask(`${VALHALLA}/route`, {
     locations: [
       { lat: from.lat, lon: from.lng },
       { lat: to.lat, lon: to.lng },
     ],
     costing: "pedestrian",
   }));
+}
+
+/** Which way to turn, in the words a rider would use.
+ *
+ *  OSRM reports a maneuver as a type and a modifier rather than a sentence,
+ *  so the sentence is composed here. Valhalla writes its own narrative, which
+ *  is why only this provider needs it. */
+function osrmInstruction(
+  type: string, modifier: string | undefined, name: string,
+): string {
+  const onto = name ? ` onto ${name}` : "";
+  switch (type) {
+    case "depart": return name ? `Head along ${name}` : "Start walking";
+    case "arrive": return "Arrive at your destination";
+    case "roundabout":
+    case "rotary": return `Take the roundabout${onto}`;
+    case "continue": return name ? `Continue on ${name}` : "Continue straight";
+    case "new name": return name ? `Continue onto ${name}` : "Continue";
+    default: {
+      if (!modifier || modifier === "straight")
+        return name ? `Continue onto ${name}` : "Continue straight";
+      // "slight left" reads better than "Turn slight left".
+      const how = modifier.startsWith("slight") || modifier.startsWith("sharp")
+        ? `Bear ${modifier.replace(/^(slight|sharp) /, "")}`
+        : `Turn ${modifier}`;
+      return `${how}${onto}`;
+    }
+  }
+}
+
+/** Pull the drawable line and the turn-by-turn out of one OSRM response.
+ *  Separated from the fetch so it can be tested against a frozen response. */
+export function parseOsrmRoute(data: unknown): { path: LatLng[]; steps: WalkStep[] } {
+  const route = (data as {
+    routes?: {
+      geometry?: { coordinates?: [number, number][] };
+      legs?: { steps?: {
+        name?: string; distance?: number; duration?: number;
+        maneuver?: { type?: string; modifier?: string };
+      }[] }[];
+    }[];
+  })?.routes?.[0];
+  // GeoJSON is [lng, lat]; reading it the other way round puts Providence in
+  // the Indian Ocean.
+  const path = (route?.geometry?.coordinates ?? [])
+    .map(([lng, lat]) => ({ lat, lng }));
+  const steps: WalkStep[] = [];
+  for (const st of route?.legs?.[0]?.steps ?? []) {
+    const metres = Math.round(st.distance ?? 0);
+    // OSRM emits a final zero-length arrive step, and short connector steps
+    // between sidewalk segments that no rider would call a turn.
+    if (metres < 5 && st.maneuver?.type !== "arrive") continue;
+    steps.push({
+      instruction: osrmInstruction(
+        st.maneuver?.type ?? "", st.maneuver?.modifier, (st.name ?? "").trim()),
+      metres,
+      seconds: Math.round(st.duration ?? 0),
+    });
+  }
+  return { path, steps };
 }
 
 /** Valhalla encodes shapes as Google polyline at precision 6, not the

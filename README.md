@@ -435,9 +435,36 @@ Real output:
 
 `planTrips()` is deliberately pure — no `fetch`, no `Date.now()`. Every input is an argument, which is what makes the ranking logic testable against frozen fixtures instead of against whatever the buses happen to be doing.
 
-## Why Valhalla and not OSRM
+## Two pedestrian routers, not one
 
-OSRM's public demo server **has no pedestrian profile loaded**. It answers `/route/v1/foot/` with car routing and still returns `code: "Ok"` — measured 2,087 m in 176 s, which is 42 km/h. Valhalla returns 5.0 km/h with real sidewalk geometry. Both are free and keyless; only one is correct.
+**FOSSGIS OSRM `routed-foot` first, Valhalla second.** Both free, both keyless,
+both volunteer-run — and on different hosts, which is the entire point.
+
+This used to read "why Valhalla and not OSRM", on the strength of a real
+measurement: OSRM's **demo** server at `router.project-osrm.org` has no
+pedestrian profile loaded and answers `/route/v1/foot/` with car routing while
+still returning `code: "Ok"` — 2,087 m in 176 s, which is 42 km/h. That is
+still true, and it is still the reason to check the speed of anything claiming
+to walk.
+
+The mistake was concluding "OSRM" from "the OSRM demo server". FOSSGIS runs a
+*separate* OSRM built with the foot profile at
+`routing.openstreetmap.de/routed-foot`. Measured 2026-08-24: 200 in 0.66 s,
+1,105 m in 884 s = **4.5 km/h**, with 123 shape points and 16 turn-by-turn
+steps. That is genuinely walking.
+
+Why it matters: on 2026-08-24 `valhalla1.openstreetmap.de` began accepting
+connections and never replying — `HTTP 000` after 20 s on both endpoints,
+measured from outside the browser — and directions stopped working entirely,
+having depended on that one host for six days. An app whose whole purpose is
+"how do I get there" cannot rest on a single volunteer instance.
+
+Requests are cached, de-duplicated, given an 8 s deadline, and backed off after
+failure. If both routers are unreachable at once, walking times fall back to a
+distance estimate so trips can still be ranked — no line is ever drawn from it.
+
+> Note the URL says `driving`. OSRM keeps the profile slot in the path whatever
+> the graph was built with; `routed-foot`'s graph is pedestrian.
 
 ## Known limits, all upstream
 

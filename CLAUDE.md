@@ -34,9 +34,23 @@ job it is honest at: which stops a route serves, in what order, from
 If you want to tell a rider when service actually runs, the only honest route
 is observation: record when vehicles really report, then state that history.
 
-Valhalla and Nominatim are volunteer-run. One request per user action, never
-per keystroke; a throttled response has no CORS headers and shows up in the
-browser as a confusing CORS error rather than a rate limit.
+Routing and geocoding both run on volunteer infrastructure, and it goes down.
+Measured 2026-08-23/24:
+
+- `valhalla1.openstreetmap.de` returned HTTP 000 -- accepted the connection,
+  never replied -- for 20s on every attempt, and directions died with it.
+  There are now TWO routers: FOSSGIS OSRM `routed-foot` first, Valhalla second.
+  Never let this app depend on one host for its whole purpose again.
+- A throttled response has no CORS headers, so it reaches the browser as
+  `TypeError: Failed to fetch` rather than a 429. It looks like an outage and
+  is not one.
+- Requests are cached, de-duplicated, deadlined at 8s and backed off in
+  `src/routing/walk.ts`. Retrying into a throttle is what keeps you throttled.
+
+Geocoding is Photon, not Nominatim: Nominatim matches whole words, so "trad"
+found nothing while "trader" found Trader Joe's, and the app wrongly told the
+rider the place did not exist. Debounced AND floored at one request per 1.2s --
+a trailing debounce alone still fires per keystroke for a slow typist.
 
 ## Data source
 
