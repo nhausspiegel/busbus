@@ -186,6 +186,36 @@ describe("TransitMap", () => {
     expect(onDeselect).toHaveBeenCalled();
   });
 
+  it("does not deselect on the click that ends a long press", () => {
+    // A long press drops a pin; releasing it produces a click as well, and
+    // that click used to run the deselect handler -- so letting go threw away
+    // the pin the press had just dropped, and the directions planned for it.
+    vi.useFakeTimers();
+    try {
+      const onMapClick = vi.fn();
+      const onDeselect = vi.fn();
+      render(
+        <TransitMap feed={feed} buses={buses} me={null} destination={null} overlay={null}
+          focus={null} selection={null} activeRouteIds={new Set(["A", "B"])}
+          onMapClick={onMapClick} onDeselect={onDeselect} />);
+      map.fire("load");
+
+      const at = { point: { x: 10, y: 10 }, lngLat: { lat: 41.82, lng: -71.4 } };
+      map.fire("mousedown", at);
+      act(() => { vi.advanceTimersByTime(600); });     // past LONG_PRESS_MS
+      expect(onMapClick).toHaveBeenCalledTimes(1);     // the pin was dropped
+      map.fire("mouseup", at);
+      map.fire("click", at);
+      expect(onDeselect).not.toHaveBeenCalled();       // and survives the release
+
+      // A plain tap afterwards must still deselect.
+      map.fire("click", at);
+      expect(onDeselect).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("leaves the bus marker absolutely positioned, as MapLibre needs", () => {
     // MapLibre positions markers with a transform inside a positioned layer;
     // `.maplibregl-marker` is `position: absolute` for that reason. Setting the

@@ -64,7 +64,8 @@ const toPlane = (p: LatLng): Pt => ({ x: p.lng * mPerDegLng, y: p.lat * M_PER_DE
 const fromPlane = (p: Pt): LatLng => ({ lng: p.x / mPerDegLng, lat: p.y / M_PER_DEG_LAT });
 
 const OVERLAY_SOURCES = ["itin-walk", "itin-ride"] as const;
-const OVERLAY_LAYERS = ["itin-walk", "itin-ride-case", "itin-ride-line"] as const;
+const OVERLAY_LAYERS =
+  ["itin-walk", "itin-walk-guess", "itin-ride-case", "itin-ride-line"] as const;
 
 /** Watch the system colour scheme so the map can follow it. */
 function usePrefersDark(): boolean {
@@ -80,16 +81,14 @@ function usePrefersDark(): boolean {
 }
 
 export interface Overlay {
-  /** Sidewalk-following walking legs. */
-  walks: LatLng[][];
+  /** Walking legs. `provisional` marks a straight line drawn because the leg
+   *  could not be routed -- never a placeholder shown while waiting, which was
+   *  only ever a flash of something false. */
+  walks: { path: LatLng[]; provisional: boolean }[];
   /** Ridden portions of route shapes, with the route's own colour. The route
    *  id lets the map lay the itinerary over the line as DRAWN -- offset into
    *  its lane -- instead of the raw centreline beside it. */
   rides: { path: LatLng[]; color: string; routeId: string }[];
-  /** True while `walks` are straight lines between the endpoints rather than
-   *  Valhalla's sidewalk route. Drawn faintly so a guess never carries the
-   *  confidence of a measurement. */
-  walksProvisional?: boolean;
 }
 
 export function TransitMap({
@@ -345,8 +344,26 @@ export function TransitMap({
       m.on("mouseenter", "poi-hit", () => { m.getCanvas().style.cursor = "pointer"; });
       m.on("mouseleave", "poi-hit", () => { m.getCanvas().style.cursor = ""; });
     });
+    // Long press (or right click) drops a pin, as on Apple Maps.
+    let pressTimer: ReturnType<typeof setTimeout> | undefined;
+    let pressStart: { x: number; y: number } | null = null;
+    // Releasing a long press produces a click too, and that click used to run
+    // the deselect handler -- so letting go immediately threw away the pin the
+    // press had just dropped, along with the directions planned for it. The
+    // press marks the click that follows it as already spent.
+    let pressHandled = false;
+    const cancelPress = () => { if (pressTimer) clearTimeout(pressTimer); pressTimer = undefined; };
+    const beginPress = (at: { lat: number; lng: number }) => {
+      pressTimer = setTimeout(() => {
+        pressHandled = true;
+        clickCb.current?.(at);
+        pressTimer = undefined;
+      }, LONG_PRESS_MS);
+    };
+
     // Read the handler from a ref so changing it never tears down the map.
     m.on("click", (e) => {
+      if (pressHandled) { pressHandled = false; return; }
       // Ask what was actually hit rather than relying on preventDefault:
       // MapLibre dispatches the layer handler and this one independently, so
       // a tap on a stop was opening the stop card AND dropping a pin.
@@ -358,24 +375,14 @@ export function TransitMap({
       clearCb.current?.();
     });
 
-    // Long press (or right click) drops a pin, as on Apple Maps.
-    let pressTimer: ReturnType<typeof setTimeout> | undefined;
-    let pressStart: { x: number; y: number } | null = null;
-    const cancelPress = () => { if (pressTimer) clearTimeout(pressTimer); pressTimer = undefined; };
     m.on("mousedown", (e) => {
       pressStart = { x: e.point.x, y: e.point.y };
-      pressTimer = setTimeout(() => {
-        clickCb.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng });
-        pressTimer = undefined;
-      }, LONG_PRESS_MS);
+      beginPress({ lat: e.lngLat.lat, lng: e.lngLat.lng });
     });
     m.on("touchstart", (e) => {
       if (e.points.length !== 1) return;      // pinch, not a press
       pressStart = { x: e.point.x, y: e.point.y };
-      pressTimer = setTimeout(() => {
-        clickCb.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng });
-        pressTimer = undefined;
-      }, LONG_PRESS_MS);
+      beginPress({ lat: e.lngLat.lat, lng: e.lngLat.lng });
     });
     // Any real movement means a pan, not a press.
     const maybeCancel = (p: { x: number; y: number }) => {
@@ -388,6 +395,7 @@ export function TransitMap({
       m.on(ev, cancelPress);
     m.on("contextmenu", (e) => {
       cancelPress();
+      pressHandled = true;                    // the click that follows is spent
       clickCb.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng });
     });
     // Without this MapLibre fails silently -- a dead worker just leaves a blank map.
@@ -683,18 +691,23 @@ export function TransitMap({
           layout: { "line-cap": "round", "line-join": "round" },
           paint: { "line-color": ["get", "color"], "line-width": 6 } });
       }
-      const walks = overlay.walks.filter((w) => w.length > 1);
+      const walks = overlay.walks.filter((w) => w.path.length > 1);
       if (walks.length) {
-        addSource("itin-walk", walks.map((w) => feature(w)));
+        addSource("itin-walk", walks.map((w) => feature(w.path, { provisional: w.provisional })));
+        // Two layers, not one paint expression: line-dasharray is not a
+        // data-driven property in MapLibre, so a routed leg and an unroutable
+        // one cannot differ within a single layer.
         m.addLayer({ id: "itin-walk", type: "line", source: "itin-walk",
+          filter: ["!", ["get", "provisional"]],
           layout: { "line-cap": "round", "line-join": "round" },
           paint: { "line-color": darkRef.current ? "#F0E9E3" : "#241C17",
-                   "line-width": 4,
-                   // A guess is drawn faint and loosely dotted; the real
-                   // sidewalk route is solid-weight and tightly dashed.
-                   "line-opacity": overlay.walksProvisional ? 0.35 : 1,
-                   "line-dasharray": overlay.walksProvisional
-                     ? [0.2, 2.6] : [0.4, 1.8] } });
+                   "line-width": 4, "line-dasharray": [0.4, 1.8] } });
+        m.addLayer({ id: "itin-walk-guess", type: "line", source: "itin-walk",
+          filter: ["get", "provisional"],
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: { "line-color": darkRef.current ? "#F0E9E3" : "#241C17",
+                   "line-width": 4, "line-opacity": 0.35,
+                   "line-dasharray": [0.2, 2.6] } });
       }
     } catch { /* style churn; the next render redraws */ }
 
