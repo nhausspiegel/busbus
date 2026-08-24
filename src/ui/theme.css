@@ -81,11 +81,6 @@ body {
 /* Only the timetable says so. Brown's GTFS marks every route as running every
  * day through 2027 and Passio reports seasonally-suspended routes as active,
  * so this is a genuinely weaker claim and is drawn as one: hollow, not solid. */
-.when--sched {
-  color: transparent;
-  -webkit-text-stroke: 1.5px var(--ink-soft);
-}
-
 /* Native controls (the time picker) must follow the theme too, or they render
  * as a white box in a dark sheet. */
 :root { color-scheme: light dark; }
@@ -95,16 +90,6 @@ body {
  * the live/scheduled distinction this project treats as non-negotiable, and
  * RouteDetail has no text fallback beside it. Restate it visibly. */
 @media (forced-colors: active) {
-  .when--sched {
-    -webkit-text-stroke: 0;
-    text-decoration: underline dashed;
-    text-underline-offset: 3px;
-  }
-  .when--sched::after {
-    content: " (scheduled)";
-    font-size: 11px;
-    text-decoration: none;
-  }
 }
 
 .pulse {

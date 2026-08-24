@@ -93,17 +93,31 @@ describe("RouteDetail", () => {
     expect(screen.queryByText("E")).toBeNull();
   });
 
-  it("shows the typical gap between departures, not the next one", () => {
-    // Departures at +2 and +17 minutes from the first stop: a 15 minute gap.
+  it("never prints a time that no bus is reporting", () => {
+    // The board fixture is entirely timetable rows. Measured live on
+    // 2026-08-23 at 22:22 with zero buses running: calendar.txt is a single
+    // row claiming all seven days from 20250101 to 20271231, there is no
+    // calendar_dates.txt, and realtime returned zero predictions -- so a
+    // scheduled time cannot be distinguished from a bus that does not exist.
+    // None of it may reach the screen.
     view([]);
-    expect(screen.getByText("Every 15 min")).toBeTruthy();
+    expect(screen.queryByText("· Live")).toBeNull();
+    expect(screen.queryByText(/Every \d+ min/)).toBeNull();
+    expect(screen.queryByText("Upcoming departures")).toBeNull();
+    // The structure is still honest and still shown.
+    expect(screen.getByText("Barus & Holley")).toBeTruthy();
   });
 
-  it("marks a timetable departure as scheduled, never as live", () => {
-    // The rule this project is built on: a scheduled time is a weaker claim
-    // and has to keep saying so.
-    view([]);
-    expect(screen.getAllByText("· Scheduled").length).toBeGreaterThan(0);
-    expect(screen.queryByText("· Live")).toBeNull();
+  it("shows a live departure", () => {
+    // The other half of the rule: a bus reporting its own position is the one
+    // thing that can back a time, so it must still get through.
+    const liveBoard: DepartureBoard = new Map([["S0", [
+      { stopId: "S0", tripId: "T1", routeId: "R1", seq: 1, time: NOW + 120, live: true },
+      { stopId: "S0", tripId: "T9", routeId: "R1", seq: 1, time: NOW + 1020, live: true },
+    ]]]);
+    render(<RouteDetail feed={feed} board={liveBoard} routeId="R1" buses={[]}
+                        now={NOW} activeRouteIds={active} onBack={noop} />);
+    expect(screen.getAllByText("· Live").length).toBeGreaterThan(0);
+    expect(screen.getByText("Every 15 min")).toBeTruthy();
   });
 });

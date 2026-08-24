@@ -21,9 +21,12 @@ export function RouteDetail({
   // Departures from the top of the list -- the point the route is measured
   // from, and the same stop `routeStops` anchors its one-vehicle run on.
   const head = stops[0];
+  // `d.live` is checked here and not left to the caller. This view prints a
+  // minute and labels it Live, which is a claim; the component that makes a
+  // claim is the one that has to be able to back it.
   const upcoming = head
     ? (board.get(head.stop.id) ?? [])
-        .filter((d) => d.routeId === routeId && d.time >= now)
+        .filter((d) => d.live && d.routeId === routeId && d.time >= now)
         .sort((a, b) => a.time - b.time)
     : [];
   const headway = headwayMinutes(upcoming.map((d) => d.time));
@@ -97,16 +100,15 @@ export function RouteDetail({
                   border: `1px solid ${d.live ? "var(--accent)" : "var(--hairline)"}`,
                   borderRadius: 999, padding: "5px 12px",
                 }}>
-                  {d.live && <span className="pulse" aria-hidden="true" />}
-                  <span className={`when ${d.live ? "when--live" : "when--sched"}`}
-                        style={{ fontSize: 15 }}>
+                  <span className="pulse" aria-hidden="true" />
+                  <span className="when when--live" style={{ fontSize: 15 }}>
                     {mins === 0 ? "now" : mins}
                   </span>
                   {mins !== 0 && <span>min</span>}
-                  {/* Not "On-time": nothing here measures a bus against its
-                      timetable, and a live fix only proves the bus is
-                      reporting, not that it is running to schedule. */}
-                  <span style={{ color: "var(--muted)" }}>· {d.live ? "Live" : "Scheduled"}</span>
+                  {/* Not "On-time": a live fix proves the bus is reporting,
+                      not that it is running to schedule, and there is nothing
+                      left to measure it against. */}
+                  <span style={{ color: "var(--muted)" }}>· Live</span>
                 </li>
               );
             })}
@@ -116,8 +118,9 @@ export function RouteDetail({
 
       {onRoute.length === 0 && (
         <p style={{ margin: "12px 0 0", fontSize: 13, color: "var(--muted)" }}>
-          No bus is reporting on this route, so the times below come from the timetable
-          only. They are a plan rather than a promise.
+          No bus is reporting on this route, so there are no departure times to
+          show. The stops below are the route's real order; the timetable is not
+          used for times because it claims every route runs daily all year.
         </p>
       )}
 
@@ -190,20 +193,21 @@ export function RouteDetail({
                     </span>
                   )}
                 </span>
-                {next ? (
+                {next && next.live ? (
                   // The clock time, not a countdown: this is a list of when the
                   // bus is at each stop down the line, and fourteen counters all
                   // ticking at once is harder to read than fourteen times.
                   <span style={{ display: "flex", alignItems: "center", gap: 8, alignSelf: "center" }}>
-                    {next.live && <span className="pulse" aria-hidden="true" />}
-                    <span className={`when ${next.live ? "when--live" : "when--sched"}`}
+                    <span className="pulse" aria-hidden="true" />
+                    <span className="when when--live"
                           style={{ fontSize: 15, minWidth: 62, textAlign: "right" }}>
                       {clock(next.time)}
                     </span>
                   </span>
-                ) : (
-                  <span style={{ fontSize: 12, color: "var(--muted)", alignSelf: "center" }}>no service</span>
-                )}
+                ) : null /* Nothing is reporting for this stop. The banner above
+                             says so once; repeating "no service" down twelve
+                             rows states it as fact about the route, which is
+                             the claim we cannot make. */}
               </div>
             </li>
           );

@@ -72,7 +72,7 @@ export function ItineraryList({
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
                   <div className="eyebrow" style={{ fontSize: 10 }}>arrive</div>
-                  <div className={`when ${it.allLive ? "when--live" : "when--sched"}`}
+                  <div className="when when--live"
                        style={{ fontSize: 27 }}>
                     {clock(it.arriveTime)}
                   </div>
@@ -85,7 +85,6 @@ export function ItineraryList({
                       {leaveIn === 0 ? "Leave now" : `Leave in ${leaveIn} min`}
                       {" · "}{durationMins(it.totalWalkSeconds)} min walking
                       {" · "}{it.transfers === 0 ? "direct" : `${it.transfers} transfer`}
-                      {!it.allLive && " · scheduled"}
                     </>}
               </div>
             </button>
@@ -161,14 +160,6 @@ export function ItineraryDetail({
         )}
       </ol>
 
-      {!itinerary.allLive && (
-        <p style={{ marginTop: 14, fontSize: 12, lineHeight: 1.5, color: "var(--muted)",
-                    borderTop: "1px solid var(--hairline)", paddingTop: 12 }}>
-          These times come from the timetable, not from a bus reporting its position.
-          Brown's feed lists every route as running daily year-round, so treat a
-          scheduled time as a plan rather than a promise.
-        </p>
-      )}
     </div>
   );
 }
@@ -186,7 +177,9 @@ function RideStopsNote({ feed, ride }: { feed: StaticFeed | null; ride: RideLeg 
   const [open, setOpen] = useState(false);
   const between = feed ? rideStops(feed, ride).filter((s) => !s.boarding && !s.alighting) : [];
   const count = `${ride.numStops} stop${ride.numStops === 1 ? "" : "s"}`;
-  const liveness = ride.live ? " · live" : " · scheduled";
+  // Every ride reaching this view is built from a reporting vehicle; there is
+  // no other kind of departure on the board any more.
+  const liveness = " · live";
 
   // No feed yet, an unknown trip, or a ride straight to the next stop: nothing
   // to disclose, so do not offer a control that opens onto an empty list.
