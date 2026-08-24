@@ -19,6 +19,12 @@ maplibregl.setWorkerUrl(`${import.meta.env.BASE_URL}maplibre/maplibre-gl-worker.
 
 export const CAMPUS: LatLng = { lat: 41.8265, lng: -71.4015 };
 
+/** What the rider has picked out. One shape for both, so every layer's
+ *  emphasis is derived from a single value rather than kept in step by hand. */
+export type Selection =
+  | { kind: "route"; id: string }
+  | { kind: "stop"; id: string };
+
 /** Overlay layers are torn down and rebuilt whenever the chosen trip changes. */
 /** Hold this long to drop a pin. Matches the platform's own press delay. */
 const LONG_PRESS_MS = 500;
@@ -83,7 +89,7 @@ export interface Overlay {
 }
 
 export function TransitMap({
-  feed, buses, me, destination, overlay, focus, highlightRouteId, routeStopIds, activeRouteIds,
+  feed, buses, me, destination, overlay, focus, selection, activeRouteIds,
   onMapClick, onDeselect, onRouteClick, onStopClick, onPlaceClick,
 }: {
   feed: StaticFeed | null;
@@ -98,10 +104,10 @@ export function TransitMap({
   overlay: Overlay | null;
   /** Points the map should frame, e.g. the chosen trip end to end. */
   focus: LatLng[] | null;
-  /** When set, this route is drawn at full strength and the rest recede. */
-  highlightRouteId: string | null;
-  /** Stop ids on the highlighted route, drawn as stations along the line. */
-  routeStopIds?: string[];
+  /** What the rider has picked out, if anything. One idea drives emphasis
+   *  across every layer: a route page dims the rest of the network, a stop card
+   *  grows its own marker and dims the others. */
+  selection: Selection | null;
   activeRouteIds: Set<string>;
   onMapClick?: (p: LatLng) => void;
   onRouteClick?: (routeId: string) => void;
@@ -170,6 +176,11 @@ export function TransitMap({
           // The tap target still needs a real stop, so it keeps the first
           // member id -- the halves are genuinely different boarding points.
           id: st.stopIds[0]!,
+          // Pipe-delimited so a MapLibre expression can test membership:
+          // ["in", "|3302|", ["get", "routes"]]. Passing the ids in as a prop
+          // instead meant the map could not emphasise anything the parent had
+          // not thought to precompute.
+          routes: `|${st.routeIds.join("|")}|`,
           interchange: st.routeIds.length > 1,
           color: st.routeIds.length === 1
             ? (f.routes.get(st.routeIds[0]!)?.color ?? "#6F625A")
@@ -707,32 +718,66 @@ export function TransitMap({
     } catch { /* style churn */ }
   }, [dark, ready, feed]);
 
-  // Emphasise one route and let the others recede, so a route page reads as
-  // being about that route rather than about the whole network.
+  // One owner of emphasis, for every layer at once.
+  //
+  // There used to be a route-only version of this and nothing at all for
+  // stops, so selecting a stop changed nothing on the map and a rider had no
+  // idea what they had tapped. Routes, stops and vehicles all read the same
+  // `selection`, so they can never disagree about what is picked out.
   useEffect(() => {
     const m = map.current;
-    if (!m || !ready || !m.isStyleLoaded() || !feed) return;
+    if (!m || !ready || !feed) return;
+    const routeFocus = selection?.kind === "route" ? selection.id : null;
+    const stopFocus = selection?.kind === "stop" ? selection.id : null;
+    // A stop belongs to its routes, so selecting one keeps those at full
+    // strength: the rider wants to see where it can take them.
+    const stopRoutesLit = stopFocus
+      ? (stationFeatures(feed).find((f) => f.properties?.["id"] === stopFocus)
+          ?.properties?.["routes"] as string | undefined) ?? ""
+      : "";
+
+    const DIM = 0.15;
     try {
-      // Single owner of route emphasis, expressed per feature so one layer
-      // can dim the network while keeping the focused route at full strength.
-      const focus = highlightRouteId;
       if (m.getLayer("routes-line")) {
-        m.setPaintProperty("routes-line", "line-opacity", focus
-          ? ["case", ["==", ["get", "routeId"], focus], 0.9, 0.16]
-          : 0.85);
-        m.setPaintProperty("routes-line", "line-width", focus
-          ? ["case", ["==", ["get", "routeId"], focus], 8, 4]
-          : 6);
-        m.setPaintProperty("routes-case", "line-opacity", focus ? 0.35 : 0.9);
+        m.setPaintProperty("routes-line", "line-opacity",
+          routeFocus ? ["case", ["==", ["get", "routeId"], routeFocus], 1, DIM]
+          : stopFocus ? ["case", ["in", ["concat", "|", ["get", "routeId"], "|"],
+                                  stopRoutesLit], 1, DIM]
+          : 0.9);
+        m.setPaintProperty("routes-line", "line-width",
+          routeFocus ? ["case", ["==", ["get", "routeId"], routeFocus], 8, 4] : 6);
+        m.setPaintProperty("routes-case", "line-opacity",
+          selection ? 0.3 : 0.9);
       }
-      if (m.getLayer("stops-active")) {
-        const ids = highlightRouteId ? (routeStopIds ?? []) : [];
-        m.setFilter("stops-active", ["in", ["get", "id"], ["literal", ids]]);
-        m.setPaintProperty("stops-active", "circle-stroke-color",
-          (highlightRouteId && feed.routes.get(highlightRouteId)?.color) || "#6F625A");
+      if (m.getLayer("stops")) {
+        const mine: maplibregl.ExpressionSpecification = routeFocus
+          ? ["in", `|${routeFocus}|`, ["get", "routes"]]
+          : ["literal", true];
+        // The tapped stop grows and stays solid; everything else recedes. That
+        // is the whole answer to "which one did I just tap".
+        m.setPaintProperty("stops", "circle-opacity",
+          stopFocus ? ["case", ["==", ["get", "id"], stopFocus], 1, DIM]
+          : routeFocus ? ["case", mine, 1, DIM] : 1);
+        m.setPaintProperty("stops", "circle-stroke-opacity",
+          stopFocus ? ["case", ["==", ["get", "id"], stopFocus], 1, DIM]
+          : routeFocus ? ["case", mine, 1, DIM] : 1);
+        m.setPaintProperty("stops", "circle-radius", ["interpolate", ["linear"], ["zoom"],
+          13, ["case", ["==", ["get", "id"], stopFocus ?? ""], 6,
+                       ["get", "interchange"], 3.5, 2.5],
+          16, ["case", ["==", ["get", "id"], stopFocus ?? ""], 10,
+                       ["get", "interchange"], 6.5, 4.5]]);
       }
-    } catch { /* style churn */ }
-  }, [highlightRouteId, routeStopIds, overlay, ready, feed]);
+    } catch { /* style churn; the next render re-applies */ }
+
+    // Vehicles are DOM markers, so they fade in CSS rather than in paint.
+    for (const [id, mk] of busMarks.current) {
+      const bus = buses.find((b) => b.id === id);
+      const lit = !selection
+        || (routeFocus ? bus?.routeId === routeFocus
+                       : stopRoutesLit.includes(`|${bus?.routeId}|`));
+      mk.getElement().style.opacity = lit ? "1" : String(DIM);
+    }
+  }, [selection, buses, overlay, ready, feed]);
 
   // Frame the chosen trip. Without this the rider has to hunt for their own
   // itinerary on the map, which defeats the point of drawing it.

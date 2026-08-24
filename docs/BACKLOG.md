@@ -124,6 +124,13 @@ and to accept that such a route has no shape to draw.
 
 ## Smaller, not yet grouped
 
+- **Duplicate rows in the stop card.** Sciences Library lists "Evening CW
+  Route · 4 min · 9:37 PM" twice, identical. Seen after the station merge but
+  almost certainly not caused by it — `StopCard` is still passed a single
+  stop_id, so the duplicate is in the departure board for that stop. Likely a
+  loop trip calling twice, or a live departure not de-duplicated against the
+  scheduled one it replaces. Check `buildBoard` in `src/data/departures.ts`.
+
 - **Route rendering polish.** The bundler is much better but not perfect.
   Corner radius is still an unpicked knob (`CORNER_RADIUS_PX`, currently 10;
   `npx tsx scripts/bundle-knobs.ts` renders 0/8/16/28 to choose from).

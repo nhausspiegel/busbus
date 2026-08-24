@@ -124,7 +124,7 @@ afterEach(cleanup);
 describe("TransitMap", () => {
   const mount = () => render(
     <TransitMap feed={feed} buses={buses} me={null} destination={null} overlay={null}
-      focus={null} highlightRouteId={null} activeRouteIds={new Set(["A", "B"])} />);
+      focus={null} selection={null} activeRouteIds={new Set(["A", "B"])} />);
 
   /** Metres from a point to a drawn route feature. */
   const toDrawn = (routeId: string, lng: number, lat: number) => {
@@ -179,7 +179,7 @@ describe("TransitMap", () => {
     const onDeselect = vi.fn();
     render(
       <TransitMap feed={feed} buses={buses} me={null} destination={null} overlay={null}
-        focus={null} highlightRouteId="A" activeRouteIds={new Set(["A", "B"])}
+        focus={null} selection={{ kind: "route", id: "A" }} activeRouteIds={new Set(["A", "B"])}
         onDeselect={onDeselect} />);
     map.fire("load");
     map.fire("click", { point: { x: 10, y: 10 }, lngLat: { lat: 41.82, lng: -71.4 } });
@@ -215,10 +215,10 @@ describe("TransitMap live bus movement", () => {
 
   const mountAt = (lat: number) => render(
     <TransitMap feed={feed} buses={at(lat)} me={null} destination={null} overlay={null}
-      focus={null} highlightRouteId={null} activeRouteIds={new Set(["A", "B"])} />);
+      focus={null} selection={null} activeRouteIds={new Set(["A", "B"])} />);
   const rerenderAt = (r: ReturnType<typeof render>, lat: number) => r.rerender(
     <TransitMap feed={feed} buses={at(lat)} me={null} destination={null} overlay={null}
-      focus={null} highlightRouteId={null} activeRouteIds={new Set(["A", "B"])} />);
+      focus={null} selection={null} activeRouteIds={new Set(["A", "B"])} />);
 
   it("glides to a new fix over the update interval instead of jumping", () => {
     const r = mountAt(start);
