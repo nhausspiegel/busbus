@@ -2,50 +2,69 @@ import type { LatLng } from "./types";
 
 export interface Place { name: string; detail: string; at: LatLng }
 
-/** Bounding box around College Hill / downtown Providence. Keeps results
- *  local, and keeps us off Nominatim's global index for no reason. */
-const VIEWBOX = "-71.45,41.87,-71.36,41.79";
+/**
+ * Photon rather than Nominatim.
+ *
+ * Nominatim is a geocoder, not an autocomplete: it matches whole words, so
+ * typing "trad" or "trade" returned nothing at all and the app told the rider
+ * the address did not exist in Providence -- while "trader" found Trader Joe's
+ * immediately. Photon is the OSM type-ahead built on the same data for exactly
+ * this, and prefixes work: measured 2026-08-24, `q=trad` returns "Trader Joe's,
+ * Providence" as its second result, and it answers with
+ * `Access-Control-Allow-Origin: *` so the browser can read it.
+ *
+ * Still volunteer infrastructure, so the caller debounces and floors the gap
+ * between requests.
+ */
+const PHOTON = "https://photon.komoot.io/api";
 
-/** Shape of the fields we use from a Nominatim result. */
-interface NominatimRow {
-  display_name?: string;
-  name?: string;
-  lat?: string;
-  lon?: string;
+/** Providence metro, roughly. Photon's lat/lon only BIAS the ranking -- for
+ *  "trad" the top hit without a box is a restaurant in Boston -- so the box is
+ *  what actually keeps a campus shuttle app's results local. Wide enough to
+ *  include Warwick and T.F. Green, short of Boston. */
+const BBOX = "-71.65,41.65,-71.15,42.00";
+const CAMPUS = { lat: 41.8265, lng: -71.4025 };
+
+/** The fields we use from a Photon feature. */
+interface PhotonFeature {
+  geometry?: { type?: string; coordinates?: [number, number] };
+  properties?: {
+    name?: string; street?: string; housenumber?: string;
+    city?: string; state?: string; postcode?: string; osm_value?: string;
+  };
 }
 
-/** Split Nominatim's one-line display_name into a heading and a subtitle.
- *  Pure so it can be tested without hitting a volunteer-run service. */
-export function toPlaces(rows: NominatimRow[]): Place[] {
+/** Turn Photon's GeoJSON into the two lines a rider reads.
+ *  Pure, so it can be tested without calling a volunteer-run service. */
+export function toPlaces(features: PhotonFeature[]): Place[] {
   const out: Place[] = [];
-  for (const r of rows) {
-    const lat = Number(r.lat), lng = Number(r.lon);
+  for (const f of features) {
+    const [lng, lat] = f.geometry?.coordinates ?? [];
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
-    const parts = (r.display_name ?? "").split(",").map((p) => p.trim()).filter(Boolean);
-    const name = r.name?.trim() || parts[0] || "Unnamed place";
-    // Drop the country and postcode tail; a rider on campus does not need
-    // "United States" to tell two Providence addresses apart.
-    const detail = parts.slice(1, 4).join(", ");
-    out.push({ name, detail, at: { lat, lng } });
+    const p = f.properties ?? {};
+    // A named place leads with its name; a plain address leads with the
+    // street, since "12" alone is not a heading.
+    const street = [p.housenumber, p.street].filter(Boolean).join(" ");
+    const name = p.name?.trim() || street || p.city || "Unnamed place";
+    const detail = [street && street !== name ? street : null, p.city, p.state]
+      .filter(Boolean).join(", ");
+    out.push({ name, detail, at: { lat: lat as number, lng: lng as number } });
   }
   return out;
 }
 
-/** Search for a place by name or address.
- *
- *  Nominatim is volunteer infrastructure with a strict usage policy, so this is
- *  called on submit only -- never per keystroke. */
+/** Search for a place by name or address, prefix-first. */
 export async function searchPlaces(query: string, signal?: AbortSignal): Promise<Place[]> {
   const q = query.trim();
   if (q.length < 3) return [];
-  const url = new URL("https://nominatim.openstreetmap.org/search");
+  const url = new URL(PHOTON);
   url.searchParams.set("q", q);
-  url.searchParams.set("format", "jsonv2");
   url.searchParams.set("limit", "6");
-  url.searchParams.set("viewbox", VIEWBOX);
-  url.searchParams.set("bounded", "1");
-  url.searchParams.set("addressdetails", "0");
+  url.searchParams.set("lat", String(CAMPUS.lat));
+  url.searchParams.set("lon", String(CAMPUS.lng));
+  url.searchParams.set("bbox", BBOX);
   const res = await fetch(url, { signal });
   if (!res.ok) throw new Error(`Place search failed (${res.status})`);
-  return toPlaces(await res.json());
+  const data = await res.json();
+  return toPlaces(data?.features ?? []);
 }

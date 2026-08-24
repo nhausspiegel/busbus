@@ -157,8 +157,6 @@ export function TransitMap({
   /** The routes as actually drawn at the current zoom, shared with the bus
    *  markers so a vehicle rides the line the rider can see. */
   const drawnRef = useRef<Map<string, LatLng[]>>(new Map());
-  /** The halo drawn around the selected stop, so selecting one is visible. */
-  const haloRef = useRef<maplibregl.Marker | null>(null);
   // A counter, not a boolean: setStyle falls back to a full reload when its
   // diff is not applicable, which drops every layer we added. Incrementing on
   // each styledata lets the drawing effects re-run and rebuild them.
@@ -1027,28 +1025,6 @@ export function TransitMap({
       maxZoom: 16.5, duration: 650,
     });
   }, [focus, ready]);
-
-  // A halo on the selected stop. The paint transitions on the circle layers
-  // were not enough on their own: selecting a stop still read as an instant
-  // jump, and "frames were rendered" is not the same claim as "the rider saw
-  // it move". This is a DOM marker with a CSS animation, which either runs or
-  // does not, and can be interrogated with getAnimations().
-  useEffect(() => {
-    const m = map.current;
-    if (!m || !ready) return;
-    haloRef.current?.remove();
-    haloRef.current = null;
-    if (selection?.kind !== "stop" || !feed) return;
-    const bead = stationFeatures(feed).beads
-      .find((f) => f.properties?.["id"] === selection.id);
-    if (!bead || bead.geometry.type !== "Point") return;
-    const el = document.createElement("div");
-    el.className = "stop-halo";
-    const [lng, lat] = bead.geometry.coordinates as [number, number];
-    haloRef.current = new maplibregl.Marker({ element: el })
-      .setLngLat([lng, lat]).addTo(m);
-    return () => { haloRef.current?.remove(); haloRef.current = null; };
-  }, [selection, ready, feed]);
 
   // Frame a selected route the same way. Picking a route used to leave the
   // camera wherever it was, so most of the line sat behind the sheet and the

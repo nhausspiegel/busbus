@@ -46,7 +46,13 @@ export function SearchBar({
     try {
       const found = await searchPlaces(term, ctl.signal);
       setResults(found);
-      if (found.length === 0) setMsg("Nothing found near Providence. Try a street address.");
+      if (found.length === 0)
+        // Not "nothing exists": a partial word matching nothing yet is not
+        // evidence about Providence, and saying so sent riders looking for a
+        // different address when they had simply not finished typing.
+        setMsg(term.length < 6
+          ? `No match for “${term}” yet — keep typing.`
+          : "Nothing found near Providence. Try a street address.");
     } catch (err) {
       if ((err as Error).name !== "AbortError") setMsg("Place search is unavailable. Tap the map instead.");
     } finally {

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { haversineMeters, nearestStops, decodePolyline6, parseWalkRoute , walkLegs , walkSeconds, walkRoute, resetValhalla, valhallaCooldownMs } from "../src/routing/walk";
+import { haversineMeters, nearestStops, decodePolyline6, parseWalkRoute , walkLegs , walkSeconds, walkRoute, resetValhalla, valhallaCooldownMs , parseOsrmRoute } from "../src/routing/walk";
 import type { Stop } from "../src/data/types";
 
 const s = (id: string, lat: number, lng: number): Stop => ({ id, name: id, lat, lng });
@@ -240,4 +240,45 @@ describe("the Valhalla request layer", () => {
     await expect(walkRoute(A, B)).resolves.toBeTruthy();
   });
 
+});
+
+describe("parseOsrmRoute", () => {
+  // A real response, captured 2026-08-24 from FOSSGIS's routed-foot for
+  // 129 Angell St -> Trader Joe's. Frozen, because tests never call a
+  // volunteer-run service.
+  const captured = JSON.parse(readFileSync("test/fixtures/osrm-walk-route.json", "utf8"));
+
+  it("reads the shape as [lng, lat], the way GeoJSON writes it", () => {
+    const { path } = parseOsrmRoute(captured);
+    expect(path.length).toBeGreaterThan(50);
+    // Providence, not the Indian Ocean.
+    for (const p of [path[0]!, path[path.length - 1]!]) {
+      expect(p.lat).toBeGreaterThan(41.7);
+      expect(p.lat).toBeLessThan(41.9);
+      expect(p.lng).toBeLessThan(-71.3);
+    }
+  });
+
+  it("turns a maneuver into something a rider could follow", () => {
+    // OSRM gives a type and a modifier, never a sentence.
+    const { steps } = parseOsrmRoute(captured);
+    expect(steps.length).toBeGreaterThan(3);
+    expect(steps.every((s) => s.instruction.length > 0)).toBe(true);
+    expect(steps.some((s) => /Brown Street|Power Street/.test(s.instruction))).toBe(true);
+    expect(steps.every((s) => !/undefined|\[object/.test(s.instruction))).toBe(true);
+  });
+
+  it("drops the connector steps no one would call a turn", () => {
+    // The captured route has 5m and 7m hops between sidewalk segments. Read
+    // aloud they are noise, and they push the real turns off the screen.
+    const { steps } = parseOsrmRoute(captured);
+    const tiny = steps.filter((s) => s.metres < 5 && !/Arrive/.test(s.instruction));
+    expect(tiny).toEqual([]);
+    expect(steps.some((s) => /Arrive/.test(s.instruction))).toBe(true);
+  });
+
+  it("returns nothing rather than throwing on a shape it does not know", () => {
+    expect(parseOsrmRoute({})).toEqual({ path: [], steps: [] });
+    expect(parseOsrmRoute(null)).toEqual({ path: [], steps: [] });
+  });
 });
