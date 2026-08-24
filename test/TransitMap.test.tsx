@@ -6,13 +6,13 @@ import type { LatLng, StaticFeed } from "../src/data/types";
 /**
  * A MapLibre stand-in, so a test can see what the component actually draws.
  *
- * These two tests exist to stop one specific thing coming back. There used to
- * be machinery that fanned coincident routes into parallel lanes by rewriting
- * their coordinates, and that projected each bus onto the rewritten line. Every
- * revision of it put the lines further off their streets, because it assumed
- * the published shape sits on the street centreline -- Brown's do not, the two
- * Evening loops are already about 7m apart, one per side of the road. The lines
- * and the buses now use the coordinates Passio publishes, full stop.
+ * The bundling in src/render/bundle.ts moves route coordinates on purpose, so
+ * these tests check the two things that must hold once it has: routes sharing
+ * a street come out separated, and every bus sits on the line as DRAWN rather
+ * than on the raw shape. Drawing one geometry while snapping to another is how
+ * buses ended up beside their own routes for a long time, and it survived every
+ * check that compared a marker against the shape instead of against the line
+ * the rider can actually see.
  */
 class FakeMap {
   handlers = new Map<string, ((e?: unknown) => void)[]>();
@@ -81,8 +81,8 @@ vi.mock("maplibre-gl/dist/maplibre-gl.css", () => ({}));
 
 const { TransitMap } = await import("../src/ui/TransitMap");
 
-/** Two routes down the same street. This is the case the offsetting existed
- *  for, so it is the case that must still come out unmodified. */
+/** Two routes down the same street, traced in opposite directions -- the case
+ *  the bundler exists for, and the one that used to send both to the same side. */
 const line = (lat0: number, lng: number, n = 12): LatLng[] =>
   Array.from({ length: n }, (_, i) => ({ lat: lat0 + i * 0.0002, lng }));
 
@@ -126,54 +126,49 @@ describe("TransitMap", () => {
     <TransitMap feed={feed} buses={buses} me={null} destination={null} overlay={null}
       focus={null} highlightRouteId={null} activeRouteIds={new Set(["A", "B"])} />);
 
-  it("draws every route on the shape Passio published, coordinate for coordinate", () => {
-    mount();
-    map.fire("load");
-    const features = (map.getSource("routes") as { data: GeoJSON.FeatureCollection })
-      .data.features;
-    for (const id of ["A", "B"]) {
-      const f = features.find((q) => q.properties?.["routeId"] === id);
-      expect((f!.geometry as GeoJSON.LineString).coordinates)
-        .toEqual(feed.routes.get(id)!.shape.map((p) => [p.lng, p.lat]));
-    }
-  });
-
-  it("puts each bus on the line drawn for its own route", () => {
-    // The feed puts this bus off its shape, as a real GPS fix does. It has to
-    // land ON the polyline -- and on the polyline as DRAWN, which is the raw
-    // shape, so this holds at every zoom without the map's scale entering into
-    // it anywhere.
-    mount();
-    map.fire("load");
-    const [lng, lat] = markers[0]!.lngLat;
-    const shape = feed.routes.get("A")!.shape;
+  /** Metres from a point to a drawn route feature. */
+  const toDrawn = (routeId: string, lng: number, lat: number) => {
+    const f = (map.getSource("routes") as { data: GeoJSON.FeatureCollection })
+      .data.features.find((q) => q.properties?.["routeId"] === routeId);
+    const line = (f!.geometry as GeoJSON.LineString).coordinates;
     let nearest = Infinity;
-    for (let i = 1; i < shape.length; i++) {
-      const a = shape[i - 1]!, b = shape[i]!;
-      const k = 111_320, kx = k * Math.cos(a.lat * Math.PI / 180);
-      const dx = (b.lng - a.lng) * kx, dy = (b.lat - a.lat) * k;
-      const px = (lng - a.lng) * kx, py = (lat - a.lat) * k;
+    for (let i = 1; i < line.length; i++) {
+      const a = line[i - 1]!, b = line[i]!;
+      const k = 111_320, kx = k * Math.cos(a[1]! * Math.PI / 180);
+      const dx = (b[0]! - a[0]!) * kx, dy = (b[1]! - a[1]!) * k;
+      const px = (lng - a[0]!) * kx, py = (lat - a[1]!) * k;
       const len = dx * dx + dy * dy;
       const t = len === 0 ? 0 : Math.max(0, Math.min(1, (px * dx + py * dy) / len));
       nearest = Math.min(nearest, Math.hypot(px - dx * t, py - dy * t));
     }
-    expect(nearest).toBeLessThan(0.5);
-    // ...and genuinely moved, so this cannot pass by the bus already being there.
-    expect(Math.abs(lat - 41.8228) + Math.abs(lng - -71.4002)).toBeGreaterThan(1e-6);
-  });
+    return nearest;
+  };
 
-  it("gives every route its own lane, centred on zero", () => {
-    // Two routes down one street collapse into one line when zoomed out, where
-    // the ~7m their shapes already differ by is under a pixel. The lane is
-    // spent by line-offset, in PIXELS, and faded out by z16 where the shapes
-    // separate on their own -- so no coordinate moves and a route running
-    // alone at street zoom sits exactly on its street.
+  it("separates two routes that share a street", () => {
+    // A and B are the same street traced twice, in opposite directions. Drawn
+    // straight from Passio's coordinates they land on top of each other and
+    // read as one line; src/render/bundle.ts pushes them apart by a minimum
+    // gap measured in screen pixels.
     mount();
     map.fire("load");
-    const lanes = (map.getSource("routes") as { data: GeoJSON.FeatureCollection })
-      .data.features.map((f) => f.properties?.["lane"] as number);
-    expect(new Set(lanes).size).toBe(lanes.length);          // all distinct
-    expect(lanes.reduce((a, b) => a + b, 0)).toBeCloseTo(0);  // centred
+    const b = (map.getSource("routes") as { data: GeoJSON.FeatureCollection })
+      .data.features.find((q) => q.properties?.["routeId"] === "B");
+    const mid = (b!.geometry as GeoJSON.LineString).coordinates[6]!;
+    expect(toDrawn("A", mid[0]!, mid[1]!)).toBeGreaterThan(1);
+  });
+
+  it("puts each bus on the line drawn for its own route", () => {
+    // The feed puts this bus off its shape, as a real GPS fix does, and the
+    // drawn line is not the raw shape -- it has been bundled into a lane and
+    // its corners rounded. The bus must sit on what was DRAWN. Snapping to one
+    // geometry while drawing another is exactly how buses ended up beside
+    // their own route.
+    mount();
+    map.fire("load");
+    const [lng, lat] = markers[0]!.lngLat;
+    expect(toDrawn("A", lng, lat)).toBeLessThan(0.5);
+    // ...and genuinely moved, so this cannot pass by the bus already being there.
+    expect(Math.abs(lat - 41.8228) + Math.abs(lng - -71.4002)).toBeGreaterThan(1e-6);
   });
 
   it("deselects when the map is tapped, so Back is not the only way out", () => {
