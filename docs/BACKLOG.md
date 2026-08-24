@@ -185,3 +185,35 @@ roughly: 7, 1, 2, 3, 4, 8, 5, 6, 9, 10.
    new destination is invisible behind the old selection.
 10. **Search results only appear after pressing Search.** Should appear while
     typing -- debounced, not per keystroke, because Nominatim is volunteer-run.
+
+## Reported 2026-08-24 — resolved
+
+| # | Item | Resolution |
+|---|---|---|
+| 1 | Pull-to-refresh blocks the grabber | It was the browser's; `overscroll-behavior` moved onto the scrolling element |
+| 2 | Grouped vs single stops read as different symbols | One lozenge-with-dots symbol; a lone stop is the circular case |
+| 3 | Stop selection does not animate | **Still open** — halo removed for looking wrong; see below |
+| 4 | A route's stops must stay visible when selected | Ridden/selected routes keep their stops lit |
+| 5 | Route lines not fully opaque | 0.9 → 1 |
+| 6 | Corner "nubs" | **Still open** — see route rendering polish |
+| 7 | Valhalla throttling breaks walking | Cache, de-dupe, 8s deadline, backoff, and a second router |
+| 8 | Directions view messy | Non-ridden routes fade; board/alight drawn as endpoints |
+| 9 | Pin drop behind an open route page | Long-press flag now guards the layer handlers too |
+| 10 | Search only on submit | Photon type-ahead, debounced and floored |
+
+## Still to do, from that round
+
+### A. Stop selection has no animation
+
+The paint transitions are real (0 idle frames vs 20 over 308ms) but were
+measured on `routes-line`, never on the circles, and selecting a stop still
+reads as a jump. A halo marker was tried and removed: it looked like a stray
+circle, and its CSS animation fought MapLibre for the marker element's
+`transform`, which is the same failure that once laid the bus markers out in
+document flow. Whatever replaces it must not animate `transform` on a marker
+element.
+
+### B. Corner "nubs"
+
+Short spurs sticking out of corners on the live map. A bundler failure mode;
+belongs with route rendering polish.

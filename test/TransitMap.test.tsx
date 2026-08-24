@@ -345,3 +345,38 @@ describe("TransitMap live bus movement", () => {
     expect(frames.size).toBe(0);
   });
 });
+
+describe("TransitMap walking overlay", () => {
+  it("draws nothing for a leg it could not route", () => {
+    // A straight dotted line between two points is a claim about a path that
+    // was never found. Reported as "dotted ghost straight lines"; the same
+    // rule as the timetable times -- prefer nothing to a guess.
+    render(
+      <TransitMap feed={feed} buses={buses} me={null} destination={null}
+        focus={null} selection={null} activeRouteIds={new Set(["A", "B"])}
+        overlay={{
+          rides: [],
+          walks: [
+            { path: [{ lat: 41.82, lng: -71.40 }, { lat: 41.83, lng: -71.41 }], provisional: true },
+            { path: [{ lat: 41.82, lng: -71.40 }, { lat: 41.821, lng: -71.401 },
+                     { lat: 41.83, lng: -71.41 }], provisional: false },
+          ],
+        }} />);
+    map.fire("load");
+    const src = map.sources.get("itin-walk") as { data: { features: unknown[] } } | undefined;
+    expect(src).toBeTruthy();
+    expect(src!.data.features).toHaveLength(1);      // the routed leg only
+    expect(map.layers.has("itin-walk-guess")).toBe(false);
+  });
+
+  it("adds no walk source at all when nothing routed", () => {
+    render(
+      <TransitMap feed={feed} buses={buses} me={null} destination={null}
+        focus={null} selection={null} activeRouteIds={new Set(["A", "B"])}
+        overlay={{ rides: [], walks: [
+          { path: [{ lat: 41.82, lng: -71.40 }, { lat: 41.83, lng: -71.41 }], provisional: true },
+        ] }} />);
+    map.fire("load");
+    expect(map.sources.get("itin-walk")).toBeUndefined();
+  });
+});
