@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { routeStops, stopRoutes } from "../src/routing/routeDetail";
+import { routeStops, stopRoutes, stations } from "../src/routing/routeDetail";
 import type { StaticFeed, DepartureBoard, Stop } from "../src/data/types";
 
 const NOW = 1_700_000_000;
@@ -30,6 +30,67 @@ function fixture(): { feed: StaticFeed; board: DepartureBoard } {
   ]);
   return { feed, board };
 }
+
+describe("stations", () => {
+  // Passio models one physical stop as several stop_ids, one per direction:
+  // measured on the real feed, 20 pairs sit within 25m of each other, such as
+  // 8399 "Barbour Hall/Public Safety CCW" and 8386 "...CW" 11m apart, each
+  // served by one route. Joining on stop_id makes those read as two separate
+  // single-route stops, which is why interchanges never showed on the map.
+  const at = (id: string, name: string, lat: number, lng: number): Stop =>
+    ({ id, name, lat, lng });
+
+  const feed = {
+    routes: new Map([
+      ["R1", { id: "R1", name: "R1", color: "#111", shape: [] }],
+      ["R2", { id: "R2", name: "R2", color: "#222", shape: [] }],
+      ["OLD", { id: "OLD", name: "OLD", color: "#333", shape: [] }],
+    ]),
+    stops: new Map([
+      // One place, split in two by direction, one route each.
+      ["cw", at("cw", "Barbour Hall (CW)", 41.8260, -71.4000)],
+      ["ccw", at("ccw", "Barbour Hall", 41.82609, -71.40004)],
+      // A different place entirely.
+      ["far", at("far", "Sciences Library", 41.8280, -71.4000)],
+      // Served only by a route that is not running.
+      ["dead", at("dead", "Stadium", 41.8300, -71.4000)],
+    ]),
+    trips: new Map([
+      ["t1", { id: "t1", routeId: "R1", stops: [{ stopId: "cw", seq: 1, time: 0 }] }],
+      ["t2", { id: "t2", routeId: "R2", stops: [{ stopId: "ccw", seq: 1, time: 0 }] }],
+      ["t3", { id: "t3", routeId: "R1", stops: [{ stopId: "far", seq: 1, time: 0 }] }],
+      ["t4", { id: "t4", routeId: "OLD", stops: [{ stopId: "dead", seq: 1, time: 0 }] }],
+    ]),
+    feedEndDate: "20991231",
+  } as unknown as StaticFeed;
+
+  const active = new Set(["R1", "R2"]);
+
+  it("merges stop ids that share a location into one station", () => {
+    const got = stations(feed, active);
+    const barbour = got.find((s) => s.stopIds.includes("cw"))!;
+    expect(barbour.stopIds.sort()).toEqual(["ccw", "cw"]);
+    expect(barbour.routeIds).toEqual(["R1", "R2"]);   // the interchange appears
+  });
+
+  it("keeps genuinely different places apart", () => {
+    const got = stations(feed, active);
+    expect(got.find((s) => s.stopIds.includes("far"))!.stopIds).toEqual(["far"]);
+  });
+
+  it("drops stops no running route serves", () => {
+    // Brown's GTFS ships 70 stops but only 33 sit on a route that runs. The
+    // rest are dots no bus will ever call at.
+    expect(stations(feed, active).some((s) => s.stopIds.includes("dead"))).toBe(false);
+  });
+
+  it("takes the plainest name of the group", () => {
+    // "Barbour Hall" reads better on a map than "Barbour Hall (CW)", and the
+    // direction is meaningless once the two halves are one marker.
+    const got = stations(feed, active);
+    expect(got.find((s) => s.stopIds.includes("cw"))!.name).toBe("Barbour Hall");
+  });
+});
 
 describe("stopRoutes", () => {
   it("lists every route calling at a stop, de-duplicated and sorted", () => {

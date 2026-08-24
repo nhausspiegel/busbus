@@ -6,6 +6,77 @@ export interface RouteStop {
   next: Departure | null;   // next departure from this stop on this route
 }
 
+/** One physical place a rider waits, which may be several GTFS stops. */
+export interface Station {
+  /** The member stop ids, sorted. Departures still key on these. */
+  stopIds: string[];
+  name: string;
+  lat: number;
+  lng: number;
+  /** Every running route calling at any member, sorted. */
+  routeIds: string[];
+}
+
+/** Stop ids this close are the same place. Passio's per-direction pairs sit
+ *  11-17m apart; the nearest genuinely distinct stops are far further. */
+const STATION_M = 25;
+
+/**
+ * Group the stops into the places a rider would actually name.
+ *
+ * Passio models one physical stop as several stop_ids -- one per direction, or
+ * per route. Measured on Brown's feed, 20 pairs sit within 25m of each other:
+ * "Barbour Hall/Public Safety CW" and "...CCW" are 11m apart and carry one
+ * route each. Joined on stop_id those read as two separate single-route stops,
+ * which is why a map coloured by stop_id shows two small dots of different
+ * colours where there is really one interchange.
+ *
+ * Grouping is for DISPLAY only. The member ids are kept, because the two halves
+ * are genuinely different boarding points and departures must still key on the
+ * one the rider is standing at.
+ *
+ * Stops served by no running route are dropped: Brown's GTFS ships 70 stops and
+ * only 33 sit on a route that has trips, so the rest are dots no bus will ever
+ * call at.
+ */
+export function stations(
+  feed: StaticFeed, active: Set<string>, radiusM = STATION_M,
+): Station[] {
+  const serving = stopRoutes(feed);
+  const live = [...feed.stops.values()]
+    .map((s) => ({ s, routes: (serving.get(s.id) ?? []).filter((r) => active.has(r)) }))
+    .filter((x) => x.routes.length > 0)
+    // Sorted so grouping is deterministic whatever order the feed lists them.
+    .sort((a, b) => a.s.id.localeCompare(b.s.id));
+
+  const M_PER_DEG_LAT = 111_320;
+  const metres = (a: typeof live[number], b: typeof live[number]) =>
+    Math.hypot(
+      (b.s.lng - a.s.lng) * M_PER_DEG_LAT * Math.cos((a.s.lat * Math.PI) / 180),
+      (b.s.lat - a.s.lat) * M_PER_DEG_LAT);
+
+  const taken = new Set<string>();
+  const out: Station[] = [];
+  for (const seed of live) {
+    if (taken.has(seed.s.id)) continue;
+    const group = live.filter((x) => !taken.has(x.s.id) && metres(seed, x) <= radiusM);
+    for (const g of group) taken.add(g.s.id);
+    const routes = new Set<string>();
+    for (const g of group) for (const r of g.routes) routes.add(r);
+    out.push({
+      stopIds: group.map((g) => g.s.id).sort(),
+      // The plainest name in the group. A direction suffix is meaningless once
+      // the halves are drawn as one marker, and the shortest name is reliably
+      // the one without it.
+      name: group.map((g) => g.s.name).sort((a, b) => a.length - b.length)[0]!,
+      lat: group.reduce((t, g) => t + g.s.lat, 0) / group.length,
+      lng: group.reduce((t, g) => t + g.s.lng, 0) / group.length,
+      routeIds: [...routes].sort(),
+    });
+  }
+  return out;
+}
+
 /** Which routes call at each stop.
  *
  *  Subway maps colour a stop by its line and draw interchanges neutrally, so
