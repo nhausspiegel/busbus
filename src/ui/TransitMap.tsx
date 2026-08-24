@@ -6,6 +6,7 @@ import type { StaticFeed, LatLng } from "../data/types";
 import type { Bus } from "../data/vehicles";
 import { basemapStyle } from "./mapStyle";
 import { pointAlongShape, snapToShape } from "../routing/shape";
+import { stopRoutes } from "../routing/routeDetail";
 import { laneProfiles, applyLanes, DEFAULT_OPTIONS, type LaneProfile, type Pt }
   from "../render/bundle";
 
@@ -376,10 +377,30 @@ export function TransitMap({
       drawRoutes(m, zoomRef.current);
 
       if (!m.getSource("stops")) {
+        // Colour each stop by the line it serves, and draw an interchange
+        // neutrally -- the convention both the Underground and the NYC subway
+        // map use, because a stop on three lines belongs to none of their
+        // colours.
+        const serving = stopRoutes(feed);
         m.addSource("stops", { type: "geojson", data: { type: "FeatureCollection",
-          features: [...feed.stops.values()].map((s) => ({
-            type: "Feature" as const, properties: { name: s.name, id: s.id },
-            geometry: { type: "Point" as const, coordinates: [s.lng, s.lat] } })) } });
+          features: [...feed.stops.values()].flatMap((s) => {
+            const ids = (serving.get(s.id) ?? []).filter((id) => activeRouteIds.has(id));
+            // Brown's GTFS ships 70 stops but only 33 sit on a route that
+            // actually runs; the other 37 were being drawn as dots no bus will
+            // ever call at. A stop with no service is not a stop.
+            if (ids.length === 0) return [];
+            return [{
+              type: "Feature" as const,
+              properties: {
+                name: s.name, id: s.id,
+                interchange: ids.length > 1,
+                color: ids.length === 1
+                  ? (feed.routes.get(ids[0]!)?.color ?? "#6F625A")
+                  : (darkRef.current ? "#C6BAB1" : "#241C17"),
+              },
+              geometry: { type: "Point" as const, coordinates: [s.lng, s.lat] },
+            }];
+          }) } });
         // Stops on the route being viewed, drawn larger and in the route colour.
         m.addLayer({ id: "stops-active", type: "circle", source: "stops",
           filter: ["in", ["get", "id"], ["literal", []]],
@@ -390,10 +411,17 @@ export function TransitMap({
           } });
         m.addLayer({ id: "stops", type: "circle", source: "stops", minzoom: 13,
           paint: {
-            "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 2.5, 16, 5],
+            // An interchange reads one step larger, as it does on the
+            // Underground map, so a transfer point is findable without reading
+            // any labels.
+            "circle-radius": ["interpolate", ["linear"], ["zoom"],
+              13, ["case", ["get", "interchange"], 3.5, 2.5],
+              16, ["case", ["get", "interchange"], 6.5, 4.5]],
             "circle-color": darkRef.current ? "#15110F" : "#FFFFFF",
-            "circle-stroke-color": darkRef.current ? "#C6BAB1" : "#241C17",
-            "circle-stroke-width": 1.5,
+            "circle-stroke-color": ["get", "color"],
+            // Matched to the route line's own width at street zoom, so a stop
+            // reads as a bead ON the line rather than a separate dot beside it.
+            "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 13, 1.5, 16, 4],
           } });
         // A 5px dot is too small for a thumb; an invisible wider circle takes taps.
         m.addLayer({ id: "stops-hit", type: "circle", source: "stops", minzoom: 13,
@@ -648,7 +676,8 @@ export function TransitMap({
       if (m.getLayer("routes-case")) m.setPaintProperty("routes-case", "line-color", ground);
       if (m.getLayer("stops")) {
         m.setPaintProperty("stops", "circle-color", ground);
-        m.setPaintProperty("stops", "circle-stroke-color", dark ? "#C6BAB1" : "#241C17");
+        // NOT circle-stroke-color: that is per feature now, carrying each
+        // stop's own route colour, and overwriting it would erase the coding.
       }
       if (m.getLayer("itin-ride-case")) m.setPaintProperty("itin-ride-case", "line-color", ground);
       if (m.getLayer("itin-walk")) m.setPaintProperty("itin-walk", "line-color", dark ? "#F0E9E3" : "#241C17");
