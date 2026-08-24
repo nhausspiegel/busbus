@@ -518,23 +518,25 @@ export function TransitMap({
         // bead's own outer diameter (2 * radius + stroke) the body sits flush
         // with them and the case shows as an outline all the way round, which
         // is the enclosing capsule the Underground map draws.
-        const beadOuter: maplibregl.ExpressionSpecification =
-          ["interpolate", ["linear"], ["zoom"], 13, 8.5, 16, 17];
-        const beadOuterCase: maplibregl.ExpressionSpecification =
-          ["interpolate", ["linear"], ["zoom"], 13, 12.5, 16, 21];
+        // The pill is LIGHT in both themes. The first two attempts painted its
+        // body the map's own background colour, so in dark mode it was a
+        // background-coloured shape with a 2px rim -- invisible by
+        // construction, whatever its width. A station symbol has to contrast
+        // with the map, not match it, which is why the Underground draws it
+        // white on white paper with a heavy dark edge.
         m.addLayer({ id: "station-tick-case", type: "line", source: "station-ticks",
           minzoom: 13,
           layout: { "line-cap": "round" },
           paint: {
-            "line-color": darkRef.current ? "#C6BAB1" : "#241C17",
-            "line-width": beadOuterCase,
+            "line-color": darkRef.current ? "#0B0908" : "#241C17",
+            "line-width": ["interpolate", ["linear"], ["zoom"], 13, 15, 16, 27],
           } });
         m.addLayer({ id: "station-tick", type: "line", source: "station-ticks",
           minzoom: 13,
           layout: { "line-cap": "round" },
           paint: {
-            "line-color": darkRef.current ? "#15110F" : "#FFFFFF",
-            "line-width": beadOuter,
+            "line-color": darkRef.current ? "#F0E9E3" : "#FFFFFF",
+            "line-width": ["interpolate", ["linear"], ["zoom"], 13, 11, 16, 22],
           } });
         m.addLayer({ id: "stops", type: "circle", source: "stops", minzoom: 13,
           paint: {
@@ -548,14 +550,21 @@ export function TransitMap({
             // An interchange reads one step larger, as it does on the
             // Underground map, so a transfer point is findable without reading
             // any labels.
+            // An interchange bead is a SOLID dot sitting on the pill, and a
+            // lone stop stays a hollow bead threaded on its line. Hollow rings
+            // on a light pill read as holes punched through the station.
             "circle-radius": ["interpolate", ["linear"], ["zoom"],
-              13, ["case", ["get", "interchange"], 3.5, 2.5],
-              16, ["case", ["get", "interchange"], 6.5, 4.5]],
-            "circle-color": darkRef.current ? "#15110F" : "#FFFFFF",
-            "circle-stroke-color": ["get", "color"],
+              13, ["case", ["get", "interchange"], 2.5, 2.5],
+              16, ["case", ["get", "interchange"], 5, 4.5]],
+            "circle-color": ["case", ["get", "interchange"],
+              ["get", "color"], darkRef.current ? "#15110F" : "#FFFFFF"],
+            "circle-stroke-color": ["case", ["get", "interchange"],
+              darkRef.current ? "#F0E9E3" : "#FFFFFF", ["get", "color"]],
             // Matched to the route line's own width at street zoom, so a stop
             // reads as a bead ON the line rather than a separate dot beside it.
-            "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 13, 1.5, 16, 4],
+            "circle-stroke-width": ["interpolate", ["linear"], ["zoom"],
+              13, ["case", ["get", "interchange"], 0.8, 1.5],
+              16, ["case", ["get", "interchange"], 1.6, 4]],
           } });
         // A 5px dot is too small for a thumb; an invisible wider circle takes taps.
         m.addLayer({ id: "stops-hit", type: "circle", source: "stops", minzoom: 13,
