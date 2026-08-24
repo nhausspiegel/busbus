@@ -147,3 +147,41 @@ vehicles actually report, then say "last seen Fri 6:12pm" or "usually active
 7am-7pm weekdays". That is a claim about recorded history rather than a
 promise, it degrades gracefully, and it would give routes 3 and 4 a reason to
 exist on screen when nothing is running.
+
+---
+
+## Reported 2026-08-24, triaged
+
+Numbered by the order they were raised, not by priority. Priority order is
+roughly: 7, 1, 2, 3, 4, 8, 5, 6, 9, 10.
+
+1. **Pull-to-refresh on mobile must go.** It swallows the downward swipe on the
+   sheet grabber, so it actively costs more than it gives.
+2. **Grouped and single stops no longer share a visual language.** An
+   interchange is a light pill with solid dots; a lone stop is a hollow bead.
+   They now read as two unrelated symbols rather than two cases of one.
+3. **Selecting a stop still does not animate**, despite the paint transitions
+   measuring as real (0 idle frames vs 20 frames / 308ms). The transition
+   fires; something about the change is not visible. Measure what the radius
+   actually does, not whether frames render.
+4. **A route's own stops must stay visible when that route is selected.**
+5. **Route lines are not fully opaque**, so overlaps look muddy. `line-opacity`
+   falls back to 0.9 with no selection; should be 1.
+6. **Corners still produce "nubs"** -- short spurs sticking out of a corner.
+   A bundler failure mode, visible on the live map. Belongs with route
+   rendering polish.
+7. **Valhalla throttling breaks walking, every time.** MEASURED: a pin drop
+   fires `sources_to_targets` and it returns `TypeError: Failed to fetch` in
+   100ms -- a throttle, not an outage, since a rate-limited response arrives
+   without CORS headers and cannot be read as a 429. There is no cache and no
+   backoff, so every pin drop pays full price and every failure retries into
+   the same wall. This is also why the provisional dotted line never resolves.
+8. **Directions view is messy.** Every other route should fade; the boarding
+   and alighting stops need to be drawn as endpoints, with intermediate stops
+   still visible.
+9. **Dropping a pin while a route is selected leaves the route page open.**
+   MEASURED: body shows "To Dropped pin / Clear" and the Evening CCW Route
+   page at the same time. Mode precedence puts `routeId` above `dest`, so the
+   new destination is invisible behind the old selection.
+10. **Search results only appear after pressing Search.** Should appear while
+    typing -- debounced, not per keystroke, because Nominatim is volunteer-run.

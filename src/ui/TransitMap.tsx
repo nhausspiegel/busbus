@@ -133,6 +133,13 @@ export function TransitMap({
   routeCb.current = onRouteClick;
   const stopCb = useRef(onStopClick);
   stopCb.current = onStopClick;
+  // Set the moment a long press fires, cleared by the click that ends it.
+  // A ref rather than a local, because MapLibre dispatches layer handlers
+  // (routes-hit, stops-hit) independently of the map-level one: guarding only
+  // the map handler meant a long press dropped its pin AND the trailing click
+  // selected whatever route or stop happened to be under the finger, leaving
+  // the old page open on top of the new destination.
+  const pressHandled = useRef(false);
   const clearCb = useRef(onDeselect);
   clearCb.current = onDeselect;
   const placeCb = useRef(onPlaceClick);
@@ -354,6 +361,7 @@ export function TransitMap({
       paint: { "line-color": "#000", "line-opacity": 0, "line-width": 24 },
     });
     m.on("click", "routes-hit", (e: maplibregl.MapLayerMouseEvent) => {
+      if (pressHandled.current) return;      // this click ended a long press
       // A stop sitting on the line is the more specific target and wins.
       // MapLibre dispatches every matching layer handler independently, so
       // without this both fire and the route overwrites the stop.
@@ -417,11 +425,10 @@ export function TransitMap({
     // the deselect handler -- so letting go immediately threw away the pin the
     // press had just dropped, along with the directions planned for it. The
     // press marks the click that follows it as already spent.
-    let pressHandled = false;
     const cancelPress = () => { if (pressTimer) clearTimeout(pressTimer); pressTimer = undefined; };
     const beginPress = (at: { lat: number; lng: number }) => {
       pressTimer = setTimeout(() => {
-        pressHandled = true;
+        pressHandled.current = true;
         clickCb.current?.(at);
         pressTimer = undefined;
       }, LONG_PRESS_MS);
@@ -429,7 +436,7 @@ export function TransitMap({
 
     // Read the handler from a ref so changing it never tears down the map.
     m.on("click", (e) => {
-      if (pressHandled) { pressHandled = false; return; }
+      if (pressHandled.current) { pressHandled.current = false; return; }
       // Ask what was actually hit rather than relying on preventDefault:
       // MapLibre dispatches the layer handler and this one independently, so
       // a tap on a stop was opening the stop card AND dropping a pin.
@@ -461,7 +468,7 @@ export function TransitMap({
       m.on(ev, cancelPress);
     m.on("contextmenu", (e) => {
       cancelPress();
-      pressHandled = true;                    // the click that follows is spent
+      pressHandled.current = true;            // the click that follows is spent
       clickCb.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng });
     });
     // Without this MapLibre fails silently -- a dead worker just leaves a blank map.
@@ -580,6 +587,7 @@ export function TransitMap({
         m.addLayer({ id: "stops-hit", type: "circle", source: "stops", minzoom: 13,
           paint: { "circle-radius": 14, "circle-opacity": 0 } });
         m.on("click", "stops-hit", (e: maplibregl.MapLayerMouseEvent) => {
+          if (pressHandled.current) return;  // this click ended a long press
           const f = e.features?.[0];
           const id = f?.properties?.["id"];
           if (id) stopCb.current?.(String(id));
@@ -876,7 +884,7 @@ export function TransitMap({
           routeFocus ? ["case", ["==", ["get", "routeId"], routeFocus], 1, DIM]
           : stopFocus ? ["case", ["in", ["concat", "|", ["get", "routeId"], "|"],
                                   stopRoutesLit], 1, DIM]
-          : 0.9);
+          : 1);
         m.setPaintProperty("routes-line", "line-width",
           routeFocus ? ["case", ["==", ["get", "routeId"], routeFocus], 8, 4] : 6);
         m.setPaintProperty("routes-case", "line-opacity",
