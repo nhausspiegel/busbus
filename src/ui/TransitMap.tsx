@@ -86,6 +86,10 @@ export interface Overlay {
    *  id lets the map lay the itinerary over the line as DRAWN -- offset into
    *  its lane -- instead of the raw centreline beside it. */
   rides: { path: LatLng[]; color: string; routeId: string }[];
+  /** True while `walks` are straight lines between the endpoints rather than
+   *  Valhalla's sidewalk route. Drawn faintly so a guess never carries the
+   *  confidence of a measurement. */
+  walksProvisional?: boolean;
 }
 
 export function TransitMap({
@@ -685,7 +689,12 @@ export function TransitMap({
         m.addLayer({ id: "itin-walk", type: "line", source: "itin-walk",
           layout: { "line-cap": "round", "line-join": "round" },
           paint: { "line-color": darkRef.current ? "#F0E9E3" : "#241C17",
-                   "line-width": 4, "line-dasharray": [0.4, 1.8] } });
+                   "line-width": 4,
+                   // A guess is drawn faint and loosely dotted; the real
+                   // sidewalk route is solid-weight and tightly dashed.
+                   "line-opacity": overlay.walksProvisional ? 0.35 : 1,
+                   "line-dasharray": overlay.walksProvisional
+                     ? [0.2, 2.6] : [0.4, 1.8] } });
       }
     } catch { /* style churn; the next render redraws */ }
 
