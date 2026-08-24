@@ -127,8 +127,10 @@ export function parseWalkRoute(data: unknown): { path: LatLng[]; steps: WalkStep
   };
 }
 
-/** Sidewalk-following polyline for drawing one walking leg. */
-export async function walkGeometry(from: LatLng, to: LatLng): Promise<LatLng[]> {
+/** One walking leg: the sidewalk-following polyline the map draws AND the
+ *  turn-by-turn the detail view discloses. Both come out of this one response
+ *  -- Valhalla is volunteer-run, so asking twice for the same walk is rude. */
+export async function walkRoute(from: LatLng, to: LatLng): Promise<{ path: LatLng[]; steps: WalkStep[] }> {
   const res = await fetch(`${VALHALLA}/route`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -141,7 +143,7 @@ export async function walkGeometry(from: LatLng, to: LatLng): Promise<LatLng[]> 
     }),
   });
   if (!res.ok) throw new Error(`valhalla route -> HTTP ${res.status}`);
-  return parseWalkRoute(await res.json()).path;
+  return parseWalkRoute(await res.json());
 }
 
 /** Valhalla encodes shapes as Google polyline at precision 6, not the
