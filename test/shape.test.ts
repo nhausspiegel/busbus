@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pointAlongShape, sliceShape, snapToShape } from "../src/routing/shape";
+import { pointAlongShape, sliceShape, snapToShape, distanceAlongShape, shapeLength } from "../src/routing/shape";
 import { haversineMeters } from "../src/routing/walk";
 import type { LatLng } from "../src/data/types";
 
@@ -135,5 +135,33 @@ describe("pointAlongShape", () => {
     const a = { lat: 41.8240, lng: -71.4002 }, b = { lat: 41.8258, lng: -71.4002 };
     expect(haversineMeters(pointAlongShape([], a, b, 0.5), { lat: 41.8249, lng: -71.4002 }))
       .toBeLessThan(2);
+  });
+});
+
+describe("distanceAlongShape", () => {
+  // A 3-segment line heading east, each leg about 100m at this latitude.
+  const east = (n: number) => ({ lat: 41.826, lng: -71.400 + n * 0.0012 });
+  const line = [east(0), east(1), east(2), east(3)];
+
+  it("measures from the start of the shape, not to the nearest vertex", () => {
+    const oneAndAHalf = distanceAlongShape(line, { lat: 41.826, lng: -71.400 + 1.5 * 0.0012 });
+    const one = distanceAlongShape(line, east(1));
+    const two = distanceAlongShape(line, east(2));
+    expect(oneAndAHalf).toBeGreaterThan(one);
+    expect(oneAndAHalf).toBeLessThan(two);
+    expect(oneAndAHalf).toBeCloseTo((one + two) / 2, 0);
+  });
+
+  it("is zero at the start and the full length at the end", () => {
+    expect(distanceAlongShape(line, east(0))).toBeCloseTo(0, 1);
+    expect(distanceAlongShape(line, east(3))).toBeCloseTo(shapeLength(line), 1);
+  });
+
+  it("projects a point beside the line onto it", () => {
+    // A bus sits a few metres off its own shape; its progress along the route
+    // is unaffected by that sideways error.
+    const beside = { lat: 41.8261, lng: -71.400 + 1.5 * 0.0012 };
+    expect(distanceAlongShape(line, beside))
+      .toBeCloseTo(distanceAlongShape(line, { lat: 41.826, lng: -71.400 + 1.5 * 0.0012 }), 0);
   });
 });

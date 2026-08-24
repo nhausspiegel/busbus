@@ -406,6 +406,7 @@ export default function App() {
 
         {mode === "route" && (
           <RouteDetail feed={feed} board={board} routeId={routeId!} buses={buses}
+                       activeRouteIds={ACTIVE}
                        now={planNow} onBack={() => setRouteId(null)} />
         )}
 
