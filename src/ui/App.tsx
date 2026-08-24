@@ -3,7 +3,7 @@ import "./theme.css";
 import { TransitMap, CAMPUS, type Overlay } from "./TransitMap";
 import { Sheet, type Detent } from "./Sheet";
 import { SearchBar } from "./SearchBar";
-import { ItineraryList, ItineraryDetail } from "./Itineraries";
+import { ItineraryList, ItineraryDetail, type WalkDirections } from "./Itineraries";
 import { NearbyBoard } from "./NearbyBoard";
 import { RouteDetail } from "./RouteDetail";
 import { WhenControl, type WhenMode } from "./WhenControl";
@@ -18,7 +18,7 @@ import { fetchOccupancy, mergeOccupancy } from "../data/occupancy";
 import { serviceDayStart, scheduledDepartures, buildBoard, groupLiveTrips } from "../data/departures";
 import { nearbyDepartures } from "../routing/nearby";
 import { routeStops } from "../routing/routeDetail";
-import { walkGeometry } from "../routing/walk";
+import { walkRoute, type WalkStep } from "../routing/walk";
 import { planBetween } from "../routing/trip";
 import { sliceShape } from "../routing/shape";
 import type { Place } from "../data/geocode";
@@ -57,6 +57,9 @@ export default function App() {
    *  one while they are still looking at the list. */
   const [preview, setPreview] = useState<Itinerary | null>(null);
   const [overlay, setOverlay] = useState<Overlay | null>(null);
+  /** Turn-by-turn for the two walking legs of `overlay`, from the same
+   *  Valhalla /route calls that drew them. */
+  const [directions, setDirections] = useState<WalkDirections>({ toStop: [], fromStop: [] });
   const [planning, setPlanning] = useState(false);
   const [routeId, setRouteId] = useState<string | null>(null);
   const [stopId, setStopId] = useState<string | null>(null);
@@ -191,7 +194,7 @@ export default function App() {
   // ridden slice of each route shape.
   useEffect(() => {
     const shown = chosen ?? preview;
-    if (!shown || !feed) { setOverlay(null); return; }
+    if (!shown || !feed) { setOverlay(null); setDirections({ toStop: [], fromStop: [] }); return; }
     let cancelled = false;
     const rides = shown.rides.flatMap((r) => {
       const shape = feed.routes.get(r.routeId)?.shape ?? [];
@@ -212,16 +215,25 @@ export default function App() {
     if (boardStop) straight.push([origin, boardStop]);
     if (alightStop && dest) straight.push([alightStop, dest.at]);
     setOverlay({ walks: straight, rides });
+    // Cleared with the straight lines, not when the answer arrives: otherwise
+    // the previous trip's turns sit under the new trip's walk step for as long
+    // as Valhalla takes, which is a confident way to be wrong.
+    setDirections({ toStop: [], fromStop: [] });
 
     (async () => {
+      const none: { path: LatLng[]; steps: WalkStep[] } = { path: [], steps: [] };
       try {
-        const legs = await Promise.all([
-          walkOnly && dest ? walkGeometry(origin, dest.at)
-            : boardStop ? walkGeometry(origin, boardStop) : Promise.resolve([]),
-          alightStop && dest ? walkGeometry(alightStop, dest.at) : Promise.resolve([]),
+        // One /route per walking leg, and each answer carries both the drawn
+        // line and the turn-by-turn -- the detail view asks Valhalla nothing.
+        const [toStop, fromStop] = await Promise.all([
+          walkOnly && dest ? walkRoute(origin, dest.at)
+            : boardStop ? walkRoute(origin, boardStop) : Promise.resolve(none),
+          alightStop && dest ? walkRoute(alightStop, dest.at) : Promise.resolve(none),
         ]);
-        const real = legs.filter((l) => l.length > 1);
-        if (!cancelled && real.length) setOverlay({ walks: real, rides });
+        if (cancelled) return;
+        const real = [toStop.path, fromStop.path].filter((l) => l.length > 1);
+        if (real.length) setOverlay({ walks: real, rides });
+        setDirections({ toStop: toStop.steps, fromStop: fromStop.steps });
       } catch { /* straight lines are a fine fallback */ }
     })();
     return () => { cancelled = true; };
@@ -399,7 +411,8 @@ export default function App() {
         )}
 
         {mode === "detail" && chosen && (
-          <ItineraryDetail itinerary={chosen} feed={feed} now={planNow} onBack={() => setChosen(null)} />
+          <ItineraryDetail itinerary={chosen} feed={feed} now={planNow} directions={directions}
+                           onBack={() => setChosen(null)} />
         )}
         </div>
       </Sheet>
