@@ -69,7 +69,18 @@ export default function App() {
   const [whenMode, setWhenMode] = useState<WhenMode>("leave");
 
   const mode = resolveMode({ stopId, routeId, chosen: chosen !== null, dest: dest !== null });
-  const origin = me ?? CAMPUS;
+  // Kept stable by VALUE, not identity. Geolocation hands back a fresh object
+  // every report, even when the rider has not moved a metre, and `origin` is a
+  // dependency of the planning effect. A new object restarts the plan, and a
+  // restarted plan cancels the previous one -- whose `finally` then skips
+  // setPlanning(false), because it is guarded on not being cancelled. Under a
+  // steady trickle of position updates the spinner never clears, so the sheet
+  // reads "Finding shuttles..." forever with the answers sitting underneath
+  // it. That is why shuttle routes looked like they were never calculated.
+  const origin = useMemo(
+    () => me ?? CAMPUS,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [me?.lat, me?.lng]);
 
   useEffect(() => {
     fetchStaticFeed()
