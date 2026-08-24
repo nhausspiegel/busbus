@@ -6,6 +6,7 @@ import type { StaticFeed, LatLng } from "../data/types";
 import type { Bus } from "../data/vehicles";
 import { basemapStyle } from "./mapStyle";
 import { pointAlongShape, snapToShape } from "../routing/shape";
+import { haversineMeters } from "../routing/walk";
 import { stations } from "../routing/routeDetail";
 import { laneProfiles, applyLanes, DEFAULT_OPTIONS, type LaneProfile, type Pt }
   from "../render/bundle";
@@ -166,18 +167,30 @@ export function TransitMap({
    * zoom -- a stop placed once and left alone drifts off the line as soon as
    * the rider zooms. Nothing positioned along a route may read `route.shape`.
    */
-  function stationFeatures(f: StaticFeed): GeoJSON.Feature[] {
-    return stations(f, activeRouteIds).map((st) => {
-      const line = drawnRef.current.get(st.routeIds[0]!);
-      const at = line && line.length > 1
-        ? snapToShape({ lat: st.lat, lng: st.lng }, line)
-        : { lat: st.lat, lng: st.lng };
-      return {
+  function stationFeatures(f: StaticFeed): {
+    beads: GeoJSON.Feature[]; ticks: GeoJSON.Feature[];
+  } {
+    const beads: GeoJSON.Feature[] = [];
+    const ticks: GeoJSON.Feature[] = [];
+    for (const st of stations(f, activeRouteIds)) {
+      const centre = { lat: st.lat, lng: st.lng };
+      // ONE bead per line the station serves, each on THAT line's own lane.
+      // Snapping the whole station onto the first route's geometry put the dot
+      // on one line and left it floating beside every other line it serves --
+      // the bundler fans them into separate lanes, so "the stop" was several
+      // metres from most of its own routes.
+      const on = st.routeIds.map((routeId) => {
+        const line = drawnRef.current.get(routeId);
+        return { routeId,
+                 at: line && line.length > 1 ? snapToShape(centre, line) : centre };
+      });
+      for (const b of on) beads.push({
         type: "Feature" as const,
         properties: {
           name: st.name,
-          // The tap target still needs a real stop, so it keeps the first
-          // member id -- the halves are genuinely different boarding points.
+          // The tap target still needs a real stop, so every bead of a station
+          // carries the same first member id -- the halves are genuinely
+          // different boarding points, but they are one place to tap.
           id: st.stopIds[0]!,
           // Pipe-delimited so a MapLibre expression can test membership:
           // ["in", "|3302|", ["get", "routes"]]. Passing the ids in as a prop
@@ -185,13 +198,40 @@ export function TransitMap({
           // not thought to precompute.
           routes: `|${st.routeIds.join("|")}|`,
           interchange: st.routeIds.length > 1,
-          color: st.routeIds.length === 1
-            ? (f.routes.get(st.routeIds[0]!)?.color ?? "#6F625A")
-            : (darkRef.current ? "#C6BAB1" : "#241C17"),
+          // Always the colour of the line this bead sits on. A neutral dot for
+          // an interchange is the Underground's convention, but Brown has 12
+          // interchanges out of 23 stations, so it greyed out the majority of
+          // the map and told the rider nothing about which lines call there.
+          color: f.routes.get(b.routeId)?.color ?? "#6F625A",
         },
-        geometry: { type: "Point" as const, coordinates: [at.lng, at.lat] },
-      };
-    });
+        geometry: { type: "Point" as const, coordinates: [b.at.lng, b.at.lat] },
+      });
+
+      if (on.length < 2) continue;
+      // The Underground's interchange tick: one bar through every bead, so the
+      // station visibly touches every line it serves instead of being a dot
+      // near some of them. Ordered along the axis between the two furthest
+      // beads, otherwise a three-line station zigzags.
+      const pts = on.map((b) => b.at);
+      let a = pts[0]!, z = pts[1]!, far = -1;
+      for (const u of pts) for (const v of pts) {
+        const d = haversineMeters(u, v);
+        if (d > far) { far = d; a = u; z = v; }
+      }
+      // All the beads coincide -- below z13 the lane gap is zero -- so there is
+      // no gap for a tick to span.
+      if (far < 0.5) continue;
+      const ax = z.lng - a.lng, ay = z.lat - a.lat;
+      const along = [...pts].sort((u, v) =>
+        ((u.lng - a.lng) * ax + (u.lat - a.lat) * ay) - ((v.lng - a.lng) * ax + (v.lat - a.lat) * ay));
+      ticks.push({
+        type: "Feature" as const,
+        properties: { id: st.stopIds[0]!, routes: `|${st.routeIds.join("|")}|` },
+        geometry: { type: "LineString" as const,
+                    coordinates: along.map((q) => [q.lng, q.lat]) },
+      });
+    }
+    return { beads, ticks };
   }
 
   /**
@@ -229,8 +269,12 @@ export function TransitMap({
     // Same geometry, same moment: the stops are placed from `drawn` right here
     // rather than once at startup, so they cannot drift off the line.
     const stopSrc = m.getSource("stops") as maplibregl.GeoJSONSource | undefined;
-    if (stopSrc && feed)
-      stopSrc.setData({ type: "FeatureCollection", features: stationFeatures(feed) });
+    const tickSrc = m.getSource("station-ticks") as maplibregl.GeoJSONSource | undefined;
+    if (stopSrc && feed) {
+      const { beads, ticks } = stationFeatures(feed);
+      stopSrc.setData({ type: "FeatureCollection", features: beads });
+      tickSrc?.setData({ type: "FeatureCollection", features: ticks });
+    }
 
     const data: GeoJSON.FeatureCollection = {
       type: "FeatureCollection",
@@ -274,11 +318,6 @@ export function TransitMap({
     //
     // Nothing is lost by tapering it: at city zoom the routes are a few pixels
     // apart regardless and a lane cannot be read anyway.
-    const offset: maplibregl.ExpressionSpecification = [
-      "interpolate", ["linear"], ["zoom"],
-      11.5, 0,
-      13, ["*", ["get", "lane"], LANE_GAP_PX],
-    ];
     // Thin the stroke when zoomed out, as any transit map does -- a 6px line
     // on a network 150px wide is 4% of it and reads as a blob.
     const lineWidth: maplibregl.ExpressionSpecification =
@@ -290,14 +329,33 @@ export function TransitMap({
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
         "line-color": darkRef.current ? "#15110F" : "#FFFFFF",
-        "line-width": caseWidth, "line-opacity": 0.9, "line-offset": offset,
+        "line-width": caseWidth, "line-opacity": 0.9,
       },
     });
     m.addLayer({
       id: "routes-line", type: "line", source: "routes",
       layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": ["get", "color"], "line-width": lineWidth, "line-offset": offset },
+      paint: { "line-color": ["get", "color"], "line-width": lineWidth },
     });
+    // A 6px line is not a thumb target, and until now there was no hit layer
+    // for the routes at all: a tap on a line matched nothing, fell through to
+    // the map's own click handler and DESELECTED instead of selecting.
+    m.addLayer({
+      id: "routes-hit", type: "line", source: "routes",
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#000", "line-opacity": 0, "line-width": 24 },
+    });
+    m.on("click", "routes-hit", (e: maplibregl.MapLayerMouseEvent) => {
+      // A stop sitting on the line is the more specific target and wins.
+      // MapLibre dispatches every matching layer handler independently, so
+      // without this both fire and the route overwrites the stop.
+      if (m.getLayer("stops-hit")
+          && m.queryRenderedFeatures(e.point, { layers: ["stops-hit"] }).length) return;
+      const id = e.features?.[0]?.properties?.["routeId"];
+      if (id) routeCb.current?.(String(id));
+    });
+    m.on("mouseenter", "routes-hit", () => { m.getCanvas().style.cursor = "pointer"; });
+    m.on("mouseleave", "routes-hit", () => { m.getCanvas().style.cursor = ""; });
   }
 
   useEffect(() => {
@@ -367,7 +425,7 @@ export function TransitMap({
       // Ask what was actually hit rather than relying on preventDefault:
       // MapLibre dispatches the layer handler and this one independently, so
       // a tap on a stop was opening the stop card AND dropping a pin.
-      const hitLayers = ["stops-hit", "poi-hit"].filter((l) => m.getLayer(l));
+      const hitLayers = ["stops-hit", "routes-hit", "poi-hit"].filter((l) => m.getLayer(l));
       if (hitLayers.length && m.queryRenderedFeatures(e.point, { layers: hitLayers }).length) return;
       // A plain tap never drops a pin -- that is a long press. It backs out of
       // whatever is selected, and App decides what that means; if nothing is
@@ -445,18 +503,38 @@ export function TransitMap({
         // dots where there is really one interchange. Coloured by the line it
         // serves, neutral and larger when it serves several -- the convention
         // the Underground and the NYC subway map both use.
+        const { beads, ticks } = stationFeatures(feed);
         m.addSource("stops", { type: "geojson",
-          data: { type: "FeatureCollection", features: stationFeatures(feed) } });
-        // Stops on the route being viewed, drawn larger and in the route colour.
-        m.addLayer({ id: "stops-active", type: "circle", source: "stops",
-          filter: ["in", ["get", "id"], ["literal", []]],
+          data: { type: "FeatureCollection", features: beads } });
+        m.addSource("station-ticks", { type: "geojson",
+          data: { type: "FeatureCollection", features: ticks } });
+        // The interchange bar, drawn UNDER the beads so they sit on it like
+        // beads on a wire. Two layers because a MapLibre line has no stroke:
+        // the wider one is the outline, the narrower one the body -- the same
+        // white-bar-with-a-dark-edge the Underground map uses.
+        m.addLayer({ id: "station-tick-case", type: "line", source: "station-ticks",
+          minzoom: 13,
+          layout: { "line-cap": "round" },
           paint: {
-            "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 4, 16, 7],
-            "circle-color": "#FFFFFF", "circle-stroke-width": 3.5,
-            "circle-stroke-color": "#6F625A",
+            "line-color": darkRef.current ? "#C6BAB1" : "#241C17",
+            "line-width": ["interpolate", ["linear"], ["zoom"], 13, 8, 16, 17],
+          } });
+        m.addLayer({ id: "station-tick", type: "line", source: "station-ticks",
+          minzoom: 13,
+          layout: { "line-cap": "round" },
+          paint: {
+            "line-color": darkRef.current ? "#15110F" : "#FFFFFF",
+            "line-width": ["interpolate", ["linear"], ["zoom"], 13, 5, 16, 11],
           } });
         m.addLayer({ id: "stops", type: "circle", source: "stops", minzoom: 13,
           paint: {
+            // Selecting a stop used to snap: radius and opacity jumped between
+            // frames with nothing in between. MapLibre tweens a paint property
+            // when it changes, including a data-driven one, so declaring the
+            // transitions here is the whole animation.
+            "circle-radius-transition": { duration: 220, delay: 0 },
+            "circle-opacity-transition": { duration: 220, delay: 0 },
+            "circle-stroke-opacity-transition": { duration: 220, delay: 0 },
             // An interchange reads one step larger, as it does on the
             // Underground map, so a transfer point is findable without reading
             // any labels.
@@ -754,11 +832,15 @@ export function TransitMap({
     // A stop belongs to its routes, so selecting one keeps those at full
     // strength: the rider wants to see where it can take them.
     const stopRoutesLit = stopFocus
-      ? (stationFeatures(feed).find((f) => f.properties?.["id"] === stopFocus)
+      ? (stationFeatures(feed).beads.find((f) => f.properties?.["id"] === stopFocus)
           ?.properties?.["routes"] as string | undefined) ?? ""
       : "";
 
-    const DIM = 0.15;
+    // Recessive, not invisible. At 0.15 an unselected stop was indistinguishable
+    // from the basemap, so picking a route did not narrow the map so much as
+    // erase most of it -- and a rider could no longer see the stop they were
+    // about to want. Apple keeps the rest of the network legible underneath.
+    const DIM = 0.38;
     try {
       if (m.getLayer("routes-line")) {
         m.setPaintProperty("routes-line", "line-opacity",
@@ -788,6 +870,13 @@ export function TransitMap({
                        ["get", "interchange"], 3.5, 2.5],
           16, ["case", ["==", ["get", "id"], stopFocus ?? ""], 10,
                        ["get", "interchange"], 6.5, 4.5]]);
+      }
+      for (const id of ["station-tick", "station-tick-case"]) {
+        if (!m.getLayer(id)) continue;
+        m.setPaintProperty(id, "line-opacity",
+          stopFocus ? ["case", ["==", ["get", "id"], stopFocus], 1, DIM]
+          : routeFocus ? ["case", ["in", `|${routeFocus}|`, ["get", "routes"]], 1, DIM]
+          : 1);
       }
     } catch { /* style churn; the next render re-applies */ }
 
