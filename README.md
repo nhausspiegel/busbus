@@ -44,6 +44,76 @@ Route colours come from Passio and riders use them to tell routes apart, so the
 chrome stays quiet warm paper to keep those five colours unambiguous, leaving
 one accent for your own location.
 
+## What this is trying to look like, and why
+
+Passio GO is the official app and it is unusable. The goal here is not a new
+take on transit UI — it is to reach the bar that good transit apps already
+cleared, by copying them deliberately.
+
+**Apple Maps sets the interaction model.** Not a 1:1 aesthetic recreation — the
+*UX*. Concretely, taken from screenshots of the real app rather than from
+memory:
+
+- The stop list follows **one vehicle**, with absolute clock times increasing
+  down the column. Other buses are separate "Upcoming Departures" chips above
+  it, never mixed into the list. Showing the soonest arrival at each stop from
+  whichever bus is nearest is correct per row and nonsense as a column.
+- Live is red with a radiating glyph, `On-time` green, `Scheduled` grey. That
+  vocabulary maps exactly onto this project's rule that a timetable time must
+  never read as a live one.
+- Ride length counts **hops** (`Ride 2 stops` between two stops with one in
+  between), so the existing "3 stops" label is right.
+- Tapping the map deselects. Hunting for a small Back button is the wrong way
+  round.
+- Vehicles glide between position updates rather than teleporting.
+
+**The London Underground and the NYC subway map set the cartography.** These
+are the two best-solved versions of "draw many lines over one street network":
+
+- Lines hold a **constant width** and a **constant corner radius** at every
+  zoom. Every corner turns through the same radius, which is what makes a line
+  read as drawn rather than plotted.
+- Routes sharing a street are drawn **side by side with a minimum gap**, never
+  on top of each other — but a route running alone sits exactly on its own
+  street.
+- A stop on one line wears that line's colour; an **interchange** is drawn
+  larger and neutral, because a stop on three lines belongs to none of their
+  colours.
+
+### The rule underneath all of it: screen space vs world space
+
+**Symbology belongs in device pixels and must be zoom-invariant. Geometry
+belongs in world coordinates and must never be edited to achieve a visual
+effect.**
+
+Stroke width, corner radius, lane gap, marker size: all pixels, recomputed as
+the scale changes. Route coordinates: left alone. Five separate attempts at the
+parallel-route styling failed by breaking this — rounding corners with a radius
+in *metres* (22px of corner-cutting at z18, 1.6px at z14, and the route pulled
+off its road to achieve it), or fanning routes apart by rewriting their
+coordinates. `src/render/bundle.ts` is the version that respects it.
+
+### How to tell whether it worked
+
+Screenshots and assertions about them are not evidence; several defects here
+survived three rounds of "fixed" because the check could not fail. Two habits:
+
+- **Measure the painted pixel**, not a value upstream of it. A marker's
+  transform can hold exactly the right coordinate while the browser paints it
+  somewhere else entirely — that was a real bug, and it read as "the buses are
+  off their routes" for a long time.
+- **Render the thing and look at it.** `npx tsx scripts/bundle-cases.ts` draws
+  the bundler's five reference cases to `docs/bundle-cases.svg`;
+  `scripts/bundle-knobs.ts` renders a tuning knob at several settings for
+  choosing by eye. Both are deliberately abstract geometry, not Providence —
+  the problem is general and a bug is easier to see on a rectangle.
+
+### Priorities
+
+The phone is the primary case: this is read standing at a stop, in the cold,
+deciding whether to wait. Desktop must not win at its expense. Where effort is
+limited, fix what is most visibly broken first.
+
 > ### ▶︎ Checking that the Passio feeds still work
 >
 > **`busbus.py` is the live-verification tool for this project.** It is not part
