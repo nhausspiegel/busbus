@@ -45,6 +45,16 @@
 
 html, body, #root { margin: 0; padding: 0; height: 100%; width: 100%; }
 
+/* Kills the browser's own pull-to-refresh. It has to be on the scrolling
+ * element itself -- setting it on body alone left the gesture live, and it
+ * swallowed the downward swipe on the sheet grabber, so the sheet could not be
+ * dragged closed. There is nothing to pull-to-refresh for either: the app
+ * already refetches on visibilitychange, and there is a Retry button when a
+ * fetch fails. */
+html {
+  overscroll-behavior: none;
+}
+
 body {
   font-family: Barlow, system-ui, -apple-system, sans-serif;
   color: var(--ink);

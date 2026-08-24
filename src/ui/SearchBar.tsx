@@ -1,6 +1,21 @@
 /** Destination entry: type a place, or tap the map. */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { searchPlaces, type Place } from "../data/geocode";
+
+/** Shortest query worth sending. Below this every result is noise anyway. */
+const MIN_QUERY = 3;
+/** How long a rider must stop typing before the request goes out. */
+const TYPING_PAUSE_MS = 450;
+/**
+ * Floor on the gap between two requests, however the rider types.
+ *
+ * A trailing debounce alone only protects against typists FASTER than the
+ * pause. Someone typing at a deliberate 600ms per character clears the timer
+ * every single time and fires one Nominatim request per keystroke -- precisely
+ * the abuse the debounce was meant to prevent, from the rider least likely to
+ * be in a hurry.
+ */
+const MIN_GAP_MS = 1_200;
 
 export function SearchBar({
   destination, onPick, onClear,
@@ -14,16 +29,22 @@ export function SearchBar({
   const [results, setResults] = useState<Place[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  /** When the last geocode actually left, so the floor can be enforced. */
+  const lastSent = useRef(0);
   const abort = useRef<AbortController | null>(null);
 
   const run = async (e: React.FormEvent) => {
     e.preventDefault();
+    void search(q);
+  };
+
+  const search = async (term: string) => {
     abort.current?.abort();
     const ctl = new AbortController();
     abort.current = ctl;
     setBusy(true); setMsg(null);
     try {
-      const found = await searchPlaces(q, ctl.signal);
+      const found = await searchPlaces(term, ctl.signal);
       setResults(found);
       if (found.length === 0) setMsg("Nothing found near Providence. Try a street address.");
     } catch (err) {
@@ -32,6 +53,27 @@ export function SearchBar({
       setBusy(false);
     }
   };
+
+  // Results while typing, rather than only after the button. Debounced and
+  // floored at three characters because Nominatim is volunteer-run and a
+  // request per keystroke is exactly the abuse that gets an app throttled --
+  // a throttled response comes back without CORS headers and reads as a
+  // confusing network error rather than a rate limit. One request per pause
+  // in typing, and the previous one is aborted before the next goes out.
+  useEffect(() => {
+    const term = q.trim();
+    if (term.length < MIN_QUERY) { setResults([]); setMsg(null); return; }
+    // Wait for a pause in typing, but never less than MIN_GAP_MS since the
+    // last request actually went out.
+    const since = Date.now() - lastSent.current;
+    const delay = Math.max(TYPING_PAUSE_MS, MIN_GAP_MS - since);
+    const t = setTimeout(() => {
+      lastSent.current = Date.now();
+      void search(term);
+    }, delay);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
 
   if (destination && !open) {
     return (

@@ -182,7 +182,7 @@ export function Sheet({
         // downward swipe still scrolls a long list instead of closing it.
         onPointerDown={wide ? undefined : onContentPointerDown}
         style={{
-          overflowY: "auto", overscrollBehavior: "contain", flex: 1,
+          overflowY: "auto", overscrollBehavior: "none", flex: 1,
           padding: wide ? "16px 18px" : "0 16px calc(16px + var(--safe-b))",
           // On a phone the sheet is short and every pixel of height is a line
           // of departures, so the stack stays tight. A desktop panel is a
