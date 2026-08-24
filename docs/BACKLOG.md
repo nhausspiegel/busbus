@@ -52,22 +52,13 @@ could not be settled.
   that such a route has no shape to draw (show its buses, not a line).
 - If not → the missing route is something else; re-open with fresh evidence.
 
-### 2. Duplicate rows in the stop card
-
-Sciences Library lists `Evening CW Route · 4 min · 9:37 PM` **twice**,
-identical. Seen after the station merge but almost certainly not caused by it —
-`StopCard` is still passed a single stop_id, so the duplicate is in the board
-for that stop. Look at `buildBoard` in `src/data/departures.ts`: likely a loop
-trip calling twice, or a live departure not de-duplicated against the scheduled
-one it replaces.
-
-### 3. Corner radius is an unpicked knob
+### 2. Corner radius is an unpicked knob
 
 `CORNER_RADIUS_PX` in `src/ui/TransitMap.tsx` is 10, chosen by me not by eye.
 `npx tsx scripts/bundle-knobs.ts` renders 0 / 8 / 16 / 28 to
 `docs/bundle-knobs.svg`. Ask which.
 
-### 4. Route rendering polish
+### 3. Route rendering polish
 
 The bundler is much better but not perfect. `npx tsx scripts/bundle-cases.ts`
 draws the five reference cases to `docs/bundle-cases.svg`; both that and
@@ -79,20 +70,7 @@ picture and the assertions cannot drift. Known soft spots:
   well below the offset it still leaves a sharp corner. Guarded at the
   densities actually used (10, 20), not below.
 
-### 5. Apple-style route detail view — the biggest remaining feature
-
-From the user's own screenshots of Apple Maps (recorded in `README.md`):
-- **Upcoming Departures chips** replacing the `Bus 105` / `Bus 106` vehicle
-  labels: `10 min · On-time` (live, red, radiating glyph), `52 min · Scheduled`
-  (grey), plus a right-aligned `Every N min` headway.
-- The **vehicle's position** drawn inline in the stop list, stops behind it
-  dimmed.
-- **Connecting-route badges** under each stop name — `stations()` already
-  supplies the route ids.
-- **Distant stops collapsed** to `23 previous stops` / `41 additional stops`.
-- **Absolute clock times** in the column rather than `N min · H:MM`.
-
-### 6. Map-matching shapes to street centrelines — deliberately deferred
+### 4. Map-matching shapes to street centrelines — deliberately deferred
 
 Would fix "the routes aren't quite on their roads", which is upstream shape
 data. Needs Valhalla map-matching run **offline at build time** and committed —
@@ -137,3 +115,15 @@ Kept because the *rules* are what stop the bugs coming back.
 - **A check that cannot fail proves nothing.** Join bus to route on
   `data-route-id`, never colour (Brown's routes share colours). Revert the fix
   and watch the test go red.
+- **De-duplicate on what a rider can tell apart, not on an upstream id.**
+  Passio publishes some trips twice under different trip_ids -- 218795 and
+  218820 are byte-identical -- so the stop card listed one bus as two.
+  `buildBoard` keys on stop + route + second; a loop's second visit has a
+  different time and survives.
+- **Order things along the route, not by distance to them.** Placing a vehicle
+  in a stop list by nearest stop puts it behind itself on a loop, because the
+  stop it passed a minute ago is still the closest one. `distanceAlongShape`
+  in `src/routing/shape.ts` measures progress in the route's own order, modulo
+  the shape length so the last stop's successor is the first.
+- **Copy the layout, not the claim.** Apple's departure chips say "On-time";
+  ours say "Live", because nothing here measures a bus against its timetable.
