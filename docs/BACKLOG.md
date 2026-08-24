@@ -201,6 +201,19 @@ roughly: 7, 1, 2, 3, 4, 8, 5, 6, 9, 10.
 | 9 | Pin drop behind an open route page | Long-press flag now guards the layer handlers too |
 | 10 | Search only on submit | Photon type-ahead, debounced and floored |
 
+### Also fixed in that round
+
+- **Ghost dotted straight lines.** An unroutable leg drew a straight dashed
+  line between its endpoints. It draws nothing now.
+- **Two pins in quick succession did not recalculate.** Same root cause as the
+  ghosts: one shared cooldown, so the first pin's failure refused the second
+  pin's requests before they left.
+- **The ride line did not sit on the route.** It was sliced from the raw Passio
+  shape while the route was drawn from the bundler's output. Now sliced from
+  the drawn line and rebuilt per zoom -- 1120 vertices, 0.00m offset.
+- **Directions rested on one volunteer host.** FOSSGIS OSRM `routed-foot`
+  first, Valhalla second, per-host backoff.
+
 ## Still to do, from that round
 
 ### A. Stop selection has no animation
