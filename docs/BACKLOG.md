@@ -28,6 +28,20 @@ stops with no active route are now filtered out — no stops either.
 - `3302 Daytime Express` has **1 trip and 2 stops** against a 177-point shape,
   which is why its line has almost no stops on it. Upstream data, not a bug.
 
+**Measured live on 2026-08-23 at ~21:55, 0 vehicles reporting:**
+- Passio's private feed flags `outdated=0` for exactly `3302, 3469, 3470,
+  22427, 62487` -- **identical to the hardcoded `ACTIVE`**. So the constant is
+  not what is hiding a route, and deriving it from `outdated` would only add a
+  network dependency to a flag CLAUDE.md already says lies about seasonal
+  suspensions.
+- The route serving the athletic complex is almost certainly **22427 Brown
+  Stadium Loop**: flagged active by Passio, but 0 trips and no shape in GTFS,
+  so there is genuinely no line to draw.
+- **Its buses are not being suppressed by us.** Vehicles are never filtered by
+  `ACTIVE`, and `snapToShape` returns the position unchanged when the shape has
+  under 2 points, so a Stadium Loop vehicle would render at its raw GPS fix.
+  The only open question is whether RT ever reports one.
+
 **The check to run, during service hours (Brown runs ~7am–7pm weekdays):**
 list `routeId` from GTFS-RT vehiclePositions and compare against the static
 route ids. There were **0 vehicles reporting** when this was investigated, so it
