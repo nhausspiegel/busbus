@@ -213,7 +213,11 @@ export default function App() {
     if (walkOnly && dest) straight.push([origin, dest.at]);
     if (boardStop) straight.push([origin, boardStop]);
     if (alightStop && dest) straight.push([alightStop, dest.at]);
-    setOverlay({ walks: straight, rides });
+    // Provisional until Valhalla answers. Marked as such so the map can draw
+    // it as the guess it is -- a straight line through the buildings is not a
+    // walking route, and drawing it in the same style as a real one is the same
+    // mistake as showing a timetable time as though a bus had reported it.
+    setOverlay({ walks: straight, rides, walksProvisional: true });
     // Cleared with the straight lines, not when the answer arrives: otherwise
     // the previous trip's turns sit under the new trip's walk step for as long
     // as Valhalla takes, which is a confident way to be wrong.
@@ -221,19 +225,36 @@ export default function App() {
 
     (async () => {
       const none: { path: LatLng[]; steps: WalkStep[] } = { path: [], steps: [] };
+      // One /route per walking leg, and each answer carries both the drawn line
+      // and the turn-by-turn -- the detail view asks Valhalla nothing.
+      const legs = () => Promise.all([
+        walkOnly && dest ? walkRoute(origin, dest.at)
+          : boardStop ? walkRoute(origin, boardStop) : Promise.resolve(none),
+        alightStop && dest ? walkRoute(alightStop, dest.at) : Promise.resolve(none),
+      ]);
       try {
-        // One /route per walking leg, and each answer carries both the drawn
-        // line and the turn-by-turn -- the detail view asks Valhalla nothing.
-        const [toStop, fromStop] = await Promise.all([
-          walkOnly && dest ? walkRoute(origin, dest.at)
-            : boardStop ? walkRoute(origin, boardStop) : Promise.resolve(none),
-          alightStop && dest ? walkRoute(alightStop, dest.at) : Promise.resolve(none),
-        ]);
+        let pair;
+        try {
+          pair = await legs();
+        } catch {
+          // Valhalla is a volunteer instance and a throttled response arrives
+          // as a CORS error, so one failure is expected rather than fatal.
+          // Swallowing it left a straight line through the buildings on screen
+          // permanently, which is what riders were seeing.
+          if (cancelled) return;
+          await new Promise((r) => setTimeout(r, 1500));
+          if (cancelled) return;
+          pair = await legs();
+        }
         if (cancelled) return;
+        const [toStop, fromStop] = pair;
         const real = [toStop.path, fromStop.path].filter((l) => l.length > 1);
-        if (real.length) setOverlay({ walks: real, rides });
+        if (real.length) setOverlay({ walks: real, rides, walksProvisional: false });
         setDirections({ toStop: toStop.steps, fromStop: fromStop.steps });
-      } catch { /* straight lines are a fine fallback */ }
+      } catch {
+        // Both attempts failed. The straight lines stay, still flagged
+        // provisional, so they read as an estimate rather than a route.
+      }
     })();
     return () => { cancelled = true; };
   }, [chosen, preview, feed, origin, dest]);
