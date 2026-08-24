@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { haversineMeters, nearestStops, decodePolyline6, parseWalkRoute , walkLegs , walkSeconds, walkRoute, resetValhalla, valhallaCooldownMs , parseOsrmRoute } from "../src/routing/walk";
+import { haversineMeters, nearestStops, decodePolyline6, parseWalkRoute , walkLegs , walkSeconds, walkRoute, resetValhalla, cooldownMs , parseOsrmRoute } from "../src/routing/walk";
 import type { Stop } from "../src/data/types";
 
 const s = (id: string, lat: number, lng: number): Stop => ({ id, name: id, lat, lng });
@@ -173,6 +173,9 @@ describe("the Valhalla request layer", () => {
 
   const A = { lat: 41.826, lng: -71.400 };
   const B = { lat: 41.830, lng: -71.405 };
+  /** The router a walk request actually goes to first. */
+  const OSRM = "https://routing.openstreetmap.de/routed-foot";
+  const VALHALLA = "https://valhalla1.openstreetmap.de";
 
   it("asks the same question only once", async () => {
     good();
@@ -197,37 +200,31 @@ describe("the Valhalla request layer", () => {
   it("rests after a failure instead of retrying into the wall", async () => {
     throttled();
     await expect(walkRoute(A, B)).rejects.toThrow();
-    expect(calls).toBe(1);
-    expect(valhallaCooldownMs()).toBeGreaterThan(0);
+    // Both routers were tried and both refused.
+    expect(calls).toBe(2);
+    expect(cooldownMs(OSRM)).toBeGreaterThan(0);
     // The second attempt must not reach the network at all.
-    await expect(walkRoute(A, B)).rejects.toThrow(/rested/);
-    expect(calls).toBe(1);
+    await expect(walkRoute(A, B)).rejects.toThrow();
+    expect(calls).toBe(2);
   });
 
-  it("gives up on a request that never answers", async () => {
-    // The worst failure mode, and the one behind "Finding shuttles..." that
-    // never finishes. Measured 2026-08-24: a direct sources_to_targets call
-    // stayed open past 30 SECONDS without resolving or rejecting -- the server
-    // accepts the connection under load and then never replies. Backing off
-    // cannot help a request that never comes back.
-    vi.useFakeTimers();
-    try {
-      let aborted = false;
-      globalThis.fetch = ((_u: unknown, o?: { signal?: AbortSignal }) => {
-        calls++;
-        return new Promise((_res, rej) => {
-          o?.signal?.addEventListener("abort", () => { aborted = true; rej(new Error("aborted")); });
-        });
-      }) as typeof fetch;
+  it("rests each router on its own record", async () => {
+    // The bug this replaces: one shared cooldown meant a failure from the DEAD
+    // router put the healthy one to sleep for up to a minute, which destroys
+    // the entire point of having two. Valhalla returned HTTP 000 all
+    // afternoon, so every fallback poisoned OSRM -- and the legs that could
+    // not be routed meanwhile are exactly the ghost lines that kept appearing.
+    globalThis.fetch = (async (u: unknown) => {
+      calls++;
+      if (String(u).includes("routed-foot")) throw new TypeError("Failed to fetch");
+      return { ok: true, json: async () => ({
+        trip: { legs: [{ shape: "_p~iF~ps|U", maneuvers: [] }] },
+      }) } as unknown as Response;
+    }) as typeof fetch;
 
-      const pending = walkRoute(A, B);
-      const settled = pending.then(() => "resolved").catch(() => "rejected");
-      await vi.advanceTimersByTimeAsync(9_000);
-      expect(await settled).toBe("rejected");
-      expect(aborted).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
+    await walkRoute(A, B);                       // OSRM fails, Valhalla answers
+    expect(cooldownMs(OSRM)).toBeGreaterThan(0); // the one that failed rests
+    expect(cooldownMs(VALHALLA)).toBe(0);        // the one that worked does not
   });
 
   it("never caches a failure", async () => {
