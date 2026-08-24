@@ -102,9 +102,17 @@ Kept because the *rules* are what stop the bugs coming back.
   merges them and unions their routes: 33 markers → 23, interchanges 5 → 12.
 - **One `selection` drives emphasis on every layer.** Routes, stops and bus
   markers all derive from it, so they cannot disagree.
-- **Never present a guess with the confidence of a measurement.** Walking legs
-  retry once, and a provisional straight line is drawn faint and loosely dotted.
-  Same rule as hollow-vs-solid departure times.
+- **Never present a guess with the confidence of a measurement -- and prefer
+  drawing nothing to drawing a guess.** Valhalla answers in ~130ms, so a
+  straight-line placeholder shown while waiting is only a flash of something
+  false. Walking legs draw when they are real; a straight line means a leg that
+  genuinely could not be routed and is drawn faint and loosely dotted in its own
+  layer. Same rule as hollow-vs-solid departure times.
+- **Resolve independent things independently, and never gate a redraw on a
+  filter over the results.** Both walking legs shared one success verdict, and
+  the redraw was skipped when neither leg came back non-empty -- so a rider
+  already at the boarding stop kept a straight line on screen permanently.
+  `walkLegs()` in `src/routing/walk.ts` always returns one line per leg.
 - **Symbology in device pixels and zoom-invariant; geometry in world
   coordinates, never edited to fake a visual effect.** Five attempts at the
   parallel-route styling failed by breaking this.
