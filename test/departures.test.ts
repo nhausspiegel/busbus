@@ -76,3 +76,38 @@ describe("buildBoard", () => {
     expect(buildBoard([], []).size).toBe(0);
   });
 });
+
+describe("buildBoard with duplicate trips in the feed", () => {
+  // Passio publishes some trips twice under different trip_ids: measured on
+  // the shipped feed, 218795 and 218820 are byte-identical -- same route,
+  // same service_id, same shape, same 12 stops at the same seconds -- so the
+  // Sciences Library card listed "Evening CW Route - 4 min - 9:37 PM" twice,
+  // identical, and the second row crowded out a different route.
+  const dep = (tripId: string, time: number, live = false) =>
+    ({ stopId: "7851", tripId, routeId: "3469", seq: 4, time, live });
+
+  it("lists one departure when two trip ids leave at the same second", () => {
+    const got = buildBoard([], [dep("218795", 1000), dep("218820", 1000)]);
+    expect(got.get("7851")).toHaveLength(1);
+  });
+
+  it("keeps the live one when a duplicate is scheduled", () => {
+    // Two identical buses cannot both be right; the one reporting its own
+    // position is the better claim.
+    const got = buildBoard([dep("218795", 1000, true)], [dep("218820", 1000)]);
+    expect(got.get("7851")).toHaveLength(1);
+    expect(got.get("7851")![0]!.live).toBe(true);
+  });
+
+  it("keeps a loop's two visits to the same stop", () => {
+    // Trip 899418 serves stop 8380 at seq 1 and again at seq 15. Those are two
+    // real chances to board and must both survive.
+    const got = buildBoard([], [dep("899418", 1000), { ...dep("899418", 2800), seq: 15 }]);
+    expect(got.get("7851")).toHaveLength(2);
+  });
+
+  it("keeps two different routes leaving at the same second", () => {
+    const got = buildBoard([], [dep("a", 1000), { ...dep("b", 1000), routeId: "3470" }]);
+    expect(got.get("7851")).toHaveLength(2);
+  });
+});

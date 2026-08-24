@@ -62,9 +62,22 @@ export function buildBoard(live: Departure[], scheduled: Departure[]): Departure
   // was coming.
   const key = (d: Departure) => `${d.tripId}|${d.stopId}|${d.seq}`;
   const superseded = new Set(live.map(key));
+  // Passio publishes some trips twice under different trip_ids: 218795 and
+  // 218820 are byte-identical, same route and service_id and shape and all 12
+  // stop times. That is one bus, so the rider must be shown one departure --
+  // otherwise the same route and minute filled the card twice and crowded out
+  // the other routes serving the stop. Keyed on what a rider can actually tell
+  // apart: which route, from which stop, at which second. A loop's second
+  // visit has a different time and survives; two routes at one second are two
+  // real choices and both survive. Live is pushed first, so when a duplicate
+  // is half live and half timetable the reporting bus is the one kept.
+  const shown = new Set<string>();
   const board: DepartureBoard = new Map();
   for (const d of [...live, ...scheduled]) {
     if (!d.live && superseded.has(key(d))) continue;
+    const same = `${d.stopId}|${d.routeId}|${d.time}`;
+    if (shown.has(same)) continue;
+    shown.add(same);
     if (!board.has(d.stopId)) board.set(d.stopId, []);
     board.get(d.stopId)!.push(d);
   }
