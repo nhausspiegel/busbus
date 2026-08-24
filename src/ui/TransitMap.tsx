@@ -66,7 +66,7 @@ const fromPlane = (p: Pt): LatLng => ({ lng: p.x / mPerDegLng, lat: p.y / M_PER_
 
 const OVERLAY_SOURCES = ["itin-walk", "itin-ride", "itin-ends"] as const;
 const OVERLAY_LAYERS =
-  ["itin-walk", "itin-walk-guess", "itin-ride-case", "itin-ride-line",
+  ["itin-walk", "itin-ride-case", "itin-ride-line",
    "itin-end", "itin-end-dot"] as const;
 
 /** Watch the system colour scheme so the map can follow it. */
@@ -83,9 +83,9 @@ function usePrefersDark(): boolean {
 }
 
 export interface Overlay {
-  /** Walking legs. `provisional` marks a straight line drawn because the leg
-   *  could not be routed -- never a placeholder shown while waiting, which was
-   *  only ever a flash of something false. */
+  /** Walking legs. `provisional` marks a leg that could not be routed; those
+   *  are NOT drawn. A straight dotted line from A to B is a claim about a path
+   *  nobody found, and it read as a ghost on the map. */
   walks: { path: LatLng[]; provisional: boolean }[];
   /** Ridden portions of route shapes, with the route's own colour. The route
    *  id lets the map lay the itinerary over the line as DRAWN -- offset into
@@ -823,23 +823,18 @@ export function TransitMap({
           layout: { "line-cap": "round", "line-join": "round" },
           paint: { "line-color": ["get", "color"], "line-width": 6 } });
       }
-      const walks = overlay.walks.filter((w) => w.path.length > 1);
+      // Routed legs only. A leg that could not be routed is drawn as NOTHING,
+      // not as a straight line through the buildings: a dotted line from A to
+      // B is a claim about a path that was never found, and with two routers
+      // and a cache the honest gap is rare and brief. Same rule as the
+      // timetable times -- prefer drawing nothing to drawing a guess.
+      const walks = overlay.walks.filter((w) => !w.provisional && w.path.length > 1);
       if (walks.length) {
-        addSource("itin-walk", walks.map((w) => feature(w.path, { provisional: w.provisional })));
-        // Two layers, not one paint expression: line-dasharray is not a
-        // data-driven property in MapLibre, so a routed leg and an unroutable
-        // one cannot differ within a single layer.
+        addSource("itin-walk", walks.map((w) => feature(w.path)));
         m.addLayer({ id: "itin-walk", type: "line", source: "itin-walk",
-          filter: ["!", ["get", "provisional"]],
           layout: { "line-cap": "round", "line-join": "round" },
           paint: { "line-color": darkRef.current ? "#F0E9E3" : "#241C17",
                    "line-width": 4, "line-dasharray": [0.4, 1.8] } });
-        m.addLayer({ id: "itin-walk-guess", type: "line", source: "itin-walk",
-          filter: ["get", "provisional"],
-          layout: { "line-cap": "round", "line-join": "round" },
-          paint: { "line-color": darkRef.current ? "#F0E9E3" : "#241C17",
-                   "line-width": 4, "line-opacity": 0.35,
-                   "line-dasharray": [0.2, 2.6] } });
       }
       // The ends of the ride. Without these the rider has to work out where
       // to get on and off by comparing the coloured line against the stop
