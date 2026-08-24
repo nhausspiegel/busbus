@@ -131,3 +131,33 @@ button { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
 }
+
+/* The halo that marks the selected stop.
+ *
+ * A DOM element rather than another circle layer, because a paint transition
+ * on a data-driven expression could not be shown to animate the thing the
+ * rider is actually looking at -- frames rendered, and the selection still
+ * snapped. A CSS animation either runs or it does not, and getAnimations()
+ * can be asked which.
+ */
+.stop-halo {
+  width: 46px;
+  height: 46px;
+  margin: -23px 0 0 -23px;
+  border-radius: 50%;
+  border: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  pointer-events: none;
+  animation: stop-halo-in 260ms cubic-bezier(.22, 1, .28, 1);
+}
+
+@keyframes stop-halo-in {
+  from { transform: scale(.45); opacity: 0; }
+  to   { transform: scale(1);   opacity: 1; }
+}
+
+/* A rider who has asked for reduced motion gets the same information without
+ * the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .stop-halo { animation: none; }
+}

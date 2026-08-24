@@ -151,6 +151,8 @@ export function TransitMap({
   /** The routes as actually drawn at the current zoom, shared with the bus
    *  markers so a vehicle rides the line the rider can see. */
   const drawnRef = useRef<Map<string, LatLng[]>>(new Map());
+  /** The halo drawn around the selected stop, so selecting one is visible. */
+  const haloRef = useRef<maplibregl.Marker | null>(null);
   // A counter, not a boolean: setStyle falls back to a full reload when its
   // diff is not applicable, which drops every layer we added. Incrementing on
   // each styledata lets the drawing effects re-run and rebuild them.
@@ -913,11 +915,15 @@ export function TransitMap({
         m.setPaintProperty("stops", "circle-stroke-opacity",
           stopFocus ? ["case", ["==", ["get", "id"], stopFocus], 1, DIM]
           : routeFocus ? ["case", mine, 1, DIM] : 1);
+        // No `interchange` branch here. The dot is the same size in both
+        // cases -- what differs is the lozenge underneath it. This effect
+        // re-set the radius on every selection change and was still carrying
+        // the old branching, silently overriding the layer's own unified
+        // sizing: measured at z14.2, an interchange dot came out at 3.5 and a
+        // lone stop's at 2.5 while their white shapes matched at 14.2px.
         m.setPaintProperty("stops", "circle-radius", ["interpolate", ["linear"], ["zoom"],
-          13, ["case", ["==", ["get", "id"], stopFocus ?? ""], 6,
-                       ["get", "interchange"], 3.5, 2.5],
-          16, ["case", ["==", ["get", "id"], stopFocus ?? ""], 10,
-                       ["get", "interchange"], 6.5, 4.5]]);
+          13, ["case", ["==", ["get", "id"], stopFocus ?? ""], 4, 2.5],
+          16, ["case", ["==", ["get", "id"], stopFocus ?? ""], 6.5, 4.5]]);
       }
       for (const id of ["stops-base"]) {
         if (!m.getLayer(id)) continue;
@@ -964,6 +970,28 @@ export function TransitMap({
       maxZoom: 16.5, duration: 650,
     });
   }, [focus, ready]);
+
+  // A halo on the selected stop. The paint transitions on the circle layers
+  // were not enough on their own: selecting a stop still read as an instant
+  // jump, and "frames were rendered" is not the same claim as "the rider saw
+  // it move". This is a DOM marker with a CSS animation, which either runs or
+  // does not, and can be interrogated with getAnimations().
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready) return;
+    haloRef.current?.remove();
+    haloRef.current = null;
+    if (selection?.kind !== "stop" || !feed) return;
+    const bead = stationFeatures(feed).beads
+      .find((f) => f.properties?.["id"] === selection.id);
+    if (!bead || bead.geometry.type !== "Point") return;
+    const el = document.createElement("div");
+    el.className = "stop-halo";
+    const [lng, lat] = bead.geometry.coordinates as [number, number];
+    haloRef.current = new maplibregl.Marker({ element: el })
+      .setLngLat([lng, lat]).addTo(m);
+    return () => { haloRef.current?.remove(); haloRef.current = null; };
+  }, [selection, ready, feed]);
 
   // Frame a selected route the same way. Picking a route used to leave the
   // camera wherever it was, so most of the line sat behind the sheet and the
