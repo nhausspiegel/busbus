@@ -5,7 +5,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { StaticFeed, LatLng } from "../data/types";
 import type { Bus } from "../data/vehicles";
 import { basemapStyle } from "./mapStyle";
-import { pointAlongShape, snapToShape } from "../routing/shape";
+import { pointAlongShape, snapToShape, sliceShape } from "../routing/shape";
 import { haversineMeters } from "../routing/walk";
 import { stations } from "../routing/routeDetail";
 import { laneProfiles, applyLanes, DEFAULT_OPTIONS, type LaneProfile, type Pt }
@@ -63,6 +63,14 @@ const M_PER_DEG_LAT = 111_320;
 const mPerDegLng = M_PER_DEG_LAT * Math.cos((41.8265 * Math.PI) / 180);
 const toPlane = (p: LatLng): Pt => ({ x: p.lng * mPerDegLng, y: p.lat * M_PER_DEG_LAT });
 const fromPlane = (p: Pt): LatLng => ({ lng: p.x / mPerDegLng, lat: p.y / M_PER_DEG_LAT });
+
+/** A LineString feature from lat/lng points. GeoJSON is [lng, lat]. */
+const lineFeature = (
+  c: LatLng[], properties: GeoJSON.GeoJsonProperties = {},
+): GeoJSON.Feature => ({
+  type: "Feature", properties,
+  geometry: { type: "LineString", coordinates: c.map((p) => [p.lng, p.lat]) },
+});
 
 const OVERLAY_SOURCES = ["itin-walk", "itin-ride", "itin-ends"] as const;
 const OVERLAY_LAYERS =
@@ -157,6 +165,10 @@ export function TransitMap({
   /** The routes as actually drawn at the current zoom, shared with the bus
    *  markers so a vehicle rides the line the rider can see. */
   const drawnRef = useRef<Map<string, LatLng[]>>(new Map());
+  /** The current itinerary, so the per-zoom redraw can rebuild its ride line
+   *  from the same geometry as everything else. */
+  const overlayRef = useRef<Overlay | null>(null);
+  overlayRef.current = overlay ?? null;
   // A counter, not a boolean: setStyle falls back to a full reload when its
   // diff is not applicable, which drops every layer we added. Incrementing on
   // each styledata lets the drawing effects re-run and rebuild them.
@@ -262,6 +274,31 @@ export function TransitMap({
    * offset / sin(t/2) -- at Brown's sharpest corner, 1.9x -- and that miter is
    * the spike that made five earlier attempts at this unusable.
    */
+  /**
+   * The ridden portion of each route, taken from the line as DRAWN.
+   *
+   * It used to be sliced from `feed.routes.get(id).shape` -- the raw Passio
+   * geometry -- while the route underneath was drawn from the bundler's
+   * output, which deliberately moves a route wherever it shares a street. So
+   * the itinerary's line and the route's own line were two different
+   * geometries for the same road, stacked a few metres apart. Everything
+   * positioned along a route reads the geometry that was drawn; this was the
+   * last thing still reading the raw shape.
+   */
+  function rideFeatures(f: StaticFeed | null, o: Overlay | null): GeoJSON.Feature[] {
+    if (!o) return [];
+    return o.rides.flatMap((r) => {
+      const drawn = drawnRef.current.get(r.routeId);
+      const from = r.boardStopId ? f?.stops.get(r.boardStopId) : undefined;
+      const to = r.alightStopId ? f?.stops.get(r.alightStopId) : undefined;
+      const path = drawn && drawn.length > 1 && from && to
+        ? sliceShape(drawn, from, to)
+        : r.path;
+      if (path.length < 2) return [];
+      return [lineFeature(path, { color: r.color, routeId: r.routeId })];
+    });
+  }
+
   function drawRoutes(m: maplibregl.Map, zoom: number) {
     const profiles = profilesRef.current;
     if (profiles.length === 0) return;
@@ -288,6 +325,10 @@ export function TransitMap({
       stopSrc.setData({ type: "FeatureCollection", features: beads });
       tickSrc?.setData({ type: "FeatureCollection", features: ticks });
     }
+    const rideSrc = m.getSource("itin-ride") as maplibregl.GeoJSONSource | undefined;
+    if (rideSrc)
+      rideSrc.setData({ type: "FeatureCollection",
+                        features: rideFeatures(feed, overlayRef.current) });
 
     const data: GeoJSON.FeatureCollection = {
       type: "FeatureCollection",
@@ -803,10 +844,7 @@ export function TransitMap({
     } catch { return; }
     if (!overlay) return;
 
-    const feature = (c: LatLng[], properties: GeoJSON.GeoJsonProperties = {}): GeoJSON.Feature => ({
-      type: "Feature", properties,
-      geometry: { type: "LineString", coordinates: c.map((p) => [p.lng, p.lat]) },
-    });
+    const feature = lineFeature;
     const addSource = (id: string, features: GeoJSON.Feature[]) =>
       m.addSource(id, { type: "geojson", data: { type: "FeatureCollection", features } });
 
@@ -815,7 +853,7 @@ export function TransitMap({
       // under it is drawn from, so the two coincide with nothing to reconcile.
       const rides = overlay.rides.filter((r) => r.path.length > 1);
       if (rides.length) {
-        addSource("itin-ride", rides.map((r) => feature(r.path, { color: r.color })));
+        addSource("itin-ride", rideFeatures(feed, overlay));
         m.addLayer({ id: "itin-ride-case", type: "line", source: "itin-ride",
           layout: { "line-cap": "round", "line-join": "round" },
           paint: { "line-color": darkRef.current ? "#15110F" : "#FFFFFF", "line-width": 11 } });
@@ -938,7 +976,12 @@ export function TransitMap({
           routeFocus ? ["case", ["==", ["get", "routeId"], routeFocus], 1, DIM]
           : stopFocus ? ["case", ["in", ["concat", "|", ["get", "routeId"], "|"],
                                   stopRoutesLit], 1, DIM]
-          : tripLit ? ["case", tripLit, 1, DIM]
+          // During a trip EVERY route fades, the ridden one included: the
+          // segment the rider is actually on is drawn brightly on top by
+          // itin-ride, and leaving the whole loop at full strength made the
+          // two impossible to tell apart. The rest of the route stays visible,
+          // just quiet, so the line can still be followed past the ride.
+          : tripLit ? DIM
           : 1);
         m.setPaintProperty("routes-line", "line-width",
           routeFocus ? ["case", ["==", ["get", "routeId"], routeFocus], 8, 4] : 6);

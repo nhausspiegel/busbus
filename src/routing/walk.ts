@@ -45,32 +45,44 @@ const VALHALLA = "https://valhalla1.openstreetmap.de";
 const cache = new Map<string, Promise<unknown>>();
 /** Bounded so a long session cannot grow it without limit. */
 const MAX_CACHE = 200;
-let coolUntil = 0;
-let backoffMs = 0;
 const FIRST_BACKOFF_MS = 2_000;
 const MAX_BACKOFF_MS = 60_000;
-/** How long to wait for Valhalla before giving up on a request entirely. */
+/** How long to wait for a router before giving up on a request entirely. */
 const REQUEST_TIMEOUT_MS = 8_000;
 
-/** How long until Valhalla will be asked again, ms. 0 when it is ready. */
-export function valhallaCooldownMs(now = Date.now()): number {
-  return Math.max(0, coolUntil - now);
+/**
+ * Cooldown state is PER HOST.
+ *
+ * It used to be one pair of module variables shared by every request, which
+ * quietly destroyed the whole point of having two routers: Valhalla is down,
+ * so every fallback attempt failed, and each failure put the HEALTHY OSRM into
+ * a rest of up to a minute. One dead provider poisoned the working one, and
+ * the legs that could not be routed in the meantime are exactly the ghost
+ * lines that kept appearing. A router is rested on its own record or not at
+ * all.
+ */
+const rest = new Map<string, { until: number; backoff: number }>();
+
+const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };
+
+/** How long until this router will be asked again, ms. 0 when it is ready. */
+export function cooldownMs(url: string, now = Date.now()): number {
+  return Math.max(0, (rest.get(hostOf(url))?.until ?? 0) - now);
 }
 
-/** Test seam: forget every cached answer and clear any cooldown. */
+/** Test seam: forget every cached answer and clear every cooldown. */
 export function resetValhalla(): void {
   cache.clear();
-  coolUntil = 0;
-  backoffMs = 0;
+  rest.clear();
 }
 
 async function ask(url: string, body?: unknown): Promise<unknown> {
   const key = body === undefined ? url : `${url}|${JSON.stringify(body)}`;
   const hit = cache.get(key);
   if (hit) return hit;
-  const waiting = valhallaCooldownMs();
+  const waiting = cooldownMs(url);
   if (waiting > 0)
-    throw new Error(`routing is being rested for another ${waiting}ms`);
+    throw new Error(`${hostOf(url)} is being rested for another ${waiting}ms`);
 
   const p = (async () => {
     // A hung request is the worse failure mode. Measured 2026-08-24: a direct
@@ -102,13 +114,15 @@ async function ask(url: string, body?: unknown): Promise<unknown> {
     const oldest = cache.keys().next().value;
     if (oldest !== undefined) cache.delete(oldest);
   }
-  p.then(() => { backoffMs = 0; })
+  const host = hostOf(url);
+  p.then(() => { rest.delete(host); })
     .catch(() => {
       // A failure must never be cached: the next attempt has to be free to
       // succeed once the server is willing again.
       cache.delete(key);
-      backoffMs = backoffMs ? Math.min(backoffMs * 2, MAX_BACKOFF_MS) : FIRST_BACKOFF_MS;
-      coolUntil = Date.now() + backoffMs + Math.floor(Math.random() * 500);
+      const prev = rest.get(host)?.backoff ?? 0;
+      const backoff = prev ? Math.min(prev * 2, MAX_BACKOFF_MS) : FIRST_BACKOFF_MS;
+      rest.set(host, { backoff, until: Date.now() + backoff + Math.floor(Math.random() * 500) });
     });
   return p;
 }
