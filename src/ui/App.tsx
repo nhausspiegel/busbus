@@ -15,7 +15,7 @@ import { fetchStaticFeed } from "../data/gtfs";
 import { fetchLiveDepartures } from "../data/realtime";
 import { fetchVehicles, type Bus } from "../data/vehicles";
 import { fetchOccupancy, mergeOccupancy } from "../data/occupancy";
-import { serviceDayStart, scheduledDepartures, buildBoard, groupLiveTrips } from "../data/departures";
+import { buildBoard, groupLiveTrips } from "../data/departures";
 import { nearbyDepartures } from "../routing/nearby";
 import { walkRoute, walkLegs, type WalkStep } from "../routing/walk";
 import { planBetween } from "../routing/trip";
@@ -83,7 +83,19 @@ export default function App() {
     const load = async () => {
       const live = await fetchLiveDepartures().catch(() => []);
       if (cancelled) return;
-      setBoard(buildBoard(live, scheduledDepartures(feed, serviceDayStart(leaveAt ?? new Date()))));
+      // LIVE ONLY. The timetable is not a weaker claim here, it is a false
+      // one: calendar.txt marks every route running daily through 2027, so a
+      // scheduled departure asserts a bus that on most days does not exist.
+      // Measured on a Sunday night in August: zero vehicles reporting, and the
+      // app was still offering "10:06 PM" for four routes. Passio's `outdated`
+      // flag cannot rescue it either -- it lies about seasonal suspension.
+      //
+      // No source can support a claim about a future minute. A vehicle
+      // reporting its own position is the only thing that can, so it is the
+      // only thing shown. The timetable keeps the one job it is honest at:
+      // which stops a route serves, in what order. That comes from feed.trips
+      // and never touches this board.
+      setBoard(buildBoard(live, []));
       setLiveTrips(groupLiveTrips(live));
     };
     load();

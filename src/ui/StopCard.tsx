@@ -31,8 +31,9 @@ export function StopCard({
 
       {departures.length === 0 && (
         <p style={{ marginTop: 12, fontSize: 13, color: "var(--muted)" }}>
-          Nothing is scheduled from this stop right now. Try the “leave at” control
-          to see when service resumes.
+          No shuttle is reporting from this stop right now. Brown's timetable
+          claims every route runs daily all year, so it cannot tell you whether
+          one is actually coming — only a bus reporting its own position can.
         </p>
       )}
 
@@ -45,7 +46,7 @@ export function StopCard({
               <button onClick={() => onRouteClick(d.routeId)}
                 aria-label={`${route?.name ?? d.routeId}, ${
                   mins === 0 ? "departing now" : `in ${mins} minutes`
-                }, ${d.live ? "live" : "scheduled"}. See route.`}
+                }. See route.`}
                 style={{ display: "flex", alignItems: "center", gap: 10, width: "100%",
                          border: 0, background: "transparent", padding: 0, cursor: "pointer",
                          textAlign: "left" }}>
@@ -56,10 +57,8 @@ export function StopCard({
                                textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {route?.name ?? d.routeId}
                 </span>
-                {d.live
-                  ? <span className="pulse" aria-hidden="true" />
-                  : <span style={{ fontSize: 11, color: "var(--muted)" }}>scheduled</span>}
-                <span className={`when ${d.live ? "when--live" : "when--sched"}`}
+                <span className="pulse" aria-hidden="true" />
+                <span className="when when--live"
                       style={{ fontSize: 24, minWidth: 44, textAlign: "right" }}>
                   {mins === 0 ? "now" : mins}
                 </span>

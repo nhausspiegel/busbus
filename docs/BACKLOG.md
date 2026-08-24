@@ -127,3 +127,21 @@ Kept because the *rules* are what stop the bugs coming back.
   the shape length so the last stop's successor is the first.
 - **Copy the layout, not the claim.** Apple's departure chips say "On-time";
   ours say "Live", because nothing here measures a bus against its timetable.
+
+### 5. "Leave at" / "Arrive by" has nothing to plan with
+
+`WhenControl` still sets `leaveAt`, and `planTrips` still takes it, but the
+board is live departures only -- every one of which is within minutes of now.
+Asking for 8am tomorrow can only ever return walking. The control is not wired
+to anything false, it is wired to nothing. Either drive it from observed
+service history (below) or remove it; leaving a control that cannot answer is
+its own kind of lie.
+
+### 6. Observed service history -- the only honest answer to "when is the next bus"
+
+Nothing in any feed can say whether a route runs today (see CLAUDE.md for the
+measurements). The one source that could is our own observation: log when
+vehicles actually report, then say "last seen Fri 6:12pm" or "usually active
+7am-7pm weekdays". That is a claim about recorded history rather than a
+promise, it degrades gracefully, and it would give routes 3 and 4 a reason to
+exist on screen when nothing is running.

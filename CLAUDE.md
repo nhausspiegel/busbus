@@ -12,10 +12,27 @@ Brown University shuttle app.
 
 ## Non-negotiable
 
-Never present a timetable time as if it were a live one. Brown's calendar.txt
-marks every route running daily through 2027 and Passio's `outdated` flag lies
-about seasonal suspensions, so "scheduled" is a genuinely weaker claim and the
-UI must keep showing it as one (hollow numerals, explicit wording).
+**Never show a timetable time at all.** Not hollow, not dashed, not labelled --
+not shown. Superseded the earlier "render it as a weaker claim" rule on
+2026-08-23 by the project owner's decision, after measuring at 22:22 that
+night:
+
+- `calendar.txt` is ONE row: service 3302, all seven days, 20250101-20271231.
+  There is no `calendar_dates.txt` in the feed at all, so the data has no field
+  in which "not running today" could ever be written.
+- GTFS-RT returned 0 vehicles AND 0 predictions.
+- Passio's own private endpoint returned an empty bus list, so their app cannot
+  show a time either. We are not missing a source they have.
+- The app was nonetheless offering "10:06 PM" for four routes.
+
+A scheduled time is therefore not a weaker claim than a live one, it is an
+unfounded one, and styling cannot fix that. The board is built from live
+departures only (`buildBoard(live, [])` in App). The timetable keeps the one
+job it is honest at: which stops a route serves, in what order, from
+`feed.trips` -- which never touches the board.
+
+If you want to tell a rider when service actually runs, the only honest route
+is observation: record when vehicles really report, then state that history.
 
 Valhalla and Nominatim are volunteer-run. One request per user action, never
 per keystroke; a throttled response has no CORS headers and shows up in the

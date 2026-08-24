@@ -330,12 +330,20 @@ export function TransitMap({
       paint: {
         "line-color": darkRef.current ? "#15110F" : "#FFFFFF",
         "line-width": caseWidth, "line-opacity": 0.9,
+        "line-opacity-transition": { duration: 220, delay: 0 },
       },
     });
     m.addLayer({
       id: "routes-line", type: "line", source: "routes",
       layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": ["get", "color"], "line-width": lineWidth },
+      paint: {
+        "line-color": ["get", "color"], "line-width": lineWidth,
+        // Switching from one route to another repainted both in a single
+        // frame: the old one blinked out and the new one blinked in. These
+        // carry the change over 220ms instead.
+        "line-opacity-transition": { duration: 220, delay: 0 },
+        "line-width-transition": { duration: 220, delay: 0 },
+      },
     });
     // A 6px line is not a thumb target, and until now there was no hit layer
     // for the routes at all: a tap on a line matched nothing, fell through to
@@ -528,6 +536,7 @@ export function TransitMap({
           minzoom: 13,
           layout: { "line-cap": "round" },
           paint: {
+            "line-opacity-transition": { duration: 220, delay: 0 },
             "line-color": darkRef.current ? "#0B0908" : "#241C17",
             "line-width": ["interpolate", ["linear"], ["zoom"], 13, 15, 16, 27],
           } });
@@ -535,6 +544,7 @@ export function TransitMap({
           minzoom: 13,
           layout: { "line-cap": "round" },
           paint: {
+            "line-opacity-transition": { duration: 220, delay: 0 },
             "line-color": darkRef.current ? "#F0E9E3" : "#FFFFFF",
             "line-width": ["interpolate", ["linear"], ["zoom"], 13, 11, 16, 22],
           } });
@@ -905,7 +915,11 @@ export function TransitMap({
       const lit = !selection
         || (routeFocus ? bus?.routeId === routeFocus
                        : stopRoutesLit.includes(`|${bus?.routeId}|`));
-      mk.getElement().style.opacity = lit ? "1" : String(DIM);
+      const el = mk.getElement();
+      // Same 220ms as the paint transitions, or the vehicles snap while the
+      // lines under them fade.
+      el.style.transition = "opacity .22s ease";
+      el.style.opacity = lit ? "1" : String(DIM);
     }
   }, [selection, buses, overlay, ready, feed]);
 

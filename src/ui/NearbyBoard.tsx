@@ -37,7 +37,6 @@ export function NearbyBoard({
   onLocate: () => void;
 }) {
   const anyLive = buses.length > 0;
-  const anyScheduled = nearby.some((n) => n.departures.some((d) => !d.live));
 
   return (
     <>
@@ -64,7 +63,7 @@ export function NearbyBoard({
       {!loading && nearby.length === 0 && (
         <div style={{ padding: "18px 0" }}>
           <p style={{ margin: 0, fontSize: 15 }}>
-            No shuttles are scheduled from any stop near here right now.
+            No shuttle is reporting from any stop near here right now.
           </p>
           <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--muted)" }}>
             Daytime routes run weekdays 7am–7pm. The Evening routes are suspended for
@@ -93,7 +92,7 @@ export function NearbyBoard({
                     // never the minutes, "now", or whether it was live.
                     aria-label={`${route?.name ?? d.routeId}, ${
                       mins === 0 ? "departing now" : `in ${mins} minutes`
-                    }, ${d.live ? "live" : "scheduled"}. See route.`}
+                    }. See route.`}
                     style={{ display: "flex", alignItems: "center", gap: 10, width: "100%",
                              border: 0, background: "transparent", padding: 0, cursor: "pointer",
                              textAlign: "left" }}>
@@ -104,9 +103,8 @@ export function NearbyBoard({
                                  textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {route?.name ?? d.routeId}
                   </span>
-                  {!d.live && <span style={{ fontSize: 11, color: "var(--muted)" }}>scheduled</span>}
-                  {d.live && <span className="pulse" aria-hidden="true" />}
-                  <span className={`when ${d.live ? "when--live" : "when--sched"}`}
+                  <span className="pulse" aria-hidden="true" />
+                  <span className="when when--live"
                         style={{ fontSize: 26, minWidth: 46, textAlign: "right" }}>
                     {mins === 0 ? "now" : mins}
                   </span>
@@ -121,14 +119,6 @@ export function NearbyBoard({
         </article>
       ))}
 
-      {anyScheduled && (
-        <p style={{ marginTop: 14, fontSize: 12, lineHeight: 1.5, color: "var(--muted)",
-                    borderTop: "1px solid var(--hairline)", paddingTop: 12 }}>
-          Hollow times come from the printed timetable, not a bus. Brown's feed lists every
-          route as running daily year-round, so a scheduled time is not proof a shuttle
-          will arrive.
-        </p>
-      )}
     </>
   );
 }

@@ -59,7 +59,12 @@ export async function planBetween(
   });
 }
 
-/** Standalone entry point: loads the feeds itself. Used by scripts. */
+/** Standalone entry point: loads the feeds itself. Used by scripts.
+ *
+ *  This one DOES fold in the timetable, unlike the app, so the planner can
+ *  still be exercised from the command line when nothing is running -- which
+ *  is most of the time. Anything it returns is a shape to develop against, not
+ *  a claim about a bus. The app builds its board from live departures only. */
 export async function findItineraries(
   origin: LatLng,
   destination: LatLng,
