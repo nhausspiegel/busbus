@@ -539,13 +539,20 @@ export function TransitMap({
         // construction, whatever its width. A station symbol has to contrast
         // with the map, not match it, which is why the Underground draws it
         // white on white paper with a heavy dark edge.
+        // One symbol, two cases. A station is a light lozenge with a thin dark
+        // edge carrying one solid dot per line it serves; a stop on a single
+        // line is the same thing with the lozenge collapsed to a circle. They
+        // were drifting apart -- a heavy black capsule for an interchange next
+        // to a light hollow ring for a lone stop reads as two unrelated
+        // symbols rather than two cases of one. Sizes below are shared with
+        // the stops-base circle so the two constructions stay identical.
         m.addLayer({ id: "station-tick-case", type: "line", source: "station-ticks",
           minzoom: 13,
           layout: { "line-cap": "round" },
           paint: {
             "line-opacity-transition": { duration: 220, delay: 0 },
             "line-color": darkRef.current ? "#0B0908" : "#241C17",
-            "line-width": ["interpolate", ["linear"], ["zoom"], 13, 15, 16, 27],
+            "line-width": ["interpolate", ["linear"], ["zoom"], 13, 11, 16, 19],
           } });
         m.addLayer({ id: "station-tick", type: "line", source: "station-ticks",
           minzoom: 13,
@@ -553,7 +560,18 @@ export function TransitMap({
           paint: {
             "line-opacity-transition": { duration: 220, delay: 0 },
             "line-color": darkRef.current ? "#F0E9E3" : "#FFFFFF",
-            "line-width": ["interpolate", ["linear"], ["zoom"], 13, 11, 16, 22],
+            "line-width": ["interpolate", ["linear"], ["zoom"], 13, 9, 16, 16],
+          } });
+        // The lone-stop case of that same lozenge.
+        m.addLayer({ id: "stops-base", type: "circle", source: "stops", minzoom: 13,
+          filter: ["!", ["get", "interchange"]],
+          paint: {
+            "circle-opacity-transition": { duration: 220, delay: 0 },
+            "circle-radius-transition": { duration: 220, delay: 0 },
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 4.5, 16, 8],
+            "circle-color": darkRef.current ? "#F0E9E3" : "#FFFFFF",
+            "circle-stroke-color": darkRef.current ? "#0B0908" : "#241C17",
+            "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 13, 1, 16, 1.5],
           } });
         m.addLayer({ id: "stops", type: "circle", source: "stops", minzoom: 13,
           paint: {
@@ -567,21 +585,14 @@ export function TransitMap({
             // An interchange reads one step larger, as it does on the
             // Underground map, so a transfer point is findable without reading
             // any labels.
-            // An interchange bead is a SOLID dot sitting on the pill, and a
-            // lone stop stays a hollow bead threaded on its line. Hollow rings
-            // on a light pill read as holes punched through the station.
-            "circle-radius": ["interpolate", ["linear"], ["zoom"],
-              13, ["case", ["get", "interchange"], 2.5, 2.5],
-              16, ["case", ["get", "interchange"], 5, 4.5]],
-            "circle-color": ["case", ["get", "interchange"],
-              ["get", "color"], darkRef.current ? "#15110F" : "#FFFFFF"],
-            "circle-stroke-color": ["case", ["get", "interchange"],
-              darkRef.current ? "#F0E9E3" : "#FFFFFF", ["get", "color"]],
+            // The dot, identical in both cases: solid, in its line's colour,
+            // sitting on the lozenge.
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 2.5, 16, 4.5],
+            "circle-color": ["get", "color"],
+            "circle-stroke-color": darkRef.current ? "#F0E9E3" : "#FFFFFF",
             // Matched to the route line's own width at street zoom, so a stop
             // reads as a bead ON the line rather than a separate dot beside it.
-            "circle-stroke-width": ["interpolate", ["linear"], ["zoom"],
-              13, ["case", ["get", "interchange"], 0.8, 1.5],
-              16, ["case", ["get", "interchange"], 1.6, 4]],
+            "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 13, 0.6, 16, 1.2],
           } });
         // A 5px dot is too small for a thumb; an invisible wider circle takes taps.
         m.addLayer({ id: "stops-hit", type: "circle", source: "stops", minzoom: 13,
@@ -908,6 +919,15 @@ export function TransitMap({
           16, ["case", ["==", ["get", "id"], stopFocus ?? ""], 10,
                        ["get", "interchange"], 6.5, 4.5]]);
       }
+      for (const id of ["stops-base"]) {
+        if (!m.getLayer(id)) continue;
+        m.setPaintProperty(id, "circle-opacity",
+          stopFocus ? ["case", ["==", ["get", "id"], stopFocus], 1, DIM]
+          : routeFocus ? ["case", ["in", `|${routeFocus}|`, ["get", "routes"]], 1, DIM] : 1);
+        m.setPaintProperty(id, "circle-stroke-opacity",
+          stopFocus ? ["case", ["==", ["get", "id"], stopFocus], 1, DIM]
+          : routeFocus ? ["case", ["in", `|${routeFocus}|`, ["get", "routes"]], 1, DIM] : 1);
+      }
       for (const id of ["station-tick", "station-tick-case"]) {
         if (!m.getLayer(id)) continue;
         m.setPaintProperty(id, "line-opacity",
@@ -944,6 +964,29 @@ export function TransitMap({
       maxZoom: 16.5, duration: 650,
     });
   }, [focus, ready]);
+
+  // Frame a selected route the same way. Picking a route used to leave the
+  // camera wherever it was, so most of the line sat behind the sheet and the
+  // rider had to drag the map to see what they had just selected -- the
+  // itinerary view has framed its own result for ages and the two should not
+  // behave differently. Skipped while an itinerary is showing, since that has
+  // already framed something more specific.
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !ready || focus) return;
+    if (selection?.kind !== "route") return;
+    const path = drawnRef.current.get(selection.id);
+    if (!path || path.length < 2) return;
+    const b = new maplibregl.LngLatBounds();
+    for (const p of path) b.extend([p.lng, p.lat]);
+    m.fitBounds(b, {
+      padding: { top: 90, bottom: Math.round(window.innerHeight * 0.5), left: 48, right: 48 },
+      maxZoom: 16.5, duration: 650,
+    });
+    // Deliberately keyed on the route id alone: refitting on every redraw
+    // would yank the camera back each time the rider panned or zoomed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection?.kind === "route" ? selection.id : null, ready]);
 
   return <div ref={div} style={{ position: "absolute", inset: 0 }} />;
 }
