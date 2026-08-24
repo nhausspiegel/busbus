@@ -99,7 +99,9 @@ Kept because the *rules* are what stop the bugs coming back.
   straight-line placeholder shown while waiting is only a flash of something
   false. Walking legs draw when they are real; a straight line means a leg that
   genuinely could not be routed and is drawn faint and loosely dotted in its own
-  layer. Same rule as hollow-vs-solid departure times.
+  layer. The departure times went further and dropped the guess entirely: a
+  timetable time is not a weaker claim, it is an unfounded one, so it is not
+  shown at all. See CLAUDE.md.
 - **Resolve independent things independently, and never gate a redraw on a
   filter over the results.** Both walking legs shared one success verdict, and
   the redraw was skipped when neither leg came back non-empty -- so a rider

@@ -29,16 +29,39 @@ Debug view (raw feed contents, unstyled) stays at `?debug=1`.
 
 ## The one design idea
 
-**A departure time shows how much it can be trusted.** Live times are solid
-with a pulse. Timetable-only times are drawn hollow.
+**A time is shown only when a bus is reporting its own position.** There is no
+second, weaker kind of time. If nothing is reporting, the app says so.
 
-That is not decoration — it is this project's central data problem made
-visible. Brown's GTFS `calendar.txt` marks every route as running every day
-from 2025 to 2027, and Passio's `outdated` flag reports the Evening routes as
-active even while Brown publishes "No Summer Service" for them. Neither source
-can answer "is this bus really coming", so the app stops pretending it can and
-shows the difference instead. Walking always renders solid: your own legs are
-not a prediction.
+This replaced an earlier version of the same idea. That version drew
+timetable-only times hollow, on the reasoning that "scheduled" is a weaker
+claim than "live" and should look like one. It is not a weaker claim. Measured
+at 22:22 on Sunday 2026-08-23:
+
+| source | returned |
+|---|---|
+| GTFS-RT `vehiclePositions` | 0 vehicles |
+| GTFS-RT TripUpdates | 0 stops, 0 entries |
+| Passio private `getBuses` | `{'-1': [{'-1': []}]}` — empty |
+| `calendar.txt` | **one row**: service 3302, all seven days, 20250101–20271231 |
+| `calendar_dates.txt` | **not in the feed at all** |
+
+The last two lines are the whole argument. Every trip hangs off a single
+service pattern with no exception dates, so the feed contains no field in which
+"not running today" could ever be written — it says exactly the same thing on a
+Tuesday in October and a Sunday in August. Meanwhile the app was offering
+"10:06 PM" for four routes with nothing on the road. Passio's own endpoint is
+empty too, so this is not a source we were failing to read.
+
+A styling treatment cannot rescue a claim with nothing behind it. So the board
+is built from live departures only, and the timetable keeps the one job it is
+honest at: which stops a route serves, in what order.
+
+Walking always renders solid: your own legs are not a prediction — and with the
+buses silent, walking is frequently the only real answer the app has.
+
+If you want to know when service actually runs, the only honest route is
+observation: record when vehicles really report, then state that history. Not
+built yet; see `docs/BACKLOG.md`.
 
 Route colours come from Passio and riders use them to tell routes apart, so the
 chrome stays quiet warm paper to keep those five colours unambiguous, leaving
@@ -58,9 +81,11 @@ memory:
   down the column. Other buses are separate "Upcoming Departures" chips above
   it, never mixed into the list. Showing the soonest arrival at each stop from
   whichever bus is nearest is correct per row and nonsense as a column.
-- Live is red with a radiating glyph, `On-time` green, `Scheduled` grey. That
-  vocabulary maps exactly onto this project's rule that a timetable time must
-  never read as a live one.
+- Live is red with a radiating glyph, `On-time` green, `Scheduled` grey. We
+  take the chip layout and drop two thirds of the vocabulary: there is no
+  `Scheduled` here because such times are never shown, and no `On-time` because
+  nothing in these feeds measures a bus against a timetable. A live fix proves
+  a bus is reporting, not that it is punctual.
 - Ride length counts **hops** (`Ride 2 stops` between two stops with one in
   between), so the existing "3 stops" label is right.
 - Tapping the map deselects. Hunting for a small Back button is the wrong way
@@ -76,9 +101,17 @@ are the two best-solved versions of "draw many lines over one street network":
 - Routes sharing a street are drawn **side by side with a minimum gap**, never
   on top of each other — but a route running alone sits exactly on its own
   street.
-- A stop on one line wears that line's colour; an **interchange** is drawn
-  larger and neutral, because a stop on three lines belongs to none of their
-  colours.
+- A stop on one line wears that line's colour, drawn as a hollow bead threaded
+  **on** that line.
+- An **interchange** is a light pill carrying one solid dot per line it serves,
+  each dot sitting on that line's own lane. The Underground draws interchanges
+  neutral, and copying that here was wrong twice over. Brown has 12
+  interchanges across 23 stations, so "the exception" greyed out most of the
+  map and told a rider nothing about which lines call there. Worse, the station
+  was snapped onto the first route's geometry only — and since coincident
+  routes get fanned into separate lanes, the dot sat on one line and floated
+  metres from every other line it served. The pill spans them instead, so a
+  station visibly touches every line it is a station for.
 
 ### The rule underneath all of it: screen space vs world space
 
@@ -396,7 +429,7 @@ Real output:
 |---|---|
 | Find candidate stops near each end | GTFS `stops.txt`, pruned to the 8 nearest |
 | Real walking times to those stops | Valhalla `sources_to_targets` — **one** call per end |
-| When each bus actually departs | GTFS-RT TripUpdates, falling back to the timetable |
+| When each bus actually departs | GTFS-RT TripUpdates only — the app never falls back to the timetable |
 | Rank by arrival at the destination | `src/routing/plan.ts` — pure function, no I/O |
 | Two-leg trips when no single ride works | `src/routing/transfers.ts` |
 
@@ -408,8 +441,8 @@ OSRM's public demo server **has no pedestrian profile loaded**. It answers `/rou
 
 ## Known limits, all upstream
 
-- **Predictions reach only ~18 minutes ahead.** Beyond that the ranker uses the timetable and marks the itinerary `[scheduled]` rather than `[live]`.
-- **Daytime Express has 1 static trip; Brown Stadium Loop has 0.** Passio publishes no timetable for them, so outside live-prediction range they cannot be routed. This is missing upstream data, not a bug here.
+- **Predictions reach only ~18 minutes ahead**, and the app plans no further. `findItineraries()` — the CLI and debug-map entry point — deliberately still folds in the timetable so the ranker can be exercised when nothing is running, which is most of the time; that is why `plan-demo` output below is marked `[scheduled]`. The app itself never does this.
+- **Daytime Express has 1 static trip; Brown Stadium Loop has 0.** Brown Stadium Loop also has no shape, so it can never draw a line — though its buses would appear at their raw positions if any ever reported, since vehicles are not filtered by route. This is missing upstream data, not a bug here.
 - **An empty result is often correct.** After the Connector's last run, nothing connects College Hill to the Jewelry District, and the honest answer is "no itineraries."
 
 ## Tests
