@@ -213,7 +213,8 @@ export default function App() {
       const to = feed.stops.get(r.alightStopId);
       if (!from || !to || shape.length < 2) return [];
       return [{ routeId: r.routeId, path: sliceShape(shape, from, to),
-                color: feed.routes.get(r.routeId)?.color ?? "#241C17" }];
+                color: feed.routes.get(r.routeId)?.color ?? "#241C17",
+                boardStopId: r.boardStopId, alightStopId: r.alightStopId }];
     });
     // Straight lines first so the trip appears instantly, then upgrade to real
     // sidewalk paths when Valhalla answers.

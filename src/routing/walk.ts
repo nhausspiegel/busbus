@@ -29,6 +29,8 @@ let coolUntil = 0;
 let backoffMs = 0;
 const FIRST_BACKOFF_MS = 2_000;
 const MAX_BACKOFF_MS = 60_000;
+/** How long to wait for Valhalla before giving up on a request entirely. */
+const REQUEST_TIMEOUT_MS = 8_000;
 
 /** How long until Valhalla will be asked again, ms. 0 when it is ready. */
 export function valhallaCooldownMs(now = Date.now()): number {
@@ -51,13 +53,26 @@ async function post(path: string, body: unknown): Promise<unknown> {
     throw new Error(`valhalla is being rested for another ${waiting}ms`);
 
   const p = (async () => {
-    const res = await fetch(`${VALHALLA}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error(`valhalla ${path} -> HTTP ${res.status}`);
-    return res.json();
+    // A hung request is the worse failure mode. Measured 2026-08-24: a direct
+    // sources_to_targets call sat open past 30 SECONDS without resolving or
+    // rejecting -- the server accepts the connection under load and then never
+    // answers. With no deadline the app waits on it forever, which is exactly
+    // the "Finding shuttles..." that never finishes. Backing off cannot help a
+    // request that never comes back; only abandoning it can.
+    const ctl = new AbortController();
+    const bell = setTimeout(() => ctl.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${VALHALLA}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: ctl.signal,
+      });
+      if (!res.ok) throw new Error(`valhalla ${path} -> HTTP ${res.status}`);
+      return await res.json();
+    } finally {
+      clearTimeout(bell);
+    }
   })();
 
   cache.set(key, p);

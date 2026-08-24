@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { haversineMeters, nearestStops, decodePolyline6, parseWalkRoute , walkLegs , walkSeconds, walkRoute, resetValhalla, valhallaCooldownMs } from "../src/routing/walk";
 import type { Stop } from "../src/data/types";
@@ -202,6 +202,32 @@ describe("the Valhalla request layer", () => {
     // The second attempt must not reach the network at all.
     await expect(walkRoute(A, B)).rejects.toThrow(/rested/);
     expect(calls).toBe(1);
+  });
+
+  it("gives up on a request that never answers", async () => {
+    // The worst failure mode, and the one behind "Finding shuttles..." that
+    // never finishes. Measured 2026-08-24: a direct sources_to_targets call
+    // stayed open past 30 SECONDS without resolving or rejecting -- the server
+    // accepts the connection under load and then never replies. Backing off
+    // cannot help a request that never comes back.
+    vi.useFakeTimers();
+    try {
+      let aborted = false;
+      globalThis.fetch = ((_u: unknown, o?: { signal?: AbortSignal }) => {
+        calls++;
+        return new Promise((_res, rej) => {
+          o?.signal?.addEventListener("abort", () => { aborted = true; rej(new Error("aborted")); });
+        });
+      }) as typeof fetch;
+
+      const pending = walkRoute(A, B);
+      const settled = pending.then(() => "resolved").catch(() => "rejected");
+      await vi.advanceTimersByTimeAsync(9_000);
+      expect(await settled).toBe("rejected");
+      expect(aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("never caches a failure", async () => {
