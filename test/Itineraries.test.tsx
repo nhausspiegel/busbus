@@ -1,7 +1,9 @@
 /** @vitest-environment jsdom */
 import { describe, it, expect, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { ItineraryDetail } from "../src/ui/Itineraries";
+import { parseWalkRoute, type WalkStep } from "../src/routing/walk";
 import type { Itinerary, RideLeg, StaticFeed, Stop } from "../src/data/types";
 
 afterEach(cleanup);
@@ -45,8 +47,12 @@ const itinerary = (r: RideLeg): Itinerary => ({
   allLive: r.live,
 });
 
-const show = (r: RideLeg = ride(), f: StaticFeed | null = feed) =>
-  render(<ItineraryDetail itinerary={itinerary(r)} feed={f} now={NOW} onBack={() => {}} />);
+const show = (
+  r: RideLeg = ride(), f: StaticFeed | null = feed,
+  directions?: { toStop: WalkStep[]; fromStop: WalkStep[] },
+) =>
+  render(<ItineraryDetail itinerary={itinerary(r)} feed={f} now={NOW}
+                          directions={directions} onBack={() => {}} />);
 
 const toggle = () => screen.getByRole("button", { name: /stops/i });
 
@@ -117,5 +123,77 @@ describe("ItineraryDetail ride stops", () => {
   it("offers no control before the feed has loaded", () => {
     show(ride(), null);
     expect(screen.queryByRole("button", { name: /stops/i })).toBeNull();
+  });
+});
+
+/** The maneuvers of a real Valhalla pedestrian response, parsed by the same
+ *  function the app uses -- so these assertions are against Valhalla's own
+ *  wording and its kilometres, not a hand-written idea of them. */
+const REAL = parseWalkRoute(
+  JSON.parse(readFileSync("test/fixtures/valhalla-walk-route.json", "utf8"))).steps;
+
+/** A second, distinguishable leg. 119.8 m is deliberately unrounded. */
+const IVES: WalkStep[] = [
+  { instruction: "Turn right onto Ives Street.", metres: 119.8, seconds: 91 },
+  { instruction: "You have arrived at your destination.", metres: 0, seconds: 0 },
+];
+
+const dirs = { toStop: REAL, fromStop: IVES };
+const openers = () => screen.getAllByRole("button", { name: /directions/i });
+
+describe("ItineraryDetail walking directions", () => {
+  it("stays collapsed by default -- this is read standing at a stop", () => {
+    show(ride(), feed, dirs);
+    expect(screen.queryByText(/Walk west on the walkway/)).toBeNull();
+    expect(screen.queryByText(/Turn right onto Ives Street/)).toBeNull();
+    expect(openers()).toHaveLength(2);
+    expect(openers()[0]!.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("lists the maneuvers in walking order once expanded", () => {
+    show(ride(), feed, dirs);
+    fireEvent.click(openers()[0]!);
+    const first = screen.getByText(/Walk west on the walkway/);
+    const tenth = screen.getByText(/Turn right onto the crosswalk/);
+    expect(first.compareDocumentPosition(tenth) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(openers()[0]!.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("rounds distances to something a walker can act on", () => {
+    show(ride(), feed, dirs);
+    fireEvent.click(openers()[1]!);
+    const row = screen.getByText(/Turn right onto Ives Street/).closest("li");
+    expect(row?.textContent).toContain("120 m");
+    expect(row?.textContent).not.toContain("119.8");
+  });
+
+  it("prints no distance for the arrival maneuver", () => {
+    // Valhalla's last maneuver is zero-length. "You have arrived · 0 m" is noise.
+    show(ride(), feed, dirs);
+    fireEvent.click(openers()[1]!);
+    const row = screen.getByText(/You have arrived/).closest("li");
+    expect(row?.textContent).not.toContain("0 m");
+  });
+
+  it("puts each leg's directions under its own step", () => {
+    // Both legs are fetched in one Promise.all and are trivially swappable;
+    // the walk to the bus is not the walk from it.
+    show(ride(), feed, dirs);
+    fireEvent.click(openers()[1]!);
+    expect(screen.queryByText(/Walk west on the walkway/)).toBeNull();
+    expect(screen.getByText(/Turn right onto Ives Street/)).toBeTruthy();
+  });
+
+  it("gives the walk-only trip its directions too", () => {
+    render(<ItineraryDetail feed={feed} now={NOW} directions={dirs} onBack={() => {}}
+                            itinerary={{ ...itinerary(ride()), rides: [], totalWalkSeconds: 920 }} />);
+    expect(openers()).toHaveLength(1);
+    fireEvent.click(openers()[0]!);
+    expect(screen.getByText(/Walk west on the walkway/)).toBeTruthy();
+  });
+
+  it("offers no control before Valhalla has answered", () => {
+    show();
+    expect(screen.queryByRole("button", { name: /directions/i })).toBeNull();
   });
 });
