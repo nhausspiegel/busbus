@@ -6,6 +6,8 @@ import type { StaticFeed, LatLng } from "../data/types";
 import type { Bus } from "../data/vehicles";
 import { basemapStyle } from "./mapStyle";
 import { stationFeatures, rideFeatures, lineFeature } from "../render/network";
+import { stopPaint, stopBasePaint, tickPaint, routeLinePaint, stopRadius,
+         DIM, type MapState } from "../render/symbols";
 import { pointAlongShape, snapToShape, sliceShape } from "../routing/shape";
 import { haversineMeters } from "../routing/walk";
 import { stations } from "../routing/routeDetail";
@@ -205,6 +207,17 @@ export function TransitMap({
       for (const id of st.stopIds) rep.set(id, st.stopIds[0]!);
     return rep;
   }, [feed, activeRouteIds]);
+  /** Everything the look of the map depends on, gathered once. */
+  const symbolState = (): MapState => ({
+    dark: darkRef.current,
+    stopFocus: selectionRef.current?.kind === "stop" ? selectionRef.current.id : null,
+    routeFocus: selectionRef.current?.kind === "route" ? selectionRef.current.id : null,
+    ridden: overlayRef.current?.rides.map((r) => r.routeId) ?? [],
+    ends: rideEnds(overlayRef.current, stationRep),
+    grow: growRef.current,
+  });
+  const selectionRef = useRef<Selection | null>(null);
+  selectionRef.current = selection ?? null;
   const overlayRef = useRef<Overlay | null>(null);
   overlayRef.current = overlay ?? null;
   // A counter, not a boolean: setStyle falls back to a full reload when its
@@ -336,14 +349,7 @@ export function TransitMap({
     m.addLayer({
       id: "routes-line", type: "line", source: "routes",
       layout: { "line-cap": "round", "line-join": "round" },
-      paint: {
-        "line-color": ["get", "color"], "line-width": lineWidth,
-        // Switching from one route to another repainted both in a single
-        // frame: the old one blinked out and the new one blinked in. These
-        // carry the change over 220ms instead.
-        "line-opacity-transition": { duration: 220, delay: 0 },
-        "line-width-transition": { duration: 220, delay: 0 },
-      },
+      paint: routeLinePaint(symbolState()),
     });
     // A 6px line is not a thumb target, and until now there was no hit layer
     // for the routes at all: a tap on a line matched nothing, fell through to
@@ -542,51 +548,17 @@ export function TransitMap({
         m.addLayer({ id: "station-tick-case", type: "line", source: "station-ticks",
           minzoom: 13,
           layout: { "line-cap": "round" },
-          paint: {
-            "line-opacity-transition": { duration: 220, delay: 0 },
-            "line-color": darkRef.current ? "#0B0908" : "#241C17",
-            "line-width": ["interpolate", ["linear"], ["zoom"], 13, 11, 16, 19],
-          } });
+          paint: tickPaint(symbolState(), true) });
         m.addLayer({ id: "station-tick", type: "line", source: "station-ticks",
           minzoom: 13,
           layout: { "line-cap": "round" },
-          paint: {
-            "line-opacity-transition": { duration: 220, delay: 0 },
-            "line-color": darkRef.current ? "#F0E9E3" : "#FFFFFF",
-            "line-width": ["interpolate", ["linear"], ["zoom"], 13, 9, 16, 16],
-          } });
+          paint: tickPaint(symbolState(), false) });
         // The lone-stop case of that same lozenge.
         m.addLayer({ id: "stops-base", type: "circle", source: "stops", minzoom: 13,
           filter: ["!", ["get", "interchange"]],
-          paint: {
-            "circle-opacity-transition": { duration: 220, delay: 0 },
-            "circle-radius-transition": { duration: 220, delay: 0 },
-            "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 4.5, 16, 8],
-            "circle-color": darkRef.current ? "#F0E9E3" : "#FFFFFF",
-            "circle-stroke-color": darkRef.current ? "#0B0908" : "#241C17",
-            "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 13, 1, 16, 1.5],
-          } });
+          paint: stopBasePaint(symbolState()) });
         m.addLayer({ id: "stops", type: "circle", source: "stops", minzoom: 13,
-          paint: {
-            // Selecting a stop used to snap: radius and opacity jumped between
-            // frames with nothing in between. MapLibre tweens a paint property
-            // when it changes, including a data-driven one, so declaring the
-            // transitions here is the whole animation.
-            "circle-radius-transition": { duration: 220, delay: 0 },
-            "circle-opacity-transition": { duration: 220, delay: 0 },
-            "circle-stroke-opacity-transition": { duration: 220, delay: 0 },
-            // An interchange reads one step larger, as it does on the
-            // Underground map, so a transfer point is findable without reading
-            // any labels.
-            // The dot, identical in both cases: solid, in its line's colour,
-            // sitting on the lozenge.
-            "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 2.5, 16, 4.5],
-            "circle-color": ["get", "color"],
-            "circle-stroke-color": darkRef.current ? "#F0E9E3" : "#FFFFFF",
-            // Matched to the route line's own width at street zoom, so a stop
-            // reads as a bead ON the line rather than a separate dot beside it.
-            "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 13, 0.6, 16, 1.2],
-          } });
+          paint: stopPaint(symbolState()) });
         // A 5px dot is too small for a thumb; an invisible wider circle takes taps.
         m.addLayer({ id: "stops-hit", type: "circle", source: "stops", minzoom: 13,
           paint: { "circle-radius": 14, "circle-opacity": 0 } });
@@ -853,72 +825,29 @@ export function TransitMap({
     // from the basemap, so picking a route did not narrow the map so much as
     // erase most of it -- and a rider could no longer see the stop they were
     // about to want. Apple keeps the rest of the network legible underneath.
-    const DIM = 0.38;
+    // Re-applied from the SAME functions the layers were created with, so a
+    // symbol cannot have one look when it is drawn and another when it is
+    // emphasised. That divergence is exactly how an interchange dot ended up
+    // at 3.5 against a lone stop's 2.5 while the shapes under them agreed.
+    const st = symbolState();
+    const apply = (layer: string, paint: Record<string, unknown>) => {
+      if (!m.getLayer(layer)) return;
+      for (const [prop, value] of Object.entries(paint))
+        // Transitions are declared once when the layer is made; re-setting one
+        // mid-tween restarts it.
+        if (!prop.endsWith("-transition"))
+          // MapLibre's paint-property union cannot be satisfied from a plain
+          // record; the symbol module is what keeps these honest.
+          (m.setPaintProperty as (l: string, p: string, v: unknown) => void)(layer, prop, value);
+    };
     try {
-      if (m.getLayer("routes-line")) {
-        m.setPaintProperty("routes-line", "line-opacity",
-          routeFocus ? ["case", ["==", ["get", "routeId"], routeFocus], 1, DIM]
-          : stopFocus ? ["case", ["in", ["concat", "|", ["get", "routeId"], "|"],
-                                  stopRoutesLit], 1, DIM]
-          // During a trip EVERY route fades, the ridden one included: the
-          // segment the rider is actually on is drawn brightly on top by
-          // itin-ride, and leaving the whole loop at full strength made the
-          // two impossible to tell apart. The rest of the route stays visible,
-          // just quiet, so the line can still be followed past the ride.
-          : tripLit ? DIM
-          : 1);
-        m.setPaintProperty("routes-line", "line-width",
-          routeFocus ? ["case", ["==", ["get", "routeId"], routeFocus], 8, 4] : 6);
-        m.setPaintProperty("routes-case", "line-opacity",
-          selection ? 0.3 : 0.9);
-      }
-      if (m.getLayer("stops")) {
-        const mine: maplibregl.ExpressionSpecification = routeFocus
-          ? ["in", `|${routeFocus}|`, ["get", "routes"]]
-          : ["literal", true];
-        // The tapped stop grows and stays solid; everything else recedes. That
-        // is the whole answer to "which one did I just tap".
-        // During a trip the ridden routes' stops stay legible; everything
-        // else recedes. Intermediate stops are deliberately NOT hidden -- a
-        // rider wants to see what they are passing.
-        const onTrip: maplibregl.ExpressionSpecification | null = ridden.length
-          ? ["any", ...ridden.map((r): maplibregl.ExpressionSpecification =>
-              ["in", `|${r}|`, ["get", "routes"]])] : null;
-        m.setPaintProperty("stops", "circle-opacity",
-          stopFocus ? ["case", ["==", ["get", "id"], stopFocus], 1, DIM]
-          : routeFocus ? ["case", mine, 1, DIM]
-          : onTrip ? ["case", onTrip, 1, DIM] : 1);
-        m.setPaintProperty("stops", "circle-stroke-opacity",
-          stopFocus ? ["case", ["==", ["get", "id"], stopFocus], 1, DIM]
-          : routeFocus ? ["case", mine, 1, DIM]
-          : onTrip ? ["case", onTrip, 1, DIM] : 1);
-        // No `interchange` branch here. The dot is the same size in both
-        // cases -- what differs is the lozenge underneath it. This effect
-        // re-set the radius on every selection change and was still carrying
-        // the old branching, silently overriding the layer's own unified
-        // sizing: measured at z14.2, an interchange dot came out at 3.5 and a
-        // lone stop's at 2.5 while their white shapes matched at 14.2px.
-        // Sized through `growRef`, which a tween walks from 0 to 1. Setting the
-        // final radius here directly is what made selecting a stop snap.
-        m.setPaintProperty("stops", "circle-radius",
-          selectedRadius(stopFocus, growRef.current, rideEnds(overlay ?? null, stationRep)));
-      }
-      for (const id of ["stops-base"]) {
-        if (!m.getLayer(id)) continue;
-        m.setPaintProperty(id, "circle-opacity",
-          stopFocus ? ["case", ["==", ["get", "id"], stopFocus], 1, DIM]
-          : routeFocus ? ["case", ["in", `|${routeFocus}|`, ["get", "routes"]], 1, DIM] : 1);
-        m.setPaintProperty(id, "circle-stroke-opacity",
-          stopFocus ? ["case", ["==", ["get", "id"], stopFocus], 1, DIM]
-          : routeFocus ? ["case", ["in", `|${routeFocus}|`, ["get", "routes"]], 1, DIM] : 1);
-      }
-      for (const id of ["station-tick", "station-tick-case"]) {
-        if (!m.getLayer(id)) continue;
-        m.setPaintProperty(id, "line-opacity",
-          stopFocus ? ["case", ["==", ["get", "id"], stopFocus], 1, DIM]
-          : routeFocus ? ["case", ["in", `|${routeFocus}|`, ["get", "routes"]], 1, DIM]
-          : 1);
-      }
+      apply("routes-line", routeLinePaint(st));
+      if (m.getLayer("routes-case"))
+        m.setPaintProperty("routes-case", "line-opacity", selection ? 0.3 : 0.9);
+      apply("stops", stopPaint(st));
+      apply("stops-base", stopBasePaint(st));
+      apply("station-tick", tickPaint(st, false));
+      apply("station-tick-case", tickPaint(st, true));
     } catch { /* style churn; the next render re-applies */ }
 
     // Vehicles are DOM markers, so they fade in CSS rather than in paint.
