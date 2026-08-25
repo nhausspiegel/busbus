@@ -478,3 +478,37 @@ renderer that actually draws the map.
 
 If the corner-radius knob sheet is wanted again, it was `bundle-knobs.ts` in
 the history and would now sweep `drawLanes`'s `cornerRadiusM`.
+
+---
+
+## State at the end of 2026-08-25
+
+Route drawing is rewritten and verified in production: **0 sharp turns over 30
+degrees** across the network at z14.6, against a map that previously showed
+spurs, acute wedges and kinks at every zoom. Across zooms: 0 at z12, 2 at z13,
+2 at z14.6, 2 at z16, 0 at z17.5.
+
+### Still open
+
+1. **Planning is a boolean, not a state machine.** `planning` is guarded by a
+   `cancelled` flag and a cancelled run skips clearing it -- that is how the
+   spinner once stuck forever behind a fresh `origin` object on every
+   geolocation report. Fixed by memoising origin, but the shape is still
+   fragile. Explicit phases (idle / planning / ready / failed) would make the
+   stuck state unrepresentable.
+2. **`WhenControl` has nothing to plan with.** Every live departure is minutes
+   away, so "8am tomorrow" can only return walking. Either drive it from
+   observed service history or remove it.
+3. **Observed service history.** Nothing in any feed can say whether a route
+   runs today. Logging when vehicles actually report, and stating that history,
+   is the only honest answer to "when is the next bus" -- and it is what would
+   give the app something to say when nothing is running, which at night and
+   through the summer is most of the time.
+4. **A running route with no shape.** 22427 Brown Stadium Loop is flagged
+   active by Passio with 0 trips and no shape, so no line can be drawn. Its
+   buses would render at their raw positions if any ever reported; whether RT
+   ever carries them is still unverified.
+5. **Re-run `scripts/match-shapes.ts` when the feed changes.** The matched
+   shapes are committed, so they age with `google_transit.zip`. Takes about two
+   minutes and prints how far each route moved -- anything over 45m is rejected
+   rather than drawn.
