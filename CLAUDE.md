@@ -89,3 +89,20 @@ macOS ships `python3`, not `python`. Dependencies live in `.venv`:
 ```bash
 ./.venv/bin/python busbus.py
 ```
+
+## Drawing the routes
+
+`src/render/graph.ts` is the renderer. Shapes are matched to the street network
+at build time (`scripts/match-shapes.ts`, output committed), corridors are found
+by coordinate IDENTITY rather than proximity, and each route gets ONE offset per
+corridor edge.
+
+Do not reintroduce a per-vertex "who is near me" search. That was
+`src/render/bundle.ts`, it oscillated -- route 3302 changed lane every ~30m --
+and four filters layered on top of it (median despeckle, quantised sort key,
+per-run median ordering, smoothed-offset ordering) each moved the defect count
+by exactly zero. It is deleted; `src/render/geometry.ts` is what survived.
+
+Rendering changes are judged by looking at the map, not by a proxy metric.
+`npx tsx scripts/render-cases.ts` draws the five reference cases through the
+live renderer.
