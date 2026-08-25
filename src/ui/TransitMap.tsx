@@ -103,6 +103,19 @@ const mPerDegLng = M_PER_DEG_LAT * Math.cos((41.8265 * Math.PI) / 180);
 const toPlane = (p: LatLng): Pt => ({ x: p.lng * mPerDegLng, y: p.lat * M_PER_DEG_LAT });
 const fromPlane = (p: Pt): LatLng => ({ lng: p.x / mPerDegLng, lat: p.y / M_PER_DEG_LAT });
 
+/** Room to leave around something being framed.
+ *
+ *  The sheet is a bottom tray on a phone and a side panel on a wide screen, so
+ *  reserving half the viewport height for it either way zoomed a desktop map
+ *  out far more than it needed to -- half the window given over to a panel
+ *  that is not there. */
+function framePadding(): maplibregl.PaddingOptions {
+  const wide = window.innerWidth >= 820;
+  return wide
+    ? { top: 80, bottom: 80, left: 452, right: 64 }
+    : { top: 90, bottom: Math.round(window.innerHeight * 0.5), left: 48, right: 48 };
+}
+
 const OVERLAY_SOURCES = ["itin-walk", "itin-ride"] as const;
 const OVERLAY_LAYERS = ["itin-walk", "itin-ride-case", "itin-ride-line"] as const;
 
@@ -554,8 +567,14 @@ export function TransitMap({
           layout: { "line-cap": "round" },
           paint: tickPaint(symbolState(), false) });
         // The lone-stop case of that same lozenge.
+        // EVERY bead gets its white lozenge, interchanges included. This was
+        // filtered to lone stops, on the assumption that an interchange takes
+        // its background from the bar joining its beads -- but that bar is not
+        // emitted when the beads coincide, which is what happens at any zoom
+        // where the lane gap collapses. An interchange then had no background
+        // at all and rendered as a bare dot while every stop beside it wore a
+        // white circle.
         m.addLayer({ id: "stops-base", type: "circle", source: "stops", minzoom: 13,
-          filter: ["!", ["get", "interchange"]],
           paint: stopBasePaint(symbolState()) });
         m.addLayer({ id: "stops", type: "circle", source: "stops", minzoom: 13,
           paint: stopPaint(symbolState()) });
@@ -872,8 +891,7 @@ export function TransitMap({
     const b = new maplibregl.LngLatBounds();
     for (const p of focus) b.extend([p.lng, p.lat]);
     m.fitBounds(b, {
-      // Leave room for the search bar above and the sheet below.
-      padding: { top: 90, bottom: Math.round(window.innerHeight * 0.5), left: 48, right: 48 },
+      padding: framePadding(),
       maxZoom: 16.5, duration: 650,
     });
   }, [focus, ready]);
@@ -929,7 +947,7 @@ export function TransitMap({
     const b = new maplibregl.LngLatBounds();
     for (const p of path) b.extend([p.lng, p.lat]);
     m.fitBounds(b, {
-      padding: { top: 90, bottom: Math.round(window.innerHeight * 0.5), left: 48, right: 48 },
+      padding: framePadding(),
       maxZoom: 16.5, duration: 650,
     });
     // Deliberately keyed on the route id alone: refitting on every redraw

@@ -291,3 +291,64 @@ alight stop. Reverting each historical bug turns the matching test red -- 11.18m
    `cancelled` flag, and a cancelled run skips clearing it -- which is how the
    spinner stuck forever behind a fresh `origin` object every geolocation
    report. Explicit phases would make that unrepresentable.
+
+---
+
+## Reported 2026-08-24, second round
+
+Grouped by cause rather than by symptom, because most of them share one.
+
+### Root cause: the bundler assigns a lane PER POINT, and it wobbles
+
+MEASURED on the shipped feed, per route, over one loop:
+
+| route | points | lane-index changes | bundle-size changes | median run |
+|---|---|---|---|---|
+| 3302 | 397 | 18 | 9 | **3 samples (30m)** |
+| 62487 | 875 | 22 | 12 | 6 samples |
+| 3470 | 371 | 14 | 11 | 20 samples |
+| 3469 | 371 | 11 | 13 | 16 samples |
+
+Route 3302 changes its lane assignment every ~30 metres. Every change moves the
+line sideways. These are all the same defect:
+
+- [ ] **Nubs / spurs on the purple line.** Not the bus's actual route.
+- [ ] **Green lines at an acute angle.** Should be coincident or parallel,
+      never converging. Passio traces 3302's out-and-back 9.0m apart (230 self
+      pairs), and the bundler then gives the two passes DIFFERENT displacements
+      -- measured on the Connector, own-pass separation grew from 13.4m at p90
+      in the source to 19.2m after offsetting, median 1.8m to 3.8m.
+- [ ] **Kink in the orange line** on a straight street.
+- [ ] **Stops change which line they sit on between zooms.** A bead is snapped
+      to its own route's drawn line, so when that line's lane flips, the bead
+      goes with it.
+
+**The fix being built:** snap every route's shape to the street it runs on, at
+build time, and commit it (`scripts/match-shapes.ts`). Two routes on one street
+then share the SAME geometry rather than a nearly-identical one, so there is
+nothing left for the nearest-neighbour search to guess at and nothing to wobble.
+It also fixes "the routes aren't quite on their roads", which has been open for
+ages. Verified the tool works before building on it: FOSSGIS OSRM `/match`
+returns confidence 0.94-0.98 on Brown's shapes, at up to ~10 trace points per
+request (25 is refused as TooBig), so it runs in overlapping chunks.
+
+Every match is checked before being accepted -- map matching's failure mode is
+snapping confidently onto the wrong parallel street, which is worse than the
+few metres it fixes.
+
+### Fixed in this round
+
+- [x] **A station rendered as a bare dot at some zooms.** The white lozenge
+      came only from the bar joining a station's beads, and that bar is only
+      emitted when the beads are far enough apart to span -- which depends on
+      the lane gap, which depends on zoom. `stops-base` now covers every bead,
+      so a stop's background cannot depend on whether a bar was drawn.
+- [x] **Desktop zoom-out on route select was far too aggressive.** The fit
+      reserved half the viewport HEIGHT for the sheet, which is a bottom tray
+      on a phone and a side panel on a wide screen. `framePadding()` now
+      reserves the panel's width instead.
+
+### Still open from earlier rounds
+
+- [ ] Planning is a boolean guarded by a `cancelled` flag rather than a state
+      machine; a cancelled run skips clearing it. That is how the spinner stuck.

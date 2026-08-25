@@ -41,6 +41,9 @@ export interface BundleOptions {
   stepM: number;
   /** Distance over which a line eases into and out of a bundle. */
   taperM: number;
+  /** How close a line must come to ITSELF before the two passes are drawn as
+   *  one. 0 disables it. */
+  selfMergeM: number;
 }
 
 /**
@@ -57,6 +60,14 @@ export const DEFAULT_OPTIONS: BundleOptions = {
   headingTolDeg: 30,
   stepM: 10,
   taperM: 60,
+  // Passio traces a route's outbound and return legs as separate geometry a
+  // few metres apart: measured on the shipped feed, route 3302 has 230 pairs
+  // of its own vertices within 20m of each other at a median of 9.0m, across
+  // two stretches up to 43 vertices long, and the Connector has 168 across
+  // four. Drawn faithfully that is one route showing as two parallel lines,
+  // with a narrow spur where the passes meet. A route is ONE line on a transit
+  // map whichever way the bus is pointing.
+  selfMergeM: 12,
 };
 
 /** Everything about one line that does not depend on the gap, computed once. */
@@ -82,6 +93,11 @@ export interface LaneProfile {
   smoothWindow: number;
   /** Whether the line's ends meet, so the taper wraps rather than clamping. */
   closed: boolean;
+  /** How close a line must come to itself before its two passes are drawn as
+   *  one. Carried here so applyLanes can do it at every zoom. */
+  selfMergeM: number;
+  /** The sampling step the profile was built at. */
+  stepM: number;
 }
 
 const dot = (a: Pt, b: Pt) => a.x * b.x + a.y * b.y;
@@ -342,6 +358,50 @@ export function roundCorners(pts: Pt[], radius: number, closed: boolean): Pt[] {
 }
 
 /** The gap-independent half. Run once; cheap to re-apply per scale. */
+/**
+ * Draw a line's own doubled-back passes as one line.
+ *
+ * A route that runs out along a street and back down it is ONE line on a
+ * transit map, however the bus is pointing. Passio does not trace it that way:
+ * measured on the shipped feed, route 3302 has 230 pairs of its own vertices
+ * within 20m at a median of 9.0m, and the Connector 168.
+ *
+ * This runs on the OFFSET output, not the source, and that is the whole point.
+ * The bundler assigns a lane per POINT, so a line that doubles back is offered
+ * to two different bundles and comes back with two different displacements --
+ * measured on the Connector, its own passes went from 13.4m apart at the 90th
+ * percentile in the source to 19.2m after offsetting, with the median rising
+ * 1.8m to 3.8m. That is a wedge, not a pair of parallel lines, and it is the
+ * acute angle and the spur visible on the map. Merging beforehand cannot help,
+ * because the splaying happens afterwards.
+ *
+ * Only FAR-ALONG neighbours count: `apart` is what stops a line merging with
+ * the piece of itself it was just at, which would eat every corner.
+ */
+export function mergeSelfPasses(path: Pt[], withinM: number, stepM: number): Pt[] {
+  if (withinM <= 0 || path.length < 8) return path;
+  const apart = Math.max(6, Math.ceil((withinM * 4) / stepM));
+  const seg = tangents(path);
+  const out = path.map((q) => ({ ...q }));
+  for (let i = 0; i < path.length; i++) {
+    let bestJ = -1, bestD = withinM;
+    for (let j = i + apart; j < path.length; j++) {
+      const d = Math.hypot(path[j]!.x - path[i]!.x, path[j]!.y - path[i]!.y);
+      if (d >= bestD) continue;
+      // Same street, either direction -- compared modulo 180 like everything
+      // else here, so a crossing is not mistaken for a doubling.
+      if (!parallel(seg[i]!, seg[j]!, 30)) continue;
+      bestD = d; bestJ = j;
+    }
+    if (bestJ < 0) continue;
+    const mx = (path[i]!.x + path[bestJ]!.x) / 2;
+    const my = (path[i]!.y + path[bestJ]!.y) / 2;
+    out[i] = { x: mx, y: my };
+    out[bestJ] = { x: mx, y: my };
+  }
+  return out;
+}
+
 export function laneProfiles(lines: Line[], o: BundleOptions): LaneProfile[] {
   const usable = lines.filter((l) => l.points.length >= 2);
   const paths = usable.map((l) => densify(l.points, o.stepM));
@@ -450,6 +510,7 @@ export function laneProfiles(lines: Line[], o: BundleOptions): LaneProfile[] {
 
     return {
       id: line.id, path, across, self, normal, canonSign,
+      selfMergeM: o.selfMergeM, stepM: o.stepM,
       miter: miterOf[l]!,
       smoothWindow: Math.max(1, Math.round(o.taperM / o.stepM) | 1),
       closed: closedFlags[l]!,
@@ -477,5 +538,9 @@ export function applyLanes(p: LaneProfile, minGap: number, cornerRadius = 0): Pt
     const d = eased[i]! * p.miter[i]!;
     return { x: q.x + p.normal[i]!.x * d, y: q.y + p.normal[i]!.y * d };
   });
-  return roundCorners(trimFolds(moved, p.normal, p.closed), cornerRadius, p.closed);
+  // Merged BEFORE rounding, so a corner where the two passes meet is rounded
+  // once, as one line, rather than twice as a wedge.
+  const single = mergeSelfPasses(
+    trimFolds(moved, p.normal, p.closed), p.selfMergeM, p.stepM);
+  return roundCorners(single, cornerRadius, p.closed);
 }
