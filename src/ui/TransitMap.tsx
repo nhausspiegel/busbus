@@ -5,6 +5,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { StaticFeed, LatLng } from "../data/types";
 import type { Bus } from "../data/vehicles";
 import { basemapStyle } from "./mapStyle";
+import { stationFeatures, rideFeatures, lineFeature } from "../render/network";
 import { pointAlongShape, snapToShape, sliceShape } from "../routing/shape";
 import { haversineMeters } from "../routing/walk";
 import { stations } from "../routing/routeDetail";
@@ -99,14 +100,6 @@ const M_PER_DEG_LAT = 111_320;
 const mPerDegLng = M_PER_DEG_LAT * Math.cos((41.8265 * Math.PI) / 180);
 const toPlane = (p: LatLng): Pt => ({ x: p.lng * mPerDegLng, y: p.lat * M_PER_DEG_LAT });
 const fromPlane = (p: Pt): LatLng => ({ lng: p.x / mPerDegLng, lat: p.y / M_PER_DEG_LAT });
-
-/** A LineString feature from lat/lng points. GeoJSON is [lng, lat]. */
-const lineFeature = (
-  c: LatLng[], properties: GeoJSON.GeoJsonProperties = {},
-): GeoJSON.Feature => ({
-  type: "Feature", properties,
-  geometry: { type: "LineString", coordinates: c.map((p) => [p.lng, p.lat]) },
-});
 
 const OVERLAY_SOURCES = ["itin-walk", "itin-ride"] as const;
 const OVERLAY_LAYERS = ["itin-walk", "itin-ride-case", "itin-ride-line"] as const;
@@ -237,73 +230,6 @@ export function TransitMap({
    * zoom -- a stop placed once and left alone drifts off the line as soon as
    * the rider zooms. Nothing positioned along a route may read `route.shape`.
    */
-  function stationFeatures(f: StaticFeed): {
-    beads: GeoJSON.Feature[]; ticks: GeoJSON.Feature[];
-  } {
-    const beads: GeoJSON.Feature[] = [];
-    const ticks: GeoJSON.Feature[] = [];
-    for (const st of stations(f, activeRouteIds)) {
-      const centre = { lat: st.lat, lng: st.lng };
-      // ONE bead per line the station serves, each on THAT line's own lane.
-      // Snapping the whole station onto the first route's geometry put the dot
-      // on one line and left it floating beside every other line it serves --
-      // the bundler fans them into separate lanes, so "the stop" was several
-      // metres from most of its own routes.
-      const on = st.routeIds.map((routeId) => {
-        const line = drawnRef.current.get(routeId);
-        return { routeId,
-                 at: line && line.length > 1 ? snapToShape(centre, line) : centre };
-      });
-      for (const b of on) beads.push({
-        type: "Feature" as const,
-        properties: {
-          name: st.name,
-          // The tap target still needs a real stop, so every bead of a station
-          // carries the same first member id -- the halves are genuinely
-          // different boarding points, but they are one place to tap.
-          id: st.stopIds[0]!,
-          // Pipe-delimited so a MapLibre expression can test membership:
-          // ["in", "|3302|", ["get", "routes"]]. Passing the ids in as a prop
-          // instead meant the map could not emphasise anything the parent had
-          // not thought to precompute.
-          routes: `|${st.routeIds.join("|")}|`,
-          interchange: st.routeIds.length > 1,
-          // Always the colour of the line this bead sits on. A neutral dot for
-          // an interchange is the Underground's convention, but Brown has 12
-          // interchanges out of 23 stations, so it greyed out the majority of
-          // the map and told the rider nothing about which lines call there.
-          color: f.routes.get(b.routeId)?.color ?? "#6F625A",
-        },
-        geometry: { type: "Point" as const, coordinates: [b.at.lng, b.at.lat] },
-      });
-
-      if (on.length < 2) continue;
-      // The Underground's interchange tick: one bar through every bead, so the
-      // station visibly touches every line it serves instead of being a dot
-      // near some of them. Ordered along the axis between the two furthest
-      // beads, otherwise a three-line station zigzags.
-      const pts = on.map((b) => b.at);
-      let a = pts[0]!, z = pts[1]!, far = -1;
-      for (const u of pts) for (const v of pts) {
-        const d = haversineMeters(u, v);
-        if (d > far) { far = d; a = u; z = v; }
-      }
-      // All the beads coincide -- below z13 the lane gap is zero -- so there is
-      // no gap for a tick to span.
-      if (far < 0.5) continue;
-      const ax = z.lng - a.lng, ay = z.lat - a.lat;
-      const along = [...pts].sort((u, v) =>
-        ((u.lng - a.lng) * ax + (u.lat - a.lat) * ay) - ((v.lng - a.lng) * ax + (v.lat - a.lat) * ay));
-      ticks.push({
-        type: "Feature" as const,
-        properties: { id: st.stopIds[0]!, routes: `|${st.routeIds.join("|")}|` },
-        geometry: { type: "LineString" as const,
-                    coordinates: along.map((q) => [q.lng, q.lat]) },
-      });
-    }
-    return { beads, ticks };
-  }
-
   /**
    * Draw each route, fanned apart only where it genuinely shares a street.
    *
@@ -319,31 +245,6 @@ export function TransitMap({
    * offset / sin(t/2) -- at Brown's sharpest corner, 1.9x -- and that miter is
    * the spike that made five earlier attempts at this unusable.
    */
-  /**
-   * The ridden portion of each route, taken from the line as DRAWN.
-   *
-   * It used to be sliced from `feed.routes.get(id).shape` -- the raw Passio
-   * geometry -- while the route underneath was drawn from the bundler's
-   * output, which deliberately moves a route wherever it shares a street. So
-   * the itinerary's line and the route's own line were two different
-   * geometries for the same road, stacked a few metres apart. Everything
-   * positioned along a route reads the geometry that was drawn; this was the
-   * last thing still reading the raw shape.
-   */
-  function rideFeatures(f: StaticFeed | null, o: Overlay | null): GeoJSON.Feature[] {
-    if (!o) return [];
-    return o.rides.flatMap((r) => {
-      const drawn = drawnRef.current.get(r.routeId);
-      const from = r.boardStopId ? f?.stops.get(r.boardStopId) : undefined;
-      const to = r.alightStopId ? f?.stops.get(r.alightStopId) : undefined;
-      const path = drawn && drawn.length > 1 && from && to
-        ? sliceShape(drawn, from, to)
-        : r.path;
-      if (path.length < 2) return [];
-      return [lineFeature(path, { color: r.color, routeId: r.routeId })];
-    });
-  }
-
   function drawRoutes(m: maplibregl.Map, zoom: number) {
     const profiles = profilesRef.current;
     if (profiles.length === 0) return;
@@ -366,14 +267,14 @@ export function TransitMap({
     const stopSrc = m.getSource("stops") as maplibregl.GeoJSONSource | undefined;
     const tickSrc = m.getSource("station-ticks") as maplibregl.GeoJSONSource | undefined;
     if (stopSrc && feed) {
-      const { beads, ticks } = stationFeatures(feed);
+      const { beads, ticks } = stationFeatures(feed, activeRouteIds, drawnRef.current);
       stopSrc.setData({ type: "FeatureCollection", features: beads });
       tickSrc?.setData({ type: "FeatureCollection", features: ticks });
     }
     const rideSrc = m.getSource("itin-ride") as maplibregl.GeoJSONSource | undefined;
     if (rideSrc)
       rideSrc.setData({ type: "FeatureCollection",
-                        features: rideFeatures(feed, overlayRef.current) });
+                        features: rideFeatures(feed, overlayRef.current, drawnRef.current) });
 
     const data: GeoJSON.FeatureCollection = {
       type: "FeatureCollection",
@@ -610,7 +511,7 @@ export function TransitMap({
         // dots where there is really one interchange. Coloured by the line it
         // serves, neutral and larger when it serves several -- the convention
         // the Underground and the NYC subway map both use.
-        const { beads, ticks } = stationFeatures(feed);
+        const { beads, ticks } = stationFeatures(feed, activeRouteIds, drawnRef.current);
         m.addSource("stops", { type: "geojson",
           data: { type: "FeatureCollection", features: beads } });
         m.addSource("station-ticks", { type: "geojson",
@@ -898,7 +799,7 @@ export function TransitMap({
       // under it is drawn from, so the two coincide with nothing to reconcile.
       const rides = overlay.rides.filter((r) => r.path.length > 1);
       if (rides.length) {
-        addSource("itin-ride", rideFeatures(feed, overlay));
+        addSource("itin-ride", rideFeatures(feed, overlay, drawnRef.current));
         m.addLayer({ id: "itin-ride-case", type: "line", source: "itin-ride",
           layout: { "line-cap": "round", "line-join": "round" },
           paint: { "line-color": darkRef.current ? "#15110F" : "#FFFFFF", "line-width": 11 } });
@@ -944,7 +845,7 @@ export function TransitMap({
     // A stop belongs to its routes, so selecting one keeps those at full
     // strength: the rider wants to see where it can take them.
     const stopRoutesLit = stopFocus
-      ? (stationFeatures(feed).beads.find((f) => f.properties?.["id"] === stopFocus)
+      ? (stationFeatures(feed, activeRouteIds, drawnRef.current).beads.find((f) => f.properties?.["id"] === stopFocus)
           ?.properties?.["routes"] as string | undefined) ?? ""
       : "";
 
