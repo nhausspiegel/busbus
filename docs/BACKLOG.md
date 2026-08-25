@@ -230,3 +230,28 @@ element.
 
 Short spurs sticking out of corners on the live map. A bundler failure mode;
 belongs with route rendering polish.
+
+### C. One route drawn as two parallel lines
+
+Passio traces a route's outbound and return legs as separate geometry a few
+metres apart. Measured on the shipped feed:
+
+| route | self-pairs within 20m | median gap | doubled runs | longest |
+|---|---|---|---|---|
+| 3302 Daytime Express | 230 | 9.0m | 2 | 43 vertices |
+| 62487 Connector | 168 | 8.4m | 4 | 24 vertices |
+| 3469 Evening CW | 1 | 1.0m | 0 | 1 |
+
+Drawn faithfully that is one route showing as two parallel lines with a narrow
+spur where the passes meet -- the "nubs". A route is ONE line on a transit map
+whichever way the bus is pointing, so the two passes should be merged onto a
+centreline.
+
+**Attempted and reverted.** A `selfMerge` pass that moved both members of a
+close self-pair to their midpoint made the doubled stretch coincident (median
+gap 9 -> under 2 in a fixture) but left DUPLICATE vertices with opposing
+tangents. `turn()` reads a zero-length segment as 0 degrees while the offset
+output reads 180, so it tripped the "never folds back on itself" invariant at
+both sampling densities. Merging has to collapse the doubled stretch into a
+single traversal rather than leaving two coincident ones; that is the piece to
+get right next time.

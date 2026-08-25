@@ -51,7 +51,13 @@ class FakeMap {
   getLayer(id: string) { return this.layers.has(id) ? { id } : undefined; }
   addLayer(spec: { id: string }) { this.layers.add(spec.id); }
   removeLayer(id: string) { this.layers.delete(id); }
-  setPaintProperty() {}
+  /** Recorded, not discarded. Paint is where this component says almost
+   *  everything it says, and a mock that swallows it cannot catch a symbol
+   *  drawn at the wrong size. */
+  paint = new Map<string, unknown>();
+  setPaintProperty(layer: string, prop: string, value: unknown) {
+    this.paint.set(`${layer}.${prop}`, value);
+  }
   setFilter() {}
   setStyle() {}
   addControl() {}
@@ -378,5 +384,35 @@ describe("TransitMap walking overlay", () => {
         ] }} />);
     map.fire("load");
     expect(map.sources.get("itin-walk")).toBeUndefined();
+  });
+});
+
+describe("the ends of a ride", () => {
+  it("enlarges the real stops instead of drawing its own markers", () => {
+    // An earlier version added bespoke circles for the boarding and alighting
+    // stops, in their own radii and stroke widths, so the ends of a ride were
+    // a different symbol from every other stop beside them on the same line.
+    // The stop already on the map is the indicator.
+    render(
+      <TransitMap feed={feed} buses={buses} me={null} destination={null}
+        focus={null} selection={null} activeRouteIds={new Set(["A", "B"])}
+        overlay={{
+          walks: [],
+          rides: [{
+            routeId: "A", color: "#111",
+            path: [{ lat: 41.82, lng: -71.40 }, { lat: 41.83, lng: -71.41 }],
+            boardStopId: "s1", alightStopId: "s2",
+          }],
+        }} />);
+    map.fire("load");
+
+    expect(map.layers.has("itin-end")).toBe(false);
+    expect(map.layers.has("itin-end-dot")).toBe(false);
+    expect(map.sources.get("itin-ends")).toBeUndefined();
+
+    // The stop layer's own radius expression is what marks them.
+    const radius = JSON.stringify(map.paint.get("stops.circle-radius") ?? "");
+    expect(radius).toContain("s1");
+    expect(radius).toContain("s2");
   });
 });
