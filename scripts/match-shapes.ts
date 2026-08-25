@@ -29,8 +29,9 @@ import { haversineMeters } from "../src/routing/walk";
 import type { LatLng } from "../src/data/types";
 
 const OSRM = "https://routing.openstreetmap.de/routed-car";
-/** The public instance refuses more than a handful of trace points at once:
- *  25 is rejected as TooBig, 10 is accepted. */
+/** The public instance refuses more than a handful of trace points at once.
+ *  Measured: 10 is accepted, 12 and above come back TooBig -- and a rejection
+ *  takes ~9.8s to arrive, which is the throttle talking. */
 const CHUNK = 10;
 /** Points carried into the next chunk so the seams join up. */
 const OVERLAP = 2;
@@ -43,6 +44,10 @@ const MIN_CONFIDENCE = 0.3;
 const MAX_MOVE_M = 45;
 /** Be a good guest: this is someone else's server. */
 const PAUSE_MS = 350;
+/** Give up on a request rather than hanging on it. A throttled response can
+ *  take ten seconds or never arrive; without this the whole run stalls with
+ *  nothing printed, which is exactly what it did the first time. */
+const TIMEOUT_MS = 15_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -51,7 +56,16 @@ async function matchChunk(pts: LatLng[]): Promise<LatLng[] | null> {
   const radiuses = pts.map(() => RADIUS).join(";");
   const url = `${OSRM}/match/v1/driving/${coords}`
     + `?geometries=geojson&overview=full&tidy=true&radiuses=${radiuses}`;
-  const res = await fetch(url);
+  const ctl = new AbortController();
+  const bell = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, { signal: ctl.signal });
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(bell);
+  }
   if (!res.ok) return null;
   const data = await res.json() as {
     code?: string;
@@ -97,9 +111,11 @@ async function main() {
       const got = await matchChunk(slice);
       if (got && got.length) appendUnique(matched, got);
       else { failedChunks++; appendUnique(matched, slice); }   // keep the source here
+      process.stdout.write(got ? "." : "x");
       await sleep(PAUSE_MS);
     }
 
+    process.stdout.write("\n");
     const dev = deviation(route.shape, matched);
     const median = dev[Math.floor(dev.length / 2)] ?? 0;
     const max = dev[dev.length - 1] ?? 0;

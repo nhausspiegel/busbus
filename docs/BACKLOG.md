@@ -352,3 +352,62 @@ few metres it fixes.
 
 - [ ] Planning is a boolean guarded by a `cancelled` flag rather than a state
       machine; a cancelled run skips clearing it. That is how the spinner stuck.
+
+---
+
+## Street-matching the shapes: TRIED, MEASURED WORSE, NOT SHIPPED
+
+The idea was sound and is worth recording properly, because it is the obvious
+thing to reach for and the numbers say no.
+
+`scripts/match-shapes.ts` snaps every route's shape onto the road network via
+FOSSGIS OSRM's `/match`, at build time. It works, and it is accurate:
+
+| route | src pts | matched pts | chunks | failed | moved median | max |
+|---|---|---|---|---|---|---|
+| 62487 | 163 | 567 | 21 | 0 | 0.4m | 7.6m |
+| 3302 | 177 | 235 | 22 | 0 | 0.0m | 6.3m |
+| 3470 | 31 | 217 | 4 | 0 | 3.4m | 7.0m |
+| 3469 | 24 | 199 | 3 | 0 | 3.6m | 7.1m |
+
+4 kept, 0 rejected. Confidence 0.94-0.98. The public instance takes at most 10
+trace points per request (12 is refused as TooBig) and a rejection takes ~9.8s,
+so it runs in overlapping chunks with a deadline.
+
+**And it makes the drawing worse**, measured on the same metric both ways --
+turns the bundler ADDS that the source does not have, matched by nearest source
+point because `applyLanes` trims vertices and the indices do not align:
+
+| shapes | added turns >20 deg | worst | lane-index changes |
+|---|---|---|---|
+| raw Passio | 70 / 2005 pts | +176 deg | 56 |
+| street-matched | **217 / 2589 pts** | +180 deg | **120** |
+
+Matched geometry is far denser (567 points against 163) and follows every
+kerb, so there are many more short segments for the offsetting to fold. The
+loader was written and then reverted; the script and this table are kept so
+nobody spends another afternoon discovering it.
+
+## The real diagnosis, written down
+
+The bundler asks "are these two lines the same street?" independently at every
+10m sample, from traces that are 7-9m apart and weaving. That question has no
+stable answer, so every mechanism layered on top -- smoothing, dilation, a
+median despeckle, a quantised sort key, ordering by a run median -- is an
+approximation of an approximation. Each was tried and each moved the metric by
+almost nothing:
+
+| attempt | added turns |
+|---|---|
+| baseline | 70 |
+| + median despeckle of the displacement | 70 |
+| + ordering on a locally smoothed offset | 70 |
+
+All reverted. The fix is not another filter: it is to make the question exact.
+Snap coincident geometry to ONE shared polyline first, so two routes on a
+street have identical vertices rather than nearly-identical ones, then
+membership is equality and there is nothing left to wobble. Measured, a
+clustering radius of 8m would move points a median of 1.9-3.3m (max 4.9m) and
+covers 793 of 1883 sampled points; 12m covers 1006 and moves them 2.5-4.6m.
+That is the next thing to build, and it should replace the per-point
+membership search rather than sit in front of it.

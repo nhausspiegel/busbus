@@ -87,9 +87,21 @@ f: StaticFeed, activeRouteIds: Set<string>, drawn: Map<string, LatLng[]>,
       const d = haversineMeters(u, v);
       if (d > far) { far = d; a = u; z = v; }
     }
-    // All the beads coincide -- below z13 the lane gap is zero -- so there is
-    // no gap for a tick to span.
-    if (far < 0.5) continue;
+    // When the beads coincide there is no gap to span, but the bar is still
+    // what gives an interchange its white background -- skipping it left the
+    // stop as a bare dot at exactly those zooms. Emit a stub instead: with a
+    // round cap it draws as the circle the bar degenerates into.
+    if (far < 0.5) {
+      const eps = 0.3 / 111_320;
+      ticks.push({
+        type: "Feature" as const,
+        properties: { id: st.stopIds[0]!, routes: `|${st.routeIds.join("|")}|` },
+        geometry: { type: "LineString" as const,
+                    coordinates: [[centre.lng, centre.lat - eps],
+                                  [centre.lng, centre.lat + eps]] },
+      });
+      continue;
+    }
     const ax = z.lng - a.lng, ay = z.lat - a.lat;
     const along = [...pts].sort((u, v) =>
       ((u.lng - a.lng) * ax + (u.lat - a.lat) * ay) - ((v.lng - a.lng) * ax + (v.lat - a.lat) * ay));

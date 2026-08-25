@@ -567,14 +567,11 @@ export function TransitMap({
           layout: { "line-cap": "round" },
           paint: tickPaint(symbolState(), false) });
         // The lone-stop case of that same lozenge.
-        // EVERY bead gets its white lozenge, interchanges included. This was
-        // filtered to lone stops, on the assumption that an interchange takes
-        // its background from the bar joining its beads -- but that bar is not
-        // emitted when the beads coincide, which is what happens at any zoom
-        // where the lane gap collapses. An interchange then had no background
-        // at all and rendered as a bare dot while every stop beside it wore a
-        // white circle.
+        // Lone stops only. An interchange takes its background from the bar
+        // joining its beads, so giving each bead its own circle as well turned
+        // every interchange into a cluster of overlapping circles.
         m.addLayer({ id: "stops-base", type: "circle", source: "stops", minzoom: 13,
+          filter: ["!", ["get", "interchange"]],
           paint: stopBasePaint(symbolState()) });
         m.addLayer({ id: "stops", type: "circle", source: "stops", minzoom: 13,
           paint: stopPaint(symbolState()) });
