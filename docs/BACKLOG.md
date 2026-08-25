@@ -411,3 +411,57 @@ clustering radius of 8m would move points a median of 1.9-3.3m (max 4.9m) and
 covers 793 of 1883 sampled points; 12m covers 1006 and moves them 2.5-4.6m.
 That is the next thing to build, and it should replace the per-point
 membership search rather than sit in front of it.
+
+---
+
+## The rewrite that actually fixed the lines (2026-08-25)
+
+Everything above about nubs, acute wedges, kinks and stops swapping lines was
+ONE defect, and no amount of filtering touched it. The old renderer asked "are
+these two lines the same street?" independently at every 10m sample, from
+traces Passio draws 7-9m apart that weave around each other. That question has
+no stable answer, so the lane assignment oscillated -- route 3302 changed lane
+eighteen times around one loop, roughly every 30m -- and every flip stepped the
+line sideways by a full lane gap.
+
+Four attempts to damp it (median despeckle, quantised sort key, ordering by a
+per-run median, ordering on a locally smoothed offset) each moved the defect
+count by nothing. They were approximations of an approximation.
+
+**What replaced it, in three parts:**
+
+1. **The shapes are matched to the streets** (`scripts/match-shapes.ts`, run at
+   build time, output committed). Passio's traces wander and two routes down
+   one street sit at different angles; matched, both land on the same OSM way.
+   4/4 routes kept, 0 rejected, moved 0.0-3.6m median. The Connector's average
+   wiggle drops from 15.6 to 9.0 degrees.
+
+2. **Corridors are found by IDENTITY, not proximity** (`src/render/graph.ts`).
+   Because matched routes share the same OSM way they share the same vertices
+   exactly -- 3469 and 3470 share 120 to a tenth of a metre -- so membership is
+   a map lookup. There is no radius to tune. `shareCorridors`, written earlier
+   the same day to cluster nearby points, was deleted: matching made it
+   unnecessary.
+
+3. **The offset is one number per EDGE.** An edge is a stretch carrying a fixed
+   set of routes; each route is ranked once for the whole stretch. A per-vertex
+   decision cannot wobble because there is no per-vertex decision. Edges
+   shorter than 6 samples are contracted, because a membership change lasting
+   20m is a gap in the pairing rather than a change of street: that takes the
+   network from 138 edges with a median length of 40m to 50 edges at 190m, and
+   sideways moves from 126 to 40.
+
+**Two details that mattered more than they look:**
+
+- Lanes are NOT centred on the corridor. `rank - (n-1)/2` moves every incumbent
+  sideways when another route joins (-0.5/+0.5 becomes -1/0/+1), and that step
+  is the jog in a straight street. Anchoring at rank 0 means a joiner slots in
+  beside the others and nobody else moves.
+- The gap is capped in METRES as well as pixels. Five pixels at z13 is 71m of
+  ground, and a lane wider than the street folds the line around every corner:
+  15 reversals at z13 with a worst of 176 degrees, against 0 at z12 and z17.5.
+  Capped at 11m: 2 reversals, worst 50.
+
+**Measured after, across the whole network:** sharp turns over 30 degrees are
+0 at z12, 2 at z13, 2 at z14.6, 2 at z16, 0 at z17.5, worst 53 degrees --
+against a map that previously showed visible spurs and wedges at every zoom.
