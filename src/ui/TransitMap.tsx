@@ -12,8 +12,7 @@ import { buildEdges, laneOffsets, drawLanes, type Edge } from "../render/graph";
 import { pointAlongShape, snapToShape, sliceShape } from "../routing/shape";
 import { haversineMeters } from "../routing/walk";
 import { stations } from "../routing/routeDetail";
-import { laneProfiles, applyLanes, DEFAULT_OPTIONS, type LaneProfile, type Pt }
-  from "../render/bundle";
+import { DEFAULT_OPTIONS, type Pt } from "../render/bundle";
 
 // MapLibre's worker is a separate ES module that imports a sibling. Rollup
 // cannot see it (the path is built from a runtime string) and ?url would copy
@@ -97,11 +96,6 @@ const MAX_LANE_GAP_M = 11;
 /** Same reasoning for the corner radius: a radius larger than the blocks it is
  *  rounding eats the shape of the route. */
 const MAX_CORNER_RADIUS_M = 22;
-/** Draw with the corridor graph rather than the per-vertex bundler.
- *  `?lanes=old` falls back, so the two can be compared on the same screen. */
-const USE_GRAPH = typeof window !== "undefined"
-  && new URLSearchParams(window.location.search).get("lanes") !== "old";
-
 /** Resample a polyline every `step` metres, keeping the original vertices. */
 function densify(pts: Pt[], step: number): Pt[] {
   const out: Pt[] = [pts[0]!];
@@ -232,7 +226,6 @@ export function TransitMap({
   placeCb.current = onPlaceClick;
   /** Bundle analysis, which does not depend on the scale. Rebuilt only when
    *  the set of drawn routes changes. */
-  const profilesRef = useRef<LaneProfile[]>([]);
   /** The corridor graph, when it is the one being drawn. */
   const graphRef = useRef<{ ids: string[]; paths: Pt[][]; edges?: Edge[] }>(
     { ids: [], paths: [] });
@@ -305,8 +298,6 @@ export function TransitMap({
    * the spike that made five earlier attempts at this unusable.
    */
   function drawRoutes(m: maplibregl.Map, zoom: number) {
-    const profiles = profilesRef.current;
-    if (profiles.length === 0) return;
     // Below z13 the whole network is a couple of hundred pixels wide and the
     // strokes are 2px; a lane cannot be read, and 5px of ground at that scale
     // is nearly 200m of displacement.
@@ -326,14 +317,10 @@ export function TransitMap({
 
     const drawn = new Map<string, LatLng[]>();
     const g = graphRef.current;
-    if (USE_GRAPH && g.edges && g.paths.length) {
-      const lanes = drawLanes(g.paths, laneOffsets(g.paths, g.edges, MIN_EDGE_VERTS),
-                              minGap, radius);
-      g.ids.forEach((id, i) => drawn.set(id, lanes[i]!.map(fromPlane)));
-    } else {
-      for (const p of profiles)
-        drawn.set(p.id, applyLanes(p, minGap, radius).map(fromPlane));
-    }
+    if (!g.edges || g.paths.length === 0) return;
+    const lanes = drawLanes(g.paths, laneOffsets(g.paths, g.edges, MIN_EDGE_VERTS),
+                            minGap, radius);
+    g.ids.forEach((id, i) => drawn.set(id, lanes[i]!.map(fromPlane)));
     drawnRef.current = drawn;
     // Same geometry, same moment: the stops are placed from `drawn` right here
     // rather than once at startup, so they cannot drift off the line.
@@ -564,8 +551,6 @@ export function TransitMap({
       (r) => activeRouteIds.has(r.id) && r.shape.length >= 2);
     // Which routes share which stretches of street: the costly half, and it
     // does not depend on the zoom, so it is kept out of the per-zoom redraw.
-    profilesRef.current = laneProfiles(
-      active.map((r) => ({ id: r.id, points: r.shape.map(toPlane) })), DEFAULT_OPTIONS);
     colorRef.current = new Map(active.map((r) => [r.id, r.color]));
 
     // The corridor graph: routes that share a street are put on identical
@@ -667,7 +652,7 @@ export function TransitMap({
   // Declared BEFORE the bus effect so drawnRef is fresh when the markers move.
   useEffect(() => {
     const m = map.current;
-    if (!m || !ready || !m.getSource("routes") || profilesRef.current.length === 0) return;
+    if (!m || !ready || !m.getSource("routes") || graphRef.current.paths.length === 0) return;
     try { drawRoutes(m, zoom); } catch { /* style churn; the next render redraws */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoom, ready]);

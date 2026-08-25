@@ -89,17 +89,30 @@ export function buildEdges(paths: Pt[][], minEdgeVerts = 1): Edge[] {
       while (end + 1 < path.length && membersAt[end + 1]!.join(",") === sig) end++;
 
       const members = membersAt[start]!;
-      // Rank on which way each member runs along THIS edge, decided once from
-      // the middle of the stretch where the geometry is least ambiguous.
+      // Rank in a frame BOTH lines share, decided once from the middle of the
+      // stretch where the geometry is least ambiguous.
+      //
+      // Measuring "which way does this member face" relative to the line being
+      // ranked gives self a score of +1 every time, so every member sorts last
+      // and every member gets the same rank. On two directions of one loop
+      // that put both rings a full lane out along their own normals, which
+      // point opposite ways -- so they separated by TWICE the gap, 33.9 at a
+      // corner instead of 12. The canonical direction is the lowest-numbered
+      // member's, which every line on the edge can agree on.
       const mid = (start + end) >> 1;
-      const ours = tangentAt(path, mid);
+      const here = keyOf(path[mid]!);
+      const tangentOf = (m: number): Pt | null => {
+        if (m === l) return tangentAt(path, mid);
+        const j = paths[m]!.findIndex((q) => keyOf(q) === here);
+        return j < 0 ? null : tangentAt(paths[m]!, j);
+      };
+      const canonical = tangentOf(members[0]!) ?? tangentAt(path, mid);
       const facing = members.map((m) => {
-        if (m === l) return { m, with: 1 };
-        // The same shared coordinate on the other route.
-        const j = paths[m]!.findIndex((q) => keyOf(q) === keyOf(path[mid]!));
-        if (j < 0) return { m, with: 1 };
-        const t = tangentAt(paths[m]!, j);
-        return { m, with: t.x * ours.x + t.y * ours.y >= 0 ? 1 : -1 };
+        const t = tangentOf(m);
+        return {
+          m,
+          with: !t ? 1 : t.x * canonical.x + t.y * canonical.y >= 0 ? 1 : -1,
+        };
       });
       facing.sort((a, b) => a.with - b.with || a.m - b.m);
 
@@ -207,6 +220,39 @@ export function laneOffsets(
 }
 
 /**
+ * Drop vertices where the offset has folded the line back over itself.
+ *
+ * Travel direction comes from the vertex normal, so a vertex that does not
+ * advance along the line is one the miter has pushed past its neighbour.
+ */
+function trimFolds(pts: Pt[], normals: Pt[], closed: boolean): Pt[] {
+  if (pts.length < 3) return pts;
+  const out: Pt[] = [pts[0]!];
+  for (let i = 1; i < pts.length; i++) {
+    const n = normals[i]!;
+    const t = { x: -n.y, y: n.x };
+    const last = out[out.length - 1]!;
+    const step = { x: pts[i]!.x - last.x, y: pts[i]!.y - last.y };
+    if (step.x * t.x + step.y * t.y <= 0) continue;
+    out.push(pts[i]!);
+  }
+  if (out.length < 2) return pts;
+  // A loop must still close, and the closing segment can fold like any other.
+  if (closed) {
+    const n0 = normals[0]!, t0 = { x: -n0.y, y: n0.x };
+    while (out.length > 2) {
+      const last = out[out.length - 1]!;
+      const step = { x: out[0]!.x - last.x, y: out[0]!.y - last.y };
+      if (step.x * t0.x + step.y * t0.y > 0) break;
+      out.pop();
+    }
+    const a = out[0]!, b = out[out.length - 1]!;
+    if (Math.hypot(b.x - a.x, b.y - a.y) > 1e-9) out.push({ x: a.x, y: a.y });
+  }
+  return out;
+}
+
+/**
  * The drawn geometry for every route, offset by its lane.
  *
  * Deliberately small: the offset is already decided per edge, so all that is
@@ -229,6 +275,7 @@ export function drawLanes(
       const d = Math.hypot(dx, dy) || 1;
       segN.push({ x: dy / d, y: -dx / d });
     }
+    const normals: Pt[] = [];
     const moved = path.map((p, i) => {
       const prev = segN[closed ? (i - 1 + segN.length) % segN.length : Math.max(0, i - 1)]!;
       const next = segN[closed ? i % segN.length : Math.min(i, segN.length - 1)]!;
@@ -238,9 +285,14 @@ export function drawLanes(
       // A corner needs more travel to hold a parallel: 1/cos(half-angle),
       // capped so a hairpin does not throw a spike.
       const miter = Math.min(2, m < 1e-6 ? 1 : 1 / m);
+      normals.push(n);
       const d = (offsets[l]![i] ?? 0) * gapM * miter;
       return { x: p.x + n.x * d, y: p.y + n.y * d };
     });
-    return roundCorners(moved, cornerRadiusM, closed);
+    // A miter slides a corner ALONG the line as well as across it. Once that
+    // slide passes the neighbouring vertex the line reverses -- a full 180
+    // degrees -- and no choice of miter avoids it, because the corner is
+    // simply tighter than the offset. The reversed vertices are dropped.
+    return roundCorners(trimFolds(moved, normals, closed), cornerRadiusM, closed);
   });
 }
