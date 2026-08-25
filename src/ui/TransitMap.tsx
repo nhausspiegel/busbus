@@ -1,5 +1,5 @@
 /** The map layer: route lines, stops, live buses, and the rider's own dot. */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { StaticFeed, LatLng } from "../data/types";
@@ -35,12 +35,35 @@ const SELECT_MS = 240;
 /** Dot sizing with the selected stop `grow` of the way to its full size.
  *  One place, so the tween and the selection effect cannot disagree. */
 function selectedRadius(
-  id: string | null, grow: number,
+  id: string | null, grow: number, ends: string[] = [],
 ): maplibregl.ExpressionSpecification {
   const at = (base: number, big: number) => base + (big - base) * grow;
+  // The boarding and alighting stops are drawn LARGER, not drawn again. An
+  // earlier version added its own circles for them, in their own sizes and
+  // stroke widths, so the ends of a ride were a different symbol from every
+  // other stop sitting beside them on the same line. The stop on the map is
+  // the indicator.
+  const isEnd: maplibregl.ExpressionSpecification =
+    ["in", ["get", "id"], ["literal", ends]];
   return ["interpolate", ["linear"], ["zoom"],
-    13, ["case", ["==", ["get", "id"], id ?? ""], at(2.5, 4), 2.5],
-    16, ["case", ["==", ["get", "id"], id ?? ""], at(4.5, 6.5), 4.5]];
+    13, ["case", ["==", ["get", "id"], id ?? ""], at(2.5, 4), isEnd, 4, 2.5],
+    16, ["case", ["==", ["get", "id"], id ?? ""], at(4.5, 6.5), isEnd, 6.5, 4.5]];
+}
+
+/** The stops a rider gets on and off at, across every ride in the trip, named
+ *  by the id the BEAD carries.
+ *
+ *  A ride names a raw stop_id, and Passio splits one place into a per-direction
+ *  pair -- the bead keeps only the first member's id. Testing the raw id
+ *  against the beads would silently miss every boarding point that happens to
+ *  be the second half of its station, which is about half of them. */
+function rideEnds(o: Overlay | null, rep: Map<string, string>): string[] {
+  if (!o) return [];
+  const out: string[] = [];
+  for (const r of o.rides)
+    for (const id of [r.boardStopId, r.alightStopId])
+      if (id) out.push(rep.get(id) ?? id);
+  return out;
 }
 
 /** How long a bus takes to reach a new fix.
@@ -85,10 +108,8 @@ const lineFeature = (
   geometry: { type: "LineString", coordinates: c.map((p) => [p.lng, p.lat]) },
 });
 
-const OVERLAY_SOURCES = ["itin-walk", "itin-ride", "itin-ends"] as const;
-const OVERLAY_LAYERS =
-  ["itin-walk", "itin-ride-case", "itin-ride-line",
-   "itin-end", "itin-end-dot"] as const;
+const OVERLAY_SOURCES = ["itin-walk", "itin-ride"] as const;
+const OVERLAY_LAYERS = ["itin-walk", "itin-ride-case", "itin-ride-line"] as const;
 
 /** Watch the system colour scheme so the map can follow it. */
 function usePrefersDark(): boolean {
@@ -184,6 +205,13 @@ export function TransitMap({
   const growRef = useRef(0);
   /** The stop being shrunk back, so it can be animated after deselection. */
   const lastFocus = useRef<string | null>(null);
+  /** Which bead id stands for each member stop of a station. */
+  const stationRep = useMemo(() => {
+    const rep = new Map<string, string>();
+    if (feed) for (const st of stations(feed, activeRouteIds))
+      for (const id of st.stopIds) rep.set(id, st.stopIds[0]!);
+    return rep;
+  }, [feed, activeRouteIds]);
   const overlayRef = useRef<Overlay | null>(null);
   overlayRef.current = overlay ?? null;
   // A counter, not a boolean: setStyle falls back to a full reload when its
@@ -891,68 +919,6 @@ export function TransitMap({
           paint: { "line-color": darkRef.current ? "#F0E9E3" : "#241C17",
                    "line-width": 4, "line-dasharray": [0.4, 1.8] } });
       }
-      // The ends of the ride. Without these the rider has to work out where
-      // to get on and off by comparing the coloured line against the stop
-      // beads underneath it, which is the bulk of why this view read as messy.
-      // Drawn on TOP of the beads, and only for the boarding and alighting
-      // stops -- every intermediate stop stays visible underneath.
-      const endPts: GeoJSON.Feature[] = [];
-      for (const r of overlay.rides)
-        for (const [id, role] of [[r.boardStopId, "board"], [r.alightStopId, "alight"]] as const) {
-          const stop = id ? feed?.stops.get(id) : undefined;
-          if (!stop) continue;
-          const line = drawnRef.current.get(r.routeId);
-          const at = line && line.length > 1
-            ? snapToShape({ lat: stop.lat, lng: stop.lng }, line)
-            : { lat: stop.lat, lng: stop.lng };
-          endPts.push({
-            type: "Feature",
-            properties: { role, color: r.color },
-            geometry: { type: "Point", coordinates: [at.lng, at.lat] },
-          });
-        }
-      if (endPts.length) {
-        addSource("itin-ends", endPts);
-        m.addLayer({ id: "itin-end", type: "circle", source: "itin-ends",
-          paint: {
-            "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 6, 16, 9],
-            "circle-color": darkRef.current ? "#F0E9E3" : "#FFFFFF",
-            "circle-stroke-color": darkRef.current ? "#0B0908" : "#241C17",
-            "circle-stroke-width": 2,
-          } });
-        m.addLayer({ id: "itin-end-dot", type: "circle", source: "itin-ends",
-          paint: {
-            "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 3, 16, 4.5],
-            "circle-color": ["get", "color"],
-          } });
-      }
-    } catch { /* style churn; the next render redraws */ }
-
-  }, [overlay, ready, feed]);
-
-  // Swap the basemap when the system theme flips. setStyle wipes our layers,
-  // so mark the map not-ready and let the drawing effects rebuild on load.
-  useEffect(() => {
-    const m = map.current;
-    if (!m || !ready) return;
-    m.setStyle(basemapStyle(dark));
-    m.once("styledata", () => setReady((n) => n + 1));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dark]);
-
-  // Re-tint route casings and stop dots after a theme swap.
-  useEffect(() => {
-    const m = map.current;
-    if (!m || !ready || !m.isStyleLoaded() || !feed) return;
-    const ground = dark ? "#15110F" : "#FFFFFF";
-    try {
-      if (m.getLayer("routes-case")) m.setPaintProperty("routes-case", "line-color", ground);
-      if (m.getLayer("stops")) {
-        m.setPaintProperty("stops", "circle-color", ground);
-        // NOT circle-stroke-color: that is per feature now, carrying each
-        // stop's own route colour, and overwriting it would erase the coding.
-      }
-      if (m.getLayer("itin-ride-case")) m.setPaintProperty("itin-ride-case", "line-color", ground);
       if (m.getLayer("itin-walk")) m.setPaintProperty("itin-walk", "line-color", dark ? "#F0E9E3" : "#241C17");
     } catch { /* style churn */ }
   }, [dark, ready, feed]);
@@ -1033,7 +999,8 @@ export function TransitMap({
         // lone stop's at 2.5 while their white shapes matched at 14.2px.
         // Sized through `growRef`, which a tween walks from 0 to 1. Setting the
         // final radius here directly is what made selecting a stop snap.
-        m.setPaintProperty("stops", "circle-radius", selectedRadius(stopFocus, growRef.current));
+        m.setPaintProperty("stops", "circle-radius",
+          selectedRadius(stopFocus, growRef.current, rideEnds(overlay ?? null, stationRep)));
       }
       for (const id of ["stops-base"]) {
         if (!m.getLayer(id)) continue;
@@ -1106,7 +1073,8 @@ export function TransitMap({
       try {
         if (m.getLayer("stops"))
           m.setPaintProperty("stops", "circle-radius",
-            selectedRadius(target ?? lastFocus.current, growRef.current));
+            selectedRadius(target ?? lastFocus.current, growRef.current,
+                           rideEnds(overlayRef.current, stationRep)));
       } catch { /* style churn; the next selection re-applies */ }
       if (k < 1) raf = requestAnimationFrame(step);
       else if (!target) lastFocus.current = null;
