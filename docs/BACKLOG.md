@@ -465,3 +465,16 @@ count by nothing. They were approximations of an approximation.
 **Measured after, across the whole network:** sharp turns over 30 degrees are
 0 at z12, 2 at z13, 2 at z14.6, 2 at z16, 0 at z17.5, worst 53 degrees --
 against a map that previously showed visible spurs and wedges at every zoom.
+
+### The old bundler is gone
+
+`src/render/bundle.ts` (546 lines of searching, sorting, smoothing, dilating
+and despeckling) is now `src/render/geometry.ts` (82 lines: the point types and
+corner rounding). Everything else propped up a per-vertex answer to a question
+that should never have been asked per vertex. `test/bundle.test.ts` and
+`scripts/bundle-knobs.ts` went with it; the five reference cases live on in
+`test/graphCases.test.ts` and `scripts/render-cases.ts`, pointed at the
+renderer that actually draws the map.
+
+If the corner-radius knob sheet is wanted again, it was `bundle-knobs.ts` in
+the history and would now sweep `drawLanes`'s `cornerRadiusM`.

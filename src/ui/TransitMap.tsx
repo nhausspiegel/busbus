@@ -12,7 +12,7 @@ import { buildEdges, laneOffsets, drawLanes, type Edge } from "../render/graph";
 import { pointAlongShape, snapToShape, sliceShape } from "../routing/shape";
 import { haversineMeters } from "../routing/walk";
 import { stations } from "../routing/routeDetail";
-import { DEFAULT_OPTIONS, type Pt } from "../render/bundle";
+import type { Pt } from "../render/geometry";
 
 // MapLibre's worker is a separate ES module that imports a sibling. Rollup
 // cannot see it (the path is built from a runtime string) and ?url would copy
@@ -90,6 +90,10 @@ const LANE_GAP_PX = 5;
  *  length of 40m to 50 edges with a median of 190m, and the number of sideways
  *  moves from 126 to 40. */
 const MIN_EDGE_VERTS = 6;
+/** How finely a route is resampled before the corridor graph is built. Ten
+ *  metres is fine enough to place a corner and coarse enough that two routes
+ *  sharing a street land on the same samples. */
+const SAMPLE_STEP_M = 10;
 /** Widest a lane gap may get on the ground. Beyond about a street's width the
  *  offset stops reading as a lane and starts folding lines round corners. */
 const MAX_LANE_GAP_M = 11;
@@ -285,7 +289,7 @@ export function TransitMap({
   /**
    * Draw each route, fanned apart only where it genuinely shares a street.
    *
-   * The lane geometry comes from src/render/bundle.ts, which enforces a
+   * The lane geometry comes from src/render/geometry.ts, which enforces a
    * MINIMUM separation rather than an exact one: a route running alone does
    * not move at all, and two routes already further apart than the minimum --
    * genuinely different parallel streets -- are left where they are. The
@@ -568,7 +572,7 @@ export function TransitMap({
     // nothing to wobble.
     graphRef.current = {
       ids: active.map((r) => r.id),
-      paths: active.map((r) => densify(r.shape.map(toPlane), DEFAULT_OPTIONS.stepM)),
+      paths: active.map((r) => densify(r.shape.map(toPlane), SAMPLE_STEP_M)),
     };
     graphRef.current.edges = buildEdges(graphRef.current.paths, MIN_EDGE_VERTS);
 

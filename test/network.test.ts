@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { parseStaticFeed } from "../src/data/gtfs";
-import type { Pt } from "../src/render/bundle";
+import type { Pt } from "../src/render/geometry";
 import { buildEdges, laneOffsets, drawLanes } from "../src/render/graph";
 import { stationFeatures, rideFeatures } from "../src/render/network";
 import { haversineMeters } from "../src/routing/walk";

@@ -24,7 +24,7 @@
  * put routes that share a street on identical coordinates, so "same corridor"
  * is a map lookup rather than a threshold nobody can tune.
  */
-import { roundCorners, type Pt } from "./bundle";
+import { roundCorners, type Pt } from "./geometry";
 
 /** A stretch of one route carrying a fixed set of routes. */
 export interface Edge {

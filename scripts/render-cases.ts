@@ -11,10 +11,13 @@
  *   npx tsx scripts/bundle-cases.ts       -> docs/bundle-cases.svg
  */
 import { writeFileSync, mkdirSync } from "node:fs";
-import { laneProfiles, applyLanes, DEFAULT_OPTIONS, type Pt } from "../src/render/bundle";
-import { CASES } from "../test/fixtures/bundleCases";
+import type { Pt } from "../src/render/geometry";
+import { buildEdges, laneOffsets, drawLanes } from "../src/render/graph";
+import { CASES } from "../test/fixtures/renderCases";
 
-const OPTS = DEFAULT_OPTIONS;
+/** Mirrors MIN_EDGE_VERTS in TransitMap. */
+const MIN_EDGE_VERTS = 6;
+
 const COLOURS = ["#C8102E", "#1F6FEB", "#2E7D32", "#B15B2E"];
 
 const PANEL_W = 420, PANEL_H = 230, PAD = 16, HEADER = 52;
@@ -38,7 +41,12 @@ function closest(a: Pt[], b: Pt[]): number {
 
 const panels = CASES.map((c, idx) => {
   const CORNER_RADIUS = 14;
-  const drawn = laneProfiles(c.lines, OPTS).map((p) => ({ id: p.id, pts: applyLanes(p, c.minGap, CORNER_RADIUS) }));
+  // Through the live renderer: corridors by identity, one offset per edge.
+  const paths = c.lines.map((l) => l.points);
+  const edges = buildEdges(paths, MIN_EDGE_VERTS);
+  const lanes = drawLanes(paths, laneOffsets(paths, edges, MIN_EDGE_VERTS),
+                          c.minGap, CORNER_RADIUS);
+  const drawn = c.lines.map((l, i) => ({ id: l.id, pts: lanes[i]! }));
 
   // Where the lines actually run together, how far apart did they end up?
   let measured = Infinity;
