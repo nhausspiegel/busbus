@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildEdges, laneOffsets, drawLanes } from "../src/render/graph";
-import type { Pt } from "../src/render/bundle";
+import type { Pt } from "../src/render/geometry";
 
 /**
  * The corridor graph, checked on the behaviours that were visibly broken.

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { CASES } from "./fixtures/bundleCases";
+import { CASES } from "./fixtures/renderCases";
 import { buildEdges, laneOffsets, drawLanes } from "../src/render/graph";
-import type { Pt } from "../src/render/bundle";
+import type { Pt } from "../src/render/geometry";
 
 /**
  * The five reference cases, run against the renderer that is actually live.

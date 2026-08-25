@@ -6,7 +6,7 @@ import type { LatLng, StaticFeed } from "../src/data/types";
 /**
  * A MapLibre stand-in, so a test can see what the component actually draws.
  *
- * The bundling in src/render/bundle.ts moves route coordinates on purpose, so
+ * The bundling in src/render/geometry.ts moves route coordinates on purpose, so
  * these tests check the two things that must hold once it has: routes sharing
  * a street come out separated, and every bus sits on the line as DRAWN rather
  * than on the raw shape. Drawing one geometry while snapping to another is how
@@ -165,7 +165,7 @@ describe("TransitMap", () => {
   it("separates two routes that share a street", () => {
     // A and B are the same street traced twice, in opposite directions. Drawn
     // straight from Passio's coordinates they land on top of each other and
-    // read as one line; src/render/bundle.ts pushes them apart by a minimum
+    // read as one line; src/render/geometry.ts pushes them apart by a minimum
     // gap measured in screen pixels.
     mount();
     map.fire("load");
