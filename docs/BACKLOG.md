@@ -255,3 +255,39 @@ output reads 180, so it tripped the "never folds back on itself" invariant at
 both sampling densities. Merging has to collapse the doubled stretch into a
 single traversal rather than leaving two coincident ones; that is the piece to
 get right next time.
+
+---
+
+## The pattern behind most of these
+
+Four defects this round were the same defect wearing different clothes: **two
+geometries for one thing.** Vehicles beside their own line; stops drifting off
+it; the itinerary's ride sliced from the raw Passio shape while the route under
+it came from the bundler; the ends of a ride drawn as their own symbol beside
+the stops already there. Each was found by eye, in production, one at a time.
+
+They shared a cause. The derivation lived inside a React effect and read the
+drawn geometry out of a ref, so every consumer re-derived positions on its own
+and nothing could be checked without a browser -- and a check that runs in the
+page can only ask what was DRAWN, never whether it was right. That is why
+`queryRenderedFeatures` twice reported a bar as present that was never visible,
+and why "the ride sits 0.00m off the route" said nothing about where it ended.
+
+`src/render/network.ts` now derives all of it from one `drawn` map passed in,
+and `test/network.test.ts` asserts the invariants against the real feed with no
+browser at all: every bead within 6m of the line it belongs to at three zooms,
+a ride within 0.5m of the route beneath it, a ride ending within 30m of its
+alight stop. Reverting each historical bug turns the matching test red -- 11.18m,
+5,898m, 0 ticks.
+
+**The same move is still available elsewhere:**
+
+1. **One definition per symbol.** Stop sizes are set by the layer AND re-set by
+   the selection effect; they diverged once already (an interchange dot at 3.5
+   against a lone stop's 2.5, with the white shapes agreeing at 14.2px).
+   `selectedRadius()` is the beginning of this; the fills, strokes and the tick
+   widths still have two homes.
+2. **Planning as a state machine.** `planning` is a boolean guarded by a
+   `cancelled` flag, and a cancelled run skips clearing it -- which is how the
+   spinner stuck forever behind a fresh `origin` object every geolocation
+   report. Explicit phases would make that unrepresentable.
