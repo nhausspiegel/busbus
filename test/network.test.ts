@@ -120,46 +120,49 @@ describe("a ride is the part of the route the rider is on", () => {
   });
 });
 
-describe("an interchange with no bar to sit on", () => {
-  // A bar is only emitted when a station's beads are far enough apart to span.
-  // Where a station's routes pass through the same point they are not, so no
-  // bar is drawn -- and how often that happens changes with zoom, because the
-  // lane gap does. The white background used to come only from that bar, so
-  // those stations rendered as bare dots at some zooms and correctly at
-  // others. Reported exactly that way.
-  const barless = (zoom: number) => {
+describe("an interchange always has a bar to sit on", () => {
+  // The bar is what gives an interchange its white background -- a lone stop
+  // has its own circle, an interchange does not, because one circle per bead
+  // turns the station into a cluster of overlapping circles. So when a
+  // station's beads coincided and no bar was emitted, the stop rendered as a
+  // bare dot. Reported as "isn't rendering correctly at some zoom levels",
+  // which is exactly right: whether the beads coincide depends on the lane
+  // gap, which depends on zoom.
+  const audit = (zoom: number) => {
     const drawn = drawAt(zoom);
     const { beads, ticks } = stationFeatures(feed, ACTIVE, drawn);
     const withBar = new Set(ticks.map((t) => String(t.properties?.["id"])));
-    const stations = new Set<string>();
-    const multi = new Map<string, number>();
+    const count = new Map<string, number>();
     for (const b of beads) {
       const id = String(b.properties?.["id"]);
-      stations.add(id);
-      multi.set(id, (multi.get(id) ?? 0) + 1);
+      count.set(id, (count.get(id) ?? 0) + 1);
     }
-    const interchanges = [...multi].filter(([, n]) => n > 1).map(([id]) => id);
+    const interchanges = [...count].filter(([, n]) => n > 1).map(([id]) => id);
     return {
       interchanges: interchanges.length,
       withoutBar: interchanges.filter((id) => !withBar.has(id)).length,
     };
   };
 
-  it("leaves some interchanges without one, and not the same ones at each zoom", () => {
-    const counts = [11, 13, 15, 17].map(barless);
-    expect(counts.every((c) => c.interchanges > 5)).toBe(true);
-    // At least one zoom leaves an interchange with no bar under it.
-    expect(counts.some((c) => c.withoutBar > 0)).toBe(true);
-    // And the count is not constant, which is the "at some zoom levels" part.
-    expect(new Set(counts.map((c) => c.withoutBar)).size).toBeGreaterThan(1);
-  });
+  for (const zoom of [11, 13, 15, 17]) {
+    it(`at zoom ${zoom}`, () => {
+      const { interchanges, withoutBar } = audit(zoom);
+      expect(interchanges).toBeGreaterThan(5);
+      expect(withoutBar).toBe(0);
+    });
+  }
 
-  it("is why the lozenge is per bead rather than per bar", () => {
-    // stops-base carries no interchange filter: every bead gets its own white
-    // circle, so a stop's background cannot depend on whether a bar happened
-    // to be drawn beneath it at this particular scale.
-    const { beads } = stationFeatures(feed, ACTIVE, drawAt(15));
-    expect(beads.every((b) => b.geometry.type === "Point")).toBe(true);
-    expect(beads.filter((b) => b.properties?.["interchange"]).length).toBeGreaterThan(5);
+  it("gives a lone stop no bar at all", () => {
+    // It has its own circle; a bar as well would be a second symbol.
+    const drawn = drawAt(15);
+    const { beads, ticks } = stationFeatures(feed, ACTIVE, drawn);
+    const count = new Map<string, number>();
+    for (const b of beads) {
+      const id = String(b.properties?.["id"]);
+      count.set(id, (count.get(id) ?? 0) + 1);
+    }
+    const lone = new Set([...count].filter(([, n]) => n === 1).map(([id]) => id));
+    expect(lone.size).toBeGreaterThan(5);
+    expect(ticks.filter((t) => lone.has(String(t.properties?.["id"])))).toEqual([]);
   });
 });
