@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { parseStaticFeed } from "../src/data/gtfs";
-import { laneProfiles, applyLanes, DEFAULT_OPTIONS, type Line, type Pt } from "../src/render/bundle";
+import type { Pt } from "../src/render/bundle";
+import { buildEdges, laneOffsets, drawLanes } from "../src/render/graph";
 import { stationFeatures, rideFeatures } from "../src/render/network";
 import { haversineMeters } from "../src/routing/walk";
 import type { LatLng } from "../src/data/types";
@@ -18,6 +19,8 @@ import type { LatLng } from "../src/data/types";
  */
 const feed = parseStaticFeed(new Uint8Array(readFileSync("public/gtfs/google_transit.zip")));
 const ACTIVE = new Set(["3302", "3469", "3470", "22427", "62487"]);
+/** Mirrors MIN_EDGE_VERTS in TransitMap. */
+const MIN_EDGE_VERTS = 6;
 
 // The same projection TransitMap uses: a flat plane about Brown's latitude.
 const M_PER_DEG_LAT = 111_320;
@@ -25,15 +28,37 @@ const mPerDegLng = M_PER_DEG_LAT * Math.cos((41.8265 * Math.PI) / 180);
 const toPlane = (p: LatLng): Pt => ({ x: p.lng * mPerDegLng, y: p.lat * M_PER_DEG_LAT });
 const fromPlane = (p: Pt): LatLng => ({ lng: p.x / mPerDegLng, lat: p.y / M_PER_DEG_LAT });
 
-/** The network as drawn at one zoom, exactly as the map builds it. */
+/** Resample every `step` metres, keeping the original vertices -- the same
+ *  step the map uses, so shared vertices stay shared. */
+function densify(pts: Pt[], step: number): Pt[] {
+  const out: Pt[] = [pts[0]!];
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1]!, b = pts[i]!;
+    const d = Math.hypot(b.x - a.x, b.y - a.y);
+    const n = Math.max(1, Math.round(d / step));
+    for (let k = 1; k <= n; k++)
+      out.push({ x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n });
+  }
+  return out;
+}
+
+/**
+ * The network as drawn at one zoom, through the SAME pipeline as the map.
+ *
+ * This used to run the old per-vertex bundler, which the app no longer uses --
+ * so it was asserting invariants about geometry nobody sees. It now builds the
+ * corridor graph exactly as TransitMap does.
+ */
 function drawAt(zoom: number): Map<string, LatLng[]> {
   const mpp = (156_543.03392 * Math.cos((41.8265 * Math.PI) / 180)) / 2 ** zoom;
-  const lines: Line[] = [...feed.routes.values()]
-    .filter((r) => ACTIVE.has(r.id) && r.shape.length >= 2)
-    .map((r) => ({ id: r.id, points: r.shape.map(toPlane) }));
+  const active = [...feed.routes.values()]
+    .filter((r) => ACTIVE.has(r.id) && r.shape.length >= 2);
+  const paths = active.map((r) => densify(r.shape.map(toPlane), 10));
+  const edges = buildEdges(paths, MIN_EDGE_VERTS);
+  const lanes = drawLanes(paths, laneOffsets(paths, edges, MIN_EDGE_VERTS),
+                          zoom < 13 ? 0 : 5 * mpp, 10 * mpp);
   const out = new Map<string, LatLng[]>();
-  for (const p of laneProfiles(lines, DEFAULT_OPTIONS))
-    out.set(p.id, applyLanes(p, zoom < 13 ? 0 : 5 * mpp, 10 * mpp).map(fromPlane));
+  active.forEach((r, i) => out.set(r.id, lanes[i]!.map(fromPlane)));
   return out;
 }
 
@@ -165,4 +190,34 @@ describe("an interchange always has a bar to sit on", () => {
     expect(lone.size).toBeGreaterThan(5);
     expect(ticks.filter((t) => lone.has(String(t.properties?.["id"])))).toEqual([]);
   });
+});
+
+describe("the bar sits under the beads it joins", () => {
+  // Placed at the station's own coordinate instead of at a bead, the stub bar
+  // for a coincident interchange landed several metres away -- a white blob in
+  // the middle of a block, nowhere near the dot it was meant to be under.
+  // Station coordinates are the average of their member stops and are NOT
+  // snapped to any drawn line; beads are.
+  for (const zoom of [13, 15, 17]) {
+    it(`at zoom ${zoom}`, () => {
+      const drawn = drawAt(zoom);
+      const { beads, ticks } = stationFeatures(feed, ACTIVE, drawn);
+      const beadsById = new Map<string, LatLng[]>();
+      for (const b of beads) {
+        if (b.geometry.type !== "Point") continue;
+        const [lng, lat] = b.geometry.coordinates as [number, number];
+        const id = String(b.properties?.["id"]);
+        beadsById.set(id, [...(beadsById.get(id) ?? []), { lat, lng }]);
+      }
+      let worst = 0;
+      for (const t of ticks) {
+        if (t.geometry.type !== "LineString") continue;
+        const mine = beadsById.get(String(t.properties?.["id"])) ?? [];
+        for (const [lng, lat] of t.geometry.coordinates as [number, number][])
+          worst = Math.max(worst, Math.min(...mine.map((b) => haversineMeters(b, { lat, lng }))));
+      }
+      // Every end of every bar is on one of that station's own beads.
+      expect(worst).toBeLessThan(1);
+    });
+  }
 });
