@@ -18,11 +18,16 @@ export interface Place { name: string; detail: string; at: LatLng }
  */
 const PHOTON = "https://photon.komoot.io/api";
 
-/** Providence metro, roughly. Photon's lat/lon only BIAS the ranking -- for
- *  "trad" the top hit without a box is a restaurant in Boston -- so the box is
- *  what actually keeps a campus shuttle app's results local. Wide enough to
- *  include Warwick and T.F. Green, short of Boston. */
-const BBOX = "-71.65,41.65,-71.15,42.00";
+/** Providence, and not much else.
+ *
+ *  Photon's lat/lon only BIAS the ranking -- for "trad" the top hit without a
+ *  box is a restaurant in Boston -- so the box is what actually keeps the
+ *  results local. It was drawn wide enough for Warwick and T.F. Green, which
+ *  made the results too broad for a shuttle that never leaves the city: the
+ *  rider is picking somewhere the bus or their legs can reach. These are
+ *  Providence's own limits with a little margin, so East Side, Fox Point, the
+ *  Jewelry District and the hospitals are all in and Warwick is not. */
+const BBOX = "-71.49,41.76,-71.36,41.87";
 const CAMPUS = { lat: 41.8265, lng: -71.4025 };
 
 /** The fields we use from a Photon feature. */
