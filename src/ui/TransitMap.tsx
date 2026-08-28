@@ -8,11 +8,11 @@ import { basemapStyle } from "./mapStyle";
 import { stationFeatures, rideFeatures, lineFeature } from "../render/network";
 import { stopPaint, stopBasePaint, tickPaint, routeLinePaint, stopRadius,
          DIM, type MapState } from "../render/symbols";
-import { buildEdges, laneOffsets, drawLanes, type Edge } from "../render/graph";
 import { pointAlongShape, snapToShape, sliceShape } from "../routing/shape";
 import { haversineMeters } from "../routing/walk";
 import { stations } from "../routing/routeDetail";
-import type { Pt } from "../render/geometry";
+import { laneProfiles, applyLanes, DEFAULT_OPTIONS, type LaneProfile, type Pt }
+  from "../render/bundle";
 
 // MapLibre's worker is a separate ES module that imports a sibling. Rollup
 // cannot see it (the path is built from a runtime string) and ?url would copy
@@ -84,34 +84,6 @@ const GLIDE_MS = 10_000;
  *  floor, not a target: routes already further apart than this are left alone,
  *  so two genuinely parallel streets are never dragged together. */
 const LANE_GAP_PX = 5;
-/** Shortest stretch worth calling a corridor, in samples. Below this a change
- *  of membership is a gap in the pairing, not the route changing street --
- *  measured, contracting at 6 takes the network from 138 edges with a median
- *  length of 40m to 50 edges with a median of 190m, and the number of sideways
- *  moves from 126 to 40. */
-const MIN_EDGE_VERTS = 6;
-/** How finely a route is resampled before the corridor graph is built. Ten
- *  metres is fine enough to place a corner and coarse enough that two routes
- *  sharing a street land on the same samples. */
-const SAMPLE_STEP_M = 10;
-/** Widest a lane gap may get on the ground. Beyond about a street's width the
- *  offset stops reading as a lane and starts folding lines round corners. */
-const MAX_LANE_GAP_M = 11;
-/** Same reasoning for the corner radius: a radius larger than the blocks it is
- *  rounding eats the shape of the route. */
-const MAX_CORNER_RADIUS_M = 22;
-/** Resample a polyline every `step` metres, keeping the original vertices. */
-function densify(pts: Pt[], step: number): Pt[] {
-  const out: Pt[] = [pts[0]!];
-  for (let i = 1; i < pts.length; i++) {
-    const a = pts[i - 1]!, b = pts[i]!;
-    const d = Math.hypot(b.x - a.x, b.y - a.y);
-    const n = Math.max(1, Math.round(d / step));
-    for (let k = 1; k <= n; k++)
-      out.push({ x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n });
-  }
-  return out;
-}
 
 /** Corner radius for every turn, in screen pixels. Constant at every zoom, the
  *  way the Underground and the NYC subway map draw a line. */
@@ -230,9 +202,7 @@ export function TransitMap({
   placeCb.current = onPlaceClick;
   /** Bundle analysis, which does not depend on the scale. Rebuilt only when
    *  the set of drawn routes changes. */
-  /** The corridor graph, when it is the one being drawn. */
-  const graphRef = useRef<{ ids: string[]; paths: Pt[][]; edges?: Edge[] }>(
-    { ids: [], paths: [] });
+  const profilesRef = useRef<LaneProfile[]>([]);
   const colorRef = useRef<Map<string, string>>(new Map());
   /** The routes as actually drawn at the current zoom, shared with the bus
    *  markers so a vehicle rides the line the rider can see. */
@@ -289,7 +259,7 @@ export function TransitMap({
   /**
    * Draw each route, fanned apart only where it genuinely shares a street.
    *
-   * The lane geometry comes from src/render/geometry.ts, which enforces a
+   * The lane geometry comes from src/render/bundle.ts, which enforces a
    * MINIMUM separation rather than an exact one: a route running alone does
    * not move at all, and two routes already further apart than the minimum --
    * genuinely different parallel streets -- are left where they are. The
@@ -302,6 +272,8 @@ export function TransitMap({
    * the spike that made five earlier attempts at this unusable.
    */
   function drawRoutes(m: maplibregl.Map, zoom: number) {
+    const profiles = profilesRef.current;
+    if (profiles.length === 0) return;
     // Below z13 the whole network is a couple of hundred pixels wide and the
     // strokes are 2px; a lane cannot be read, and 5px of ground at that scale
     // is nearly 200m of displacement.
@@ -309,22 +281,12 @@ export function TransitMap({
     // gap and a corner look the same at every zoom. Baking either in as metres
     // is what pulled the routes off their streets in five earlier attempts.
     const mpp = metresPerPixel(CAMPUS.lat, zoom);
-    // Capped in METRES as well as pixels. A lane is a position within a
-    // street, so once the gap exceeds a street's width it stops being one: at
-    // z13 five pixels is 71m of ground, and shoving a line 71m sideways folds
-    // it around every corner -- measured, 15 reversals with a worst of 176
-    // degrees at that zoom alone, against 0 at z12 and z17.5. Below the cap
-    // the gap is still exactly LANE_GAP_PX, which is what keeps it looking the
-    // same at the zooms a rider actually reads lanes at.
-    const minGap = zoom < 13 ? 0 : Math.min(LANE_GAP_PX * mpp, MAX_LANE_GAP_M);
-    const radius = Math.min(CORNER_RADIUS_PX * mpp, MAX_CORNER_RADIUS_M);
+    const minGap = zoom < 13 ? 0 : LANE_GAP_PX * mpp;
+    const radius = CORNER_RADIUS_PX * mpp;
 
     const drawn = new Map<string, LatLng[]>();
-    const g = graphRef.current;
-    if (!g.edges || g.paths.length === 0) return;
-    const lanes = drawLanes(g.paths, laneOffsets(g.paths, g.edges, MIN_EDGE_VERTS),
-                            minGap, radius);
-    g.ids.forEach((id, i) => drawn.set(id, lanes[i]!.map(fromPlane)));
+    for (const p of profiles)
+      drawn.set(p.id, applyLanes(p, minGap, radius).map(fromPlane));
     drawnRef.current = drawn;
     // Same geometry, same moment: the stops are placed from `drawn` right here
     // rather than once at startup, so they cannot drift off the line.
@@ -555,26 +517,9 @@ export function TransitMap({
       (r) => activeRouteIds.has(r.id) && r.shape.length >= 2);
     // Which routes share which stretches of street: the costly half, and it
     // does not depend on the zoom, so it is kept out of the per-zoom redraw.
+    profilesRef.current = laneProfiles(
+      active.map((r) => ({ id: r.id, points: r.shape.map(toPlane) })), DEFAULT_OPTIONS);
     colorRef.current = new Map(active.map((r) => [r.id, r.color]));
-
-    // The corridor graph: routes that share a street are put on identical
-    // coordinates, cut into edges carrying a fixed set of routes, and each
-    // route ranked once per edge. The offset is then ONE number per edge
-    // instead of a fresh decision at every vertex, which is what the old path
-    // does and why it wobbles.
-    //
-    // No proximity clustering here. The shapes are matched to the street
-    // network at build time, so two routes down one street land on the SAME
-    // OSM way and therefore the SAME vertices -- measured, routes 3469 and
-    // 3470 share 120 vertices exactly, to a tenth of a metre. Densifying keeps
-    // that: both routes subdivide the same segment into the same samples. So
-    // "same corridor" is coordinate identity, with no radius to tune and
-    // nothing to wobble.
-    graphRef.current = {
-      ids: active.map((r) => r.id),
-      paths: active.map((r) => densify(r.shape.map(toPlane), SAMPLE_STEP_M)),
-    };
-    graphRef.current.edges = buildEdges(graphRef.current.paths, MIN_EDGE_VERTS);
 
     try {
       drawRoutes(m, zoomRef.current);
@@ -656,7 +601,7 @@ export function TransitMap({
   // Declared BEFORE the bus effect so drawnRef is fresh when the markers move.
   useEffect(() => {
     const m = map.current;
-    if (!m || !ready || !m.getSource("routes") || graphRef.current.paths.length === 0) return;
+    if (!m || !ready || !m.getSource("routes") || profilesRef.current.length === 0) return;
     try { drawRoutes(m, zoom); } catch { /* style churn; the next render redraws */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoom, ready]);

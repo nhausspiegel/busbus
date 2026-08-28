@@ -1,4 +1,4 @@
-import type { Line, Pt } from "../../src/render/geometry";
+import type { Line, Pt } from "../../src/render/bundle";
 
 /**
  * Five hand-built cases for the polyline bundler, in a bare metric plane.

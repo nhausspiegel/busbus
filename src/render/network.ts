@@ -92,17 +92,13 @@ f: StaticFeed, activeRouteIds: Set<string>, drawn: Map<string, LatLng[]>,
     // stop as a bare dot at exactly those zooms. Emit a stub instead: with a
     // round cap it draws as the circle the bar degenerates into.
     if (far < 0.5) {
-      // At the BEAD, not at `centre`. The beads are snapped onto the drawn
-      // lines and the station's own coordinate is not -- placing the stub
-      // there put a white blob in the middle of a block, several metres from
-      // the dot it was supposed to be sitting under.
-      const at = pts[0]!;
       const eps = 0.3 / 111_320;
       ticks.push({
         type: "Feature" as const,
         properties: { id: st.stopIds[0]!, routes: `|${st.routeIds.join("|")}|` },
         geometry: { type: "LineString" as const,
-                    coordinates: [[at.lng, at.lat - eps], [at.lng, at.lat + eps]] },
+                    coordinates: [[centre.lng, centre.lat - eps],
+                                  [centre.lng, centre.lat + eps]] },
       });
       continue;
     }
