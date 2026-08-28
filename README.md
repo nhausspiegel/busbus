@@ -98,7 +98,7 @@ are the two best-solved versions of "draw many lines over one street network":
 - Lines hold a **constant width** and a **constant corner radius** at every
   zoom. Every corner turns through the same radius, which is what makes a line
   read as drawn rather than plotted.
-- Routes sharing a street are drawn **side by side with a constant gap**, never
+- Routes sharing a street are drawn **side by side with a minimum gap**, never
   on top of each other — but a route running alone sits exactly on its own
   street.
 - A stop on one line wears that line's colour, drawn as a hollow bead threaded
@@ -124,43 +124,7 @@ the scale changes. Route coordinates: left alone. Five separate attempts at the
 parallel-route styling failed by breaking this — rounding corners with a radius
 in *metres* (22px of corner-cutting at z18, 1.6px at z14, and the route pulled
 off its road to achieve it), or fanning routes apart by rewriting their
-coordinates.
-
-### How the lines are actually drawn
-
-Three steps, and the order is the whole trick.
-
-1. **The shapes are matched to the streets**, at build time, and the result is
-   committed (`scripts/match-shapes.ts` → `public/gtfs/shapes-matched.json`).
-   Passio's traces wander: a straight street comes out visibly squiggly and two
-   routes down the *same* street are drawn at different angles, which is the one
-   thing a transit map may not do. Matched, both land on the same OSM way.
-2. **Corridors are found by identity, not proximity** (`src/render/graph.ts`).
-   Because matched routes share a way they share its vertices *exactly* — 3469
-   and 3470 share 120 of them to a tenth of a metre — so "same street" is a map
-   lookup. There is no radius to tune.
-3. **One offset per edge.** An edge is a stretch carrying a fixed set of routes;
-   each route is ranked once for the whole stretch and held there. A per-vertex
-   decision cannot wobble when there is no per-vertex decision.
-
-The thing this replaced asked *"which routes are near me?"* at every 10 m sample
-and displaced that vertex accordingly. Nothing made neighbouring samples agree,
-so the answer oscillated — route 3302 changed lane eighteen times around one
-loop, about every 30 m — and each flip stepped the line sideways by a full lane.
-Those steps were the spurs, the acute wedges and the kinks in straight streets.
-Four attempts to damp it (a median despeckle, a quantised sort key, ordering by
-a per-run median, ordering on a smoothed offset) each changed the defect count
-by nothing, because they were approximations of an approximation. The fix was to
-stop asking the question per vertex.
-
-Two details that matter more than they look:
-
-- **Lanes are anchored, not centred.** `rank - (n-1)/2` reads well in isolation
-  and shoves every incumbent sideways the moment another route joins — that step
-  *is* the jog. Anchoring at rank 0 lets a joiner slot in beside the others.
-- **The gap is capped in metres as well as pixels.** Five pixels at z13 is 71 m
-  of ground, and a lane wider than the street folds the line round every corner
-  (15 reversals at z13, worst 176°; capped at 11 m, 2 reversals, worst 50°).
+coordinates. `src/render/bundle.ts` is the version that respects it.
 
 ### How to tell whether it worked
 
@@ -171,16 +135,11 @@ survived three rounds of "fixed" because the check could not fail. Two habits:
   transform can hold exactly the right coordinate while the browser paints it
   somewhere else entirely — that was a real bug, and it read as "the buses are
   off their routes" for a long time.
-- **Render the thing and look at it.** `npx tsx scripts/render-cases.ts` draws
-  five reference cases to `docs/bundle-cases.svg`, through the renderer that
-  actually draws the map. Deliberately abstract geometry, not Providence — the
-  problem is general and a bug is easier to see on a rectangle.
-- **Pick a measure of the thing you were asked about.** A long stretch of this
-  was spent minimising "turns added, in metres", a number invented here that
-  nobody sees; it stayed flat through four rewrites while the map still looked
-  wrong. Two of those rewrites were judged by comparing drawn geometry to its
-  source *by index*, which corner-trimming invalidates — that produced a phantom
-  "+176°" defect that did not exist.
+- **Render the thing and look at it.** `npx tsx scripts/bundle-cases.ts` draws
+  the bundler's five reference cases to `docs/bundle-cases.svg`;
+  `scripts/bundle-knobs.ts` renders a tuning knob at several settings for
+  choosing by eye. Both are deliberately abstract geometry, not Providence —
+  the problem is general and a bug is easier to see on a rectangle.
 
 ### Priorities
 

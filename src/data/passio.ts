@@ -13,12 +13,6 @@ export const IS_NODE = typeof window === "undefined";
 export const GTFS_STATIC_URL = IS_NODE
   ? `${GTFS_BASE}/google_transit.zip`
   : `${import.meta.env.BASE_URL}gtfs/google_transit.zip`;
-/** Route shapes snapped to the streets they run on, built at build time by
- *  scripts/match-shapes.ts and committed. Served from our own origin; there is
- *  no Passio equivalent. */
-export const MATCHED_SHAPES_URL = IS_NODE
-  ? "public/gtfs/shapes-matched.json"
-  : `${import.meta.env.BASE_URL}gtfs/shapes-matched.json`;
 export const GTFS_TRIP_UPDATES_URL = `${GTFS_BASE}/realtime/tripUpdates`;
 export const GTFS_VEHICLES_URL = `${GTFS_BASE}/realtime/vehiclePositions`;
 export const GTFS_ALERTS_URL = `${GTFS_BASE}/realtime/serviceAlerts`;

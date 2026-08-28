@@ -1,5 +1,5 @@
 import { unzipSync, strFromU8 } from "fflate";
-import { GTFS_STATIC_URL, MATCHED_SHAPES_URL, IS_NODE, httpGetBytes } from "./passio";
+import { GTFS_STATIC_URL, httpGetBytes } from "./passio";
 import type { StaticFeed, Route, Stop, Trip, TripStop, LatLng } from "./types";
 
 /** GTFS times are "HH:MM:SS" and MAY exceed 24h for post-midnight service.
@@ -123,35 +123,6 @@ export function parseStaticFeed(zipBytes: Uint8Array): StaticFeed {
   return { routes, stops, trips, feedEndDate: info?.["feed_end_date"] ?? "" };
 }
 
-/**
- * Draw each route on the street it runs down, not on Passio's trace of it.
- *
- * Passio's shapes wander: a straight street comes out visibly squiggly, and
- * two routes down the SAME street are traced at different angles, which is the
- * one thing a transit map may not do. Matched to the road network both land on
- * the same centreline, so a shared street is shared exactly -- which is also
- * what lets the corridor graph treat membership as equality instead of a
- * distance test nobody can tune.
- *
- * Optional: if the file is missing the app draws Passio's shapes as before.
- */
-export function withMatchedShapes(
-  feed: StaticFeed, matched: Record<string, [number, number][]>,
-): StaticFeed {
-  for (const [routeId, coords] of Object.entries(matched)) {
-    const route = feed.routes.get(routeId);
-    if (!route || coords.length < 2) continue;
-    route.shape = coords.map(([lng, lat]) => ({ lat, lng }));
-  }
-  return feed;
-}
-
 export async function fetchStaticFeed(): Promise<StaticFeed> {
-  const feed = parseStaticFeed(await httpGetBytes(GTFS_STATIC_URL));
-  if (IS_NODE) return feed;
-  try {
-    const res = await fetch(MATCHED_SHAPES_URL);
-    if (res.ok) return withMatchedShapes(feed, await res.json());
-  } catch { /* draw Passio's own shapes */ }
-  return feed;
+  return parseStaticFeed(await httpGetBytes(GTFS_STATIC_URL));
 }
