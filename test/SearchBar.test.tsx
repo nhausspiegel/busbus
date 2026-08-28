@@ -76,3 +76,37 @@ describe("SearchBar", () => {
     expect(searchPlaces).not.toHaveBeenCalled();
   });
 });
+
+describe("the search field is mostly field", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("has no Search button, because results arrive while typing", async () => {
+    // Two word-buttons crowded a field that is mostly field, and the Search
+    // one only offered a second way to do what the list already does.
+    render(<SearchBar destination={null} onPick={() => {}} onClear={() => {}} />);
+    fireEvent.click(screen.getByText("Where to?"));
+    expect(screen.queryByRole("button", { name: /^search$/i })).toBeNull();
+    expect(screen.queryByText("Cancel")).toBeNull();
+  });
+
+  it("closes with an icon rather than the word Cancel", () => {
+    render(<SearchBar destination={null} onPick={() => {}} onClear={() => {}} />);
+    fireEvent.click(screen.getByText("Where to?"));
+    const close = screen.getByRole("button", { name: /close search/i });
+    expect(close).toBeTruthy();
+    expect(close.textContent).toBe("");          // an icon, not a word
+    fireEvent.click(close);
+    expect(screen.getByText("Where to?")).toBeTruthy();
+  });
+
+  it("still searches when the rider presses Enter", async () => {
+    render(<SearchBar destination={null} onPick={() => {}} onClear={() => {}} />);
+    fireEvent.click(screen.getByText("Where to?"));
+    const input = screen.getByLabelText("Search for a destination");
+    fireEvent.change(input, { target: { value: "thayer street" } });
+    fireEvent.submit(input.closest("form")!);
+    await act(async () => { vi.advanceTimersByTime(50); });
+    expect(searchPlaces).toHaveBeenCalledWith("thayer street", expect.anything());
+  });
+});

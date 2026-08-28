@@ -115,9 +115,11 @@ export function SearchBar({
           style={{ flex: 1, border: 0, outline: "none", font: "15px Barlow, sans-serif",
                    background: "transparent", color: "var(--ink)", minWidth: 0 }}
         />
-        <button type="submit" disabled={busy || q.trim().length < 3} style={ghostBtn}>
-          {busy ? "…" : "Search"}
-        </button>
+        {/* No Search button. Results arrive while typing, so the only thing it
+            did was give the rider a second way to do what the list already
+            offers -- and two word-buttons crowded a field that is mostly
+            field. Enter still submits, because the form still has onSubmit. */}
+        {busy && <span aria-label="Searching" style={{ color: "var(--muted)", fontSize: 15 }}>…</span>}
         <button type="button"
                 onClick={() => {
                   // Abort the in-flight geocode too, or it lands afterwards and
@@ -125,7 +127,15 @@ export function SearchBar({
                   abort.current?.abort();
                   setOpen(false); setResults([]); setMsg(null); setBusy(false);
                 }}
-                style={ghostBtn} aria-label="Close search">Cancel</button>
+                aria-label="Close search"
+                style={{ ...ghostBtn, display: "inline-flex", alignItems: "center",
+                         justifyContent: "center", width: 26, height: 26, padding: 0,
+                         borderRadius: 999 }}>
+          <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"
+               stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+            <path d="M2 2l8 8M10 2l-8 8" />
+          </svg>
+        </button>
       </form>
 
       {msg && <p style={{ margin: 0, padding: "0 12px 10px", fontSize: 13, color: "var(--muted)" }}>{msg}</p>}

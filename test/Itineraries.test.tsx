@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
-import { ItineraryDetail } from "../src/ui/Itineraries";
+import { ItineraryDetail, ItineraryList } from "../src/ui/Itineraries";
 import { parseWalkRoute, type WalkStep } from "../src/routing/walk";
 import type { Itinerary, RideLeg, StaticFeed, Stop } from "../src/data/types";
 
@@ -195,5 +195,67 @@ describe("ItineraryDetail walking directions", () => {
   it("offers no control before Valhalla has answered", () => {
     show();
     expect(screen.queryByRole("button", { name: /directions/i })).toBeNull();
+  });
+});
+
+describe("ItineraryList, in the shape Apple uses", () => {
+  const list = (its: Itinerary[]) =>
+    render(<ItineraryList itineraries={its} feed={feed} now={NOW}
+                          selected={null} onSelect={() => {}} />);
+
+  it("leads with how long the trip takes, not when it ends", () => {
+    // The old headline was the arrival clock time, which makes two options
+    // impossible to compare at a glance -- the rider has to subtract.
+    // 3 min walk + 8 min ride + 2 min walk = 13.
+    list([itinerary(ride())]);
+    expect(screen.getByText("13 min")).toBeTruthy();
+  });
+
+  it("does not count the wait for the bus in that number", () => {
+    // Otherwise a trip looks worse the earlier you look it up, which is
+    // backwards. The wait is stated separately as a departure time.
+    const soon = itinerary(ride({ departTime: NOW + 300, arriveTime: NOW + 780 }));
+    const later = {
+      ...soon,
+      rides: [ride({ departTime: NOW + 3000, arriveTime: NOW + 3480 })],
+      arriveTime: NOW + 3600,
+    };
+    list([soon]);
+    const a = screen.getByText("13 min");
+    cleanup();
+    list([later]);
+    expect(screen.getByText("13 min")).toBeTruthy();
+    expect(a).toBeTruthy();
+  });
+
+  it("says when the bus leaves, and when you arrive", () => {
+    list([itinerary(ride())]);
+    expect(screen.getByText(/Bus departs at/)).toBeTruthy();
+    expect(screen.getByText(/ETA/)).toBeTruthy();
+  });
+
+  it("drops 'leave in N min' and the aggregate walk time", () => {
+    // Both were summaries of the journey that matched no part of it.
+    list([itinerary(ride())]);
+    const text = document.body.textContent ?? "";
+    expect(text).not.toMatch(/Leave in \d+ min/);
+    expect(text).not.toMatch(/\d+ min walking/);
+    expect(text).not.toMatch(/direct|transfer/);
+  });
+
+  it("shows each walk with its own time, in order", () => {
+    // 3 minutes to the stop and 2 from it, not one "5 min walking".
+    list([itinerary(ride())]);
+    expect(screen.getByText("Walk 3 min")).toBeTruthy();
+    expect(screen.getByText("Walk 2 min")).toBeTruthy();
+  });
+
+  it("shows a walk-only trip as a single walk", () => {
+    const walkOnly: Itinerary = {
+      ...itinerary(ride()), rides: [], arriveTime: NOW + 900, totalWalkSeconds: 900,
+    };
+    list([walkOnly]);
+    expect(screen.getByText("Walk 15 min")).toBeTruthy();
+    expect(screen.queryByText(/Bus departs/)).toBeNull();
   });
 });

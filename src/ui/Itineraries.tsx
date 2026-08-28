@@ -25,21 +25,63 @@ function RouteChip({ feed, routeId }: { feed: StaticFeed | null; routeId: string
   );
 }
 
+function WalkGlyph() {
+  return (
+    <svg width="11" height="13" viewBox="0 0 11 13" fill="none" aria-hidden="true"
+         stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+      <circle cx="6.4" cy="2" r="1.6" fill="currentColor" stroke="none" />
+      <path d="M6.6 4.6 4.8 7.2l2 1.9.7 3.1M4.8 7.2 2.6 9.1M6.8 6.1l2.3.9" />
+    </svg>
+  );
+}
+
 function WalkChip({ minutes }: { minutes: number }) {
   return (
     <span style={{
       display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13,
       background: "var(--paper)", border: "1px solid var(--hairline)",
       borderRadius: 999, padding: "3px 10px 3px 7px", whiteSpace: "nowrap",
+      color: "var(--ink)",
     }}>
-      <svg width="11" height="13" viewBox="0 0 11 13" fill="none" aria-hidden="true"
-           stroke="var(--ink)" strokeWidth="1.6" strokeLinecap="round">
-        <circle cx="6.4" cy="2" r="1.6" fill="var(--ink)" stroke="none" />
-        <path d="M6.6 4.6 4.8 7.2l2 1.9.7 3.1M4.8 7.2 2.6 9.1M6.8 6.1l2.3.9" />
-      </svg>
+      <WalkGlyph />
       Walk {minutes} min
     </span>
   );
+}
+
+function BusGlyph() {
+  return (
+    <svg width="15" height="14" viewBox="0 0 15 14" fill="none" aria-hidden="true"
+         stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
+      <rect x="2" y="1.6" width="11" height="8.6" rx="2" />
+      <path d="M2.4 6.6h10.2" />
+      <circle cx="4.6" cy="12" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="10.4" cy="12" r="1.1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+/** The separator between legs. Apple uses a small solid caret, which reads as
+ *  "and then" without taking a whole chip's worth of room. */
+function LegArrow() {
+  return (
+    <svg width="7" height="9" viewBox="0 0 7 9" aria-hidden="true"
+         style={{ flexShrink: 0, opacity: 0.55 }}>
+      <path d="M1 1l4.5 3.5L1 8z" fill="var(--muted)" />
+    </svg>
+  );
+}
+
+/** How long the trip actually takes: walking plus riding, NOT counting the
+ *  wait for the bus.
+ *
+ *  This is the number Apple puts in the headline, and it is the honest answer
+ *  to "how long does this take" -- the wait is a separate fact, and it is
+ *  already stated by the departure time on the line below. Counting it in
+ *  makes a trip look worse the earlier you look it up, which is backwards. */
+function travelSeconds(it: Itinerary): number {
+  const riding = it.rides.reduce((t, r) => t + (r.arriveTime - r.departTime), 0);
+  return it.rides.length === 0 ? it.totalWalkSeconds : it.totalWalkSeconds + riding;
 }
 
 export function ItineraryList({
@@ -53,7 +95,27 @@ export function ItineraryList({
   return (
     <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
       {itineraries.map((it, n) => {
-        const leaveIn = minsUntil(it.departTime, now);
+        const first = it.rides[0];
+        // Each leg in the order the rider does it, with the walks carrying
+        // their OWN time rather than being summed into one "12 min walking"
+        // that matches no part of the journey.
+        const legs: ReactNode[] = [];
+        const toStop = durationMins(it.walkToStop.seconds);
+        const fromStop = durationMins(it.walkFromStop.seconds);
+        if (it.rides.length === 0) {
+          legs.push(<WalkChip key="w" minutes={durationMins(it.totalWalkSeconds)} />);
+        } else {
+          if (it.walkToStop.seconds > 45) legs.push(<WalkChip key="wa" minutes={toStop} />);
+          it.rides.forEach((r, i) => {
+            legs.push(
+              <span key={`r${i}`} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <RouteChip feed={feed} routeId={r.routeId} />
+                <span style={{ color: "var(--muted)", display: "inline-flex" }}><BusGlyph /></span>
+              </span>);
+          });
+          if (it.walkFromStop.seconds > 45) legs.push(<WalkChip key="wb" minutes={fromStop} />);
+        }
+
         return (
           <li key={n} style={{ borderTop: "1px solid var(--hairline)" }}>
             <button
@@ -64,28 +126,35 @@ export function ItineraryList({
                        padding: "13px 10px", margin: "0 -10px", borderRadius: 10,
                        cursor: "pointer" }}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                  {it.rides.length === 0
-                    ? <WalkChip minutes={durationMins(it.totalWalkSeconds)} />
-                    : it.rides.map((r, i) => <RouteChip key={i} feed={feed} routeId={r.routeId} />)}
-                </div>
-                <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <div className="eyebrow" style={{ fontSize: 10 }}>arrive</div>
-                  <div className="when when--live"
-                       style={{ fontSize: 27 }}>
-                    {clock(it.arriveTime)}
-                  </div>
-                </div>
+              {/* How long the trip takes, which is the thing being chosen
+                  between. The old headline was the arrival clock time, which
+                  makes two options impossible to compare at a glance. */}
+              <div className="display" style={{ fontSize: 26, lineHeight: 1.1 }}>
+                {durationMins(travelSeconds(it))} min
               </div>
-              <div style={{ marginTop: 7, fontSize: 13, color: "var(--muted)" }}>
-                {it.rides.length === 0
-                  ? "Leave now · no waiting"
-                  : <>
-                      {leaveIn === 0 ? "Leave now" : `Leave in ${leaveIn} min`}
-                      {" · "}{durationMins(it.totalWalkSeconds)} min walking
-                      {" · "}{it.transfers === 0 ? "direct" : `${it.transfers} transfer`}
-                    </>}
+
+              <div style={{ marginTop: 3, fontSize: 13, color: "var(--muted)" }}>
+                {first ? (
+                  <>
+                    Bus departs at{" "}
+                    <span style={{ color: "var(--ink)", fontWeight: 600 }}>{clock(first.departTime)}</span>
+                    {first.live && <span className="pulse" aria-hidden="true"
+                                         style={{ margin: "0 2px 0 5px" }} />}
+                    {" · "}{clock(it.arriveTime)} ETA
+                  </>
+                ) : (
+                  <>Leave now · {clock(it.arriveTime)} ETA</>
+                )}
+              </div>
+
+              <div style={{ marginTop: 9, display: "flex", gap: 5, flexWrap: "wrap",
+                            alignItems: "center" }}>
+                {legs.map((leg, i) => (
+                  <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    {i > 0 && <LegArrow />}
+                    {leg}
+                  </span>
+                ))}
               </div>
             </button>
           </li>
