@@ -101,9 +101,11 @@ export function planTrips(opts: PlanOptions): Itinerary[] {
       // feeds list different stops for the same trip id, so the static trip
       // cannot supply this ride's durations. RT already gives absolute times.
       const rtTrip = dep.live ? opts.liveTrips?.get(dep.tripId) : undefined;
-      if (rtTrip) {
-        const boardIdx = rtTrip.findIndex((r) => r.stopId === dep.stopId && r.time === dep.time);
-        if (boardIdx === -1) continue;
+      const boardIdx = rtTrip
+        ? rtTrip.findIndex((r) => r.stopId === dep.stopId && r.time === dep.time)
+        : -1;
+      let fromRt = 0;
+      if (rtTrip && boardIdx !== -1) {
         for (let i = boardIdx + 1; i < rtTrip.length; i++) {
           const alightRt = rtTrip[i]!;
           const finalWalk = walkToDestination.get(alightRt.stopId);
@@ -125,9 +127,25 @@ export function planTrips(opts: PlanOptions): Itinerary[] {
             transfers: 0,
             allLive: true,
           });
+          fromRt++;
         }
-        continue;
       }
+      // Realtime predicts the stops a vehicle has LEFT to serve, so a trip
+      // near the end of its run has no downstream prediction at all and the
+      // loop above yields nothing. That is not "no ride": the static trip of
+      // the same id still knows which stops follow and how long the leg takes.
+      //
+      // Bailing out here regardless is what made the Daytime Express
+      // unroutable. Measured 2026-08-28, 129 Angell St to River House: trip
+      // 218773 had ONE prediction, at Hillel House 172m from the origin, while
+      // the static trip of that id ran Hillel House -> South Street Landing,
+      // 109m from the destination, in 600s. A bus was three minutes out and
+      // the app offered walking.
+      //
+      // Falling through keeps the LIVE departure time and takes only the
+      // DURATION from the timetable, so the rider is still never shown a time
+      // no vehicle is backing.
+      if (fromRt > 0) continue;
 
       const trip = feed.trips.get(dep.tripId);
       if (!trip) continue;

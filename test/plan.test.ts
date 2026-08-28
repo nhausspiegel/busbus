@@ -271,3 +271,51 @@ describe("planTrips with an arrive-by deadline", () => {
     })).toEqual([]);
   });
 });
+
+describe("a live departure whose realtime trip stops short", () => {
+  /**
+   * Measured against the live feed on 2026-08-28, going 129 Angell St to River
+   * House: route 3302's trip 218773 had ONE realtime prediction, at Hillel
+   * House, while the static trip of the same id carried both its stops --
+   * Hillel House at +67800s and South Street Landing at +68400s. The bus was
+   * live, three minutes out, 172m from the origin, and dropping 109m from the
+   * destination, and the planner offered walking only.
+   *
+   * Passio predicts the stops a vehicle has left to serve, so the LAST stop of
+   * a trip routinely has no downstream prediction at all. Treating "realtime
+   * knows this trip" as "realtime knows every leg of this trip" throws the
+   * whole ride away.
+   */
+  const liveTrip = (times: [string, number, number][]): Map<string, Departure[]> =>
+    new Map([["T1", times.map(([stopId, seq, time]) => (
+      { stopId, tripId: "T1", routeId: "R1", seq, time, live: true }))]]);
+
+  it("still offers the ride, using the static trip's own leg duration", () => {
+    const f = fixture(NOW + 300, true);
+    const got = planTrips({
+      feed: f.feed, board: f.board, ...base(),
+      // Realtime knows the bus is at A. It says nothing about B.
+      liveTrips: liveTrip([["A", 1, NOW + 300]]),
+    });
+    expect(got.map((i) => i.rides.length)).toContain(1);
+    const ride = got.find((i) => i.rides.length === 1)!;
+    // Departure is the live one; the 600s leg comes from the static trip.
+    expect(ride.rides[0]!.departTime).toBe(NOW + 300);
+    expect(ride.rides[0]!.arriveTime).toBe(NOW + 900);
+    expect(ride.arriveTime).toBe(NOW + 900 + 180);
+  });
+
+  it("prefers realtime's own arrival when realtime actually has one", () => {
+    // Same trip, but realtime predicts B too -- and disagrees with the
+    // timetable. The reporting bus wins; the static 600s is not consulted.
+    const f = fixture(NOW + 300, true);
+    const got = planTrips({
+      feed: f.feed, board: f.board, ...base(),
+      liveTrips: liveTrip([["A", 1, NOW + 300], ["B", 2, NOW + 800]]),
+    });
+    const ride = got.find((i) => i.rides.length === 1)!;
+    expect(ride.rides[0]!.arriveTime).toBe(NOW + 800);
+    // and only one ride, not one from each source
+    expect(got.filter((i) => i.rides.length === 1)).toHaveLength(1);
+  });
+});
