@@ -956,9 +956,15 @@ export function TransitMap({
     // just a battery drain with a timer attached.
     if (!target && !lastFocus.current) return;
     let raf = 0;
-    let start = 0;
+    // -1, not 0, and tested with `< 0`. A frame timestamp of 0 is falsy, so
+    // `if (!start)` re-took the start time on every frame until one happened to
+    // be non-zero -- the tween then measured from the SECOND frame and could
+    // stall entirely. Browsers pass large timestamps so this never bit in
+    // production, which is exactly why it survived: only a test that drives the
+    // clock itself can see it.
+    let start = -1;
     const step = (now: number) => {
-      if (!start) start = now;
+      if (start < 0) start = now;
       const k = Math.min(1, (now - start) / SELECT_MS);
       // Ease out: quick off the mark, settling rather than stopping dead.
       growRef.current = target ? 1 - (1 - k) ** 3 : (1 - k) ** 3;
