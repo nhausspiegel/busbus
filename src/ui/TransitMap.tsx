@@ -810,7 +810,14 @@ export function TransitMap({
       }
       if (m.getLayer("itin-walk")) m.setPaintProperty("itin-walk", "line-color", dark ? "#F0E9E3" : "#241C17");
     } catch { /* style churn */ }
-  }, [dark, ready, feed]);
+    // `overlay` belongs here. This effect BUILDS the itinerary's sources out
+    // of it, and without it in the deps the sources were only ever rebuilt
+    // when the theme flipped or the feed reloaded -- so the walking legs, which
+    // arrive a moment after the trip is chosen, had nothing to put them on the
+    // map. The ride line survived only because a separate effect pushes ride
+    // geometry through overlayRef; the walk had no such second path, which is
+    // exactly why the dotted line was the part that went missing.
+  }, [dark, ready, feed, overlay]);
 
   // One owner of emphasis, for every layer at once.
   //
