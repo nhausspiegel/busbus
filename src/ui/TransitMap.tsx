@@ -346,10 +346,18 @@ export function TransitMap({
     // apart regardless and a lane cannot be read anyway.
     // Thin the stroke when zoomed out, as any transit map does -- a 6px line
     // on a network 150px wide is 4% of it and reads as a blob.
+    // Full weight at zoom 16, not 14.
+    //
+    // A phone opens the app fitted to the whole network, which lands at about
+    // 14.2 -- so the old ramp hit its heaviest stroke at exactly the scale
+    // where every route overlaps every other one. Six pixels of line under ten
+    // of casing, five routes deep, turns a block loop twenty metres wide into
+    // one blob: the streets are still under there, but nothing can be read off
+    // them. The geometry was never the whole story at that zoom, the ink was.
     const lineWidth: maplibregl.ExpressionSpecification =
-      ["interpolate", ["linear"], ["zoom"], 11, 2, 14, 6];
+      ["interpolate", ["linear"], ["zoom"], 11, 2, 14, 4, 16, 6];
     const caseWidth: maplibregl.ExpressionSpecification =
-      ["interpolate", ["linear"], ["zoom"], 11, 3.5, 14, 10];
+      ["interpolate", ["linear"], ["zoom"], 11, 3.5, 14, 6.5, 16, 10];
     m.addLayer({
       id: "routes-case", type: "line", source: "routes",
       layout: { "line-cap": "round", "line-join": "round" },
