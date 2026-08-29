@@ -44,8 +44,21 @@ export function stations(
   feed: StaticFeed, active: Set<string>, radiusM = STATION_M,
 ): Station[] {
   const serving = stopRoutes(feed);
+  // Plus the stops the GTFS export drops. The Daytime Express ships one trip
+  // covering two of its nine stops and the Stadium Loop ships none of its
+  // four, so drawing from trips alone left dots off routes that plainly call
+  // there. This widens the MAP only -- stopRoutes() itself is untouched,
+  // because that is what gates the planner's candidate stops and these have no
+  // times behind them.
+  const extra = new Map<string, string[]>();
+  for (const [routeId, stopIds] of feed.routeStops ?? [])
+    for (const id of stopIds)
+      if (!(serving.get(id) ?? []).includes(routeId))
+        extra.set(id, [...(extra.get(id) ?? []), routeId]);
+
   const live = [...feed.stops.values()]
-    .map((s) => ({ s, routes: (serving.get(s.id) ?? []).filter((r) => active.has(r)) }))
+    .map((s) => ({ s, routes: [...new Set([...(serving.get(s.id) ?? []), ...(extra.get(s.id) ?? [])])]
+                     .sort().filter((r) => active.has(r)) }))
     .filter((x) => x.routes.length > 0)
     // Sorted so grouping is deterministic whatever order the feed lists them.
     .sort((a, b) => a.s.id.localeCompare(b.s.id));
@@ -106,6 +119,14 @@ export function routeStops(
     if (trip.routeId !== routeId) continue;
     if (trip.stops.length > longest.length) longest = trip.stops;
   }
+
+  // A route the GTFS export ships no trips for still has a stop list, and a
+  // rider tapping it should get the same page as any other line rather than a
+  // blank one. Only the ORDER comes from here -- there are no times behind it,
+  // so every row's next departure is whatever the live board says, which for a
+  // route with nothing reporting is honestly nothing.
+  if (longest.length === 0)
+    longest = (feed.routeStops?.get(routeId) ?? []).map((stopId, i) => ({ stopId, seq: i + 1 }));
 
   const seen = new Set<string>();
   const ordered: { stop: Stop; seq: number; stopId: string }[] = [];

@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { parseStaticFeed } from "../src/data/gtfs";
-import { parseRoutePaths, fillMissingShapes } from "../src/data/routePaths";
+import { parseRoutePaths, fillMissingShapes, parseRouteStops, withRouteStops } from "../src/data/routePaths";
+import { stations, stopRoutes, routeStops } from "../src/routing/routeDetail";
 import { haversineMeters } from "../src/routing/walk";
 
 /**
@@ -64,5 +65,61 @@ describe("fillMissingShapes", () => {
     const before = feed.routes.get("3469")!.shape;
     fillMissingShapes(feed, parseRoutePaths(payload));
     expect(feed.routes.get("3469")!.shape).toBe(before);
+  });
+});
+
+describe("the stops a route serves, where the GTFS lost them", () => {
+  /**
+   * Same export defect as the missing shape, one field over. Measured
+   * 2026-08-29 against trips.txt: the Connector has 38 trips covering 14
+   * stops and the Evening routes 62 and 86 trips covering 11 and 12 -- all
+   * matching what Passio publishes. The Daytime Express has ONE trip covering
+   * TWO stops where Passio lists NINE, and the Stadium Loop has no trips at
+   * all against Passio's four.
+   *
+   * So the map drew two dots on a route that calls at nine, and none on the
+   * Stadium Loop. Which stops a route serves, in what order, is the one thing
+   * this project already trusts the schedule data for; taking the fuller list
+   * is not a claim about when anything runs.
+   */
+  it("reads the stop list Passio publishes", () => {
+    const stops = parseRouteStops(payload);
+    expect(stops.get("22427")).toEqual(["40950", "68995", "68996", "68995"]);
+  });
+
+  it("puts the Stadium Loop's stops on the map", () => {
+    const f = parseStaticFeed(new Uint8Array(readFileSync("public/gtfs/google_transit.zip")));
+    const active = new Set(["22427"]);
+    expect(stations(f, active)).toEqual([]);          // nothing to draw today
+
+    withRouteStops(f, parseRouteStops(payload));
+    const drawn = stations(f, active);
+    const names = drawn.map((s) => s.name).sort();
+    expect(names).toContain("Brown Stadium");
+    expect(drawn.every((s) => s.routeIds.includes("22427"))).toBe(true);
+  });
+
+  it("leaves the routing candidate filter alone", () => {
+    // stopRoutes() decides which stops may take one of the eight candidate
+    // slots when planning. A stop known only from this list has no trip and
+    // so no times to ride on; letting it compete for a slot is exactly how
+    // unservable stops crowded real ones out before.
+    const f = parseStaticFeed(new Uint8Array(readFileSync("public/gtfs/google_transit.zip")));
+    withRouteStops(f, parseRouteStops(payload));
+    expect(stopRoutes(f).get("68996")).toBeUndefined();
+  });
+});
+
+describe("the Stadium Loop's route page", () => {
+  it("lists its stops like any other line", () => {
+    // Tapping a route opens its stop list. Every other line fills that from
+    // its trips; 22427 has none, so the page came up empty while the line was
+    // drawn on the map beside it. Same list the map uses, in riding order.
+    const f = parseStaticFeed(new Uint8Array(readFileSync("public/gtfs/google_transit.zip")));
+    withRouteStops(f, parseRouteStops(payload));
+    const rows = routeStops(f, new Map(), "22427", 0);
+    expect(rows.map((r) => r.stop.name)).toEqual(["Faunce Arch", "277 Lloyd Ave", "Brown Stadium"]);
+    // No live departures in this board, and none invented for it.
+    expect(rows.every((r) => r.next === null)).toBe(true);
   });
 });

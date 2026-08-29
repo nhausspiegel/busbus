@@ -1,6 +1,7 @@
 import { unzipSync, strFromU8 } from "fflate";
 import { GTFS_STATIC_URL, httpGetBytes } from "./passio";
-import { fetchRoutePaths, fillMissingShapes } from "./routePaths";
+import { fetchRoutePathPayload, parseRoutePaths, fillMissingShapes,
+         parseRouteStops, withRouteStops } from "./routePaths";
 import type { StaticFeed, Route, Stop, Trip, TripStop, LatLng } from "./types";
 
 /** GTFS times are "HH:MM:SS" and MAY exceed 24h for post-midnight service.
@@ -133,7 +134,9 @@ export async function fetchStaticFeed(): Promise<StaticFeed> {
   // routes the GTFS leaves empty. A failure here costs that one route its
   // line, which is what happens today anyway.
   try {
-    fillMissingShapes(feed, await fetchRoutePaths());
+    const payload = await fetchRoutePathPayload();
+    fillMissingShapes(feed, parseRoutePaths(payload));
+    withRouteStops(feed, parseRouteStops(payload));
   } catch { /* GTFS-shaped routes are unaffected */ }
   return feed;
 }

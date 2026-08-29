@@ -21,6 +21,10 @@ export interface StaticFeed {
   stops: Map<string, Stop>;
   trips: Map<string, Trip>;
   feedEndDate: string;   // YYYYMMDD
+  /** Stops each route calls at, in riding order, for routes whose stop list
+   *  the GTFS export does not carry in full. Drawn, never ridden: there are no
+   *  times behind it, so it stays out of the planner. */
+  routeStops?: Map<string, string[]>;
 }
 
 /** A bus leaving a specific stop at a specific absolute time.
