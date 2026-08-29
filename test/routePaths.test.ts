@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { parseStaticFeed } from "../src/data/gtfs";
-import { parseRoutePaths, fillMissingShapes, parseRouteStops, withRouteStops } from "../src/data/routePaths";
+import { parseRoutePaths, fillMissingShapes, parseRouteStops, withRouteStops, parseActiveRoutes } from "../src/data/routePaths";
 import { stations, stopRoutes, routeStops } from "../src/routing/routeDetail";
 import { haversineMeters } from "../src/routing/walk";
 
@@ -140,5 +140,31 @@ describe("the Daytime Express's route page", () => {
     expect(rows).toHaveLength(8);                       // nine calls, one repeat
     expect(rows[0]!.stop.name).toBe("Hillel House");    // still in riding order
     expect(rows.map((r) => r.stop.id)).toContain("166667");
+  });
+});
+
+describe("which routes are running at all", () => {
+  /**
+   * The app shipped a hardcoded set of five route ids. Passio publishes the
+   * answer in the same payload the shapes come from: `routes` lists all eight,
+   * and `excludedRoutesID` names the ones not running -- measured 2026-08-29 as
+   * [-1, 72922, 72923, 72924], the two Commencement routes and Bruno's Block
+   * Party. Removing those from the eight gives exactly the five that were
+   * written down by hand, so this is the same answer from a source that
+   * updates itself when Brown turns Commencement on.
+   */
+  it("drops the routes Passio excludes and keeps the rest", () => {
+    const active = parseActiveRoutes(payload);
+    expect(active.has("72924")).toBe(false);   // excluded
+    expect(active.has("22427")).toBe(true);
+    expect(active.has("3302")).toBe(true);
+    expect(active.has("3469")).toBe(true);
+  });
+
+  it("says nothing rather than everything when the payload is unusable", () => {
+    // An empty set would blank the map. The caller keeps its own fallback, so
+    // this must be distinguishable from "nothing is running".
+    expect(parseActiveRoutes(null).size).toBe(0);
+    expect(parseActiveRoutes({}).size).toBe(0);
   });
 });

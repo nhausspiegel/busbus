@@ -120,3 +120,26 @@ export function withRouteStops(feed: StaticFeed, served: Map<string, string[]>):
     [...served].map(([routeId, ids]) => [routeId, ids.filter((id) => known.has(id))]));
   return feed;
 }
+
+/**
+ * Which routes are running at all, per Passio's own exclusion list.
+ *
+ * The app carried a hardcoded set of five route ids, which is a list that goes
+ * stale silently: when Brown turns the Commencement routes on, a hardcoded set
+ * keeps them off the map and nothing says why. The same payload the shapes
+ * come from answers it -- `routes` lists all eight and `excludedRoutesID`
+ * names the ones not running.
+ *
+ * Measured 2026-08-29 the exclusions were [-1, 72922, 72923, 72924] -- both
+ * Commencement routes and Bruno's Block Party -- leaving exactly the five that
+ * had been written down by hand.
+ *
+ * An empty set means "could not tell", not "nothing is running": the caller
+ * keeps its own fallback, because blanking the map is the worse failure.
+ */
+export function parseActiveRoutes(payload: unknown): Set<string> {
+  const p = payload as { routes?: Record<string, unknown>; excludedRoutesID?: unknown[] };
+  const all = Object.keys(p?.routes ?? {});
+  const excluded = new Set((Array.isArray(p?.excludedRoutesID) ? p.excludedRoutesID : []).map(String));
+  return new Set(all.filter((id) => !excluded.has(id)));
+}

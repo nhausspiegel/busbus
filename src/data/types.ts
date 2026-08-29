@@ -25,6 +25,9 @@ export interface StaticFeed {
    *  the GTFS export does not carry in full. Drawn, never ridden: there are no
    *  times behind it, so it stays out of the planner. */
   routeStops?: Map<string, string[]>;
+  /** Routes running at all today, per Passio's own exclusion list. Absent
+   *  when that could not be fetched, which is not the same as none. */
+  activeRouteIds?: Set<string>;
 }
 
 /** A bus leaving a specific stop at a specific absolute time.
