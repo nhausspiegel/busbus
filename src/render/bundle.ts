@@ -82,7 +82,7 @@ export const DEFAULT_OPTIONS: BundleOptions = {
   // street of its own, and the worst drift from the traced line is unchanged
   // at 40m. The block loop the Express really does drive stays a block loop --
   // that one is not an artefact and is not this setting's to remove.
-  selfMergeM: 30,
+  selfMergeM: 12,
 };
 
 /** Everything about one line that does not depend on the gap, computed once. */
@@ -219,6 +219,37 @@ function dilate(v: number[], window: number, closed: boolean): number[] {
       if (Math.abs(v[j]!) > Math.abs(best)) best = v[j]!;
     }
     return best;
+  });
+}
+
+/**
+ * Median filter over the offset signal.
+ *
+ * The wiggle a rider sees is the lane assignment changing along a route: each
+ * change slides the line up to a full lane gap sideways, and the bundler
+ * decides per point, so a route can flip lanes over a stretch far too short to
+ * mean anything. Measured at the zoom the app opens at, routes reversed
+ * sideways 8 to 27 times per 1000 drawn pixels with swings up to 4.7px.
+ *
+ * A median is the right tool rather than a longer average: an average smears
+ * every transition, including the real ones, while a median deletes an
+ * excursion shorter than half its window and leaves a genuine, sustained lane
+ * change exactly where it was.
+ */
+function median(v: number[], window: number, closed: boolean): number[] {
+  if (window < 3) return v;
+  const half = Math.floor(window / 2);
+  const n = v.length;
+  return v.map((_, i) => {
+    const w: number[] = [];
+    for (let k = -half; k <= half; k++) {
+      let j = i + k;
+      if (closed) j = ((j % n) + n) % n;
+      else if (j < 0 || j >= n) continue;
+      w.push(v[j]!);
+    }
+    w.sort((a, b) => a - b);
+    return w[Math.floor(w.length / 2)]!;
   });
 }
 
@@ -534,14 +565,24 @@ export function laneProfiles(lines: Line[], o: BundleOptions): LaneProfile[] {
 }
 
 /** The gap-dependent half. One pass per scale change. */
-export function applyLanes(p: LaneProfile, minGap: number, cornerRadius = 0): Pt[] {
-  const wanted = p.across.map((positions, i) => {
+/**
+ * @param holdWindow  Densified steps a lane assignment must persist for before
+ *   it is allowed to move the line. 0 leaves the raw per-point assignment.
+ */
+export function applyLanes(
+  p: LaneProfile, minGap: number, cornerRadius = 0, holdWindow = 0,
+): Pt[] {
+  const raw = p.across.map((positions, i) => {
     if (positions.length < 2 || minGap <= 0) return 0;
     const target = spread(positions, minGap);
     // Computed in the canonical frame; brought back into this line's own,
     // which is the frame that varies smoothly and can be averaged below.
     return (target[p.self[i]!]! - positions[p.self[i]!]!) * p.canonSign[i]!;
   });
+  // Drop the lane changes too brief to be worth drawing, BEFORE easing: a
+  // ramp into a lane the route holds for thirty metres is still a wiggle, just
+  // a smoother one.
+  const wanted = median(raw, holdWindow, p.closed);
   // Ease in and out, so entering a bundle is a ramp rather than a step.
   // Widen first, then round off. Smoothing alone always ramps too late, and
   // rounding a widened run keeps the plateau at full height.
