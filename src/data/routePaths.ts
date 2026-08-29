@@ -17,7 +17,7 @@ import type { LatLng, StaticFeed } from "./types";
  * 3302:177, 3469:24, 3470:31 -- and the Stadium Loop's three stops are already
  * in stops.txt.
  */
-export async function fetchRoutePaths(): Promise<Map<string, LatLng[]>> {
+export async function fetchRoutePathPayload(): Promise<unknown> {
   const res = await fetch(`${PRIVATE_BASE}/mapGetData.php?getStops=2`, {
     // User-Agent only under Node: in a browser it is a forbidden header, and
     // asking for it turns this into a preflight passiogo.com does not answer.
@@ -26,7 +26,10 @@ export async function fetchRoutePaths(): Promise<Map<string, LatLng[]>> {
     body: JSON.stringify({ s0: SYSTEM_ID, sA: 1 }),
   });
   if (!res.ok) throw new Error(`getStops -> HTTP ${res.status}`);
-  return parseRoutePaths(await res.json());
+  // Returned raw: one request carries both the geometry and the stop lists,
+  // and asking twice for the same payload is a second call to someone else's
+  // server for nothing.
+  return res.json();
 }
 
 /** Pull the polylines out of Passio's getStops payload.
@@ -69,5 +72,51 @@ export function fillMissingShapes(feed: StaticFeed, paths: Map<string, LatLng[]>
     const path = paths.get(route.id);
     if (path) route.shape = path;
   }
+  return feed;
+}
+
+/** The stop ids a route calls at, in riding order.
+ *
+ *  `routes` is `{"<routeId>": ["Name", "#colour", ["<seq>", "<stopId>", 0], ...]}`
+ *  -- the header entries are strings, every stop is an array. */
+export function parseRouteStops(payload: unknown): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const routes = (payload as { routes?: Record<string, unknown> })?.routes;
+  if (!routes || typeof routes !== "object") return out;
+
+  for (const [routeId, row] of Object.entries(routes)) {
+    if (!Array.isArray(row)) continue;
+    const ordered = row
+      .filter((e): e is unknown[] => Array.isArray(e))
+      // Sorted by Passio's own sequence rather than trusting array order,
+      // and the id is kept as a string: these join to GTFS stop_id.
+      .map((e) => ({ seq: Number(e[0]), stopId: String(e[1] ?? "") }))
+      .filter((e) => e.stopId !== "" && Number.isFinite(e.seq))
+      .sort((a, b) => a.seq - b.seq)
+      .map((e) => e.stopId);
+    if (ordered.length) out.set(routeId, ordered);
+  }
+  return out;
+}
+
+/**
+ * Record which stops each route serves, for the map to draw.
+ *
+ * Deliberately NOT fed into stopRoutes(). That function decides which stops
+ * may take one of the eight candidate slots when planning a trip, and a stop
+ * known only from this list has no trip behind it and so no times to ride on.
+ * Letting one compete for a slot is how unservable stops crowded real ones out
+ * before -- 6 of the 8 nearest to Barus & Holley were parking lots and
+ * monuments, and rides went missing from places that plainly have one.
+ *
+ * Same reason as the shapes: this fills a hole in the export rather than
+ * overruling it. The Connector and both Evening routes already agree with
+ * Passio stop for stop; the Daytime Express ships one trip covering two of its
+ * nine stops, and the Stadium Loop ships none of its four.
+ */
+export function withRouteStops(feed: StaticFeed, served: Map<string, string[]>): StaticFeed {
+  const known = new Set(feed.stops.keys());
+  feed.routeStops = new Map(
+    [...served].map(([routeId, ids]) => [routeId, ids.filter((id) => known.has(id))]));
   return feed;
 }
