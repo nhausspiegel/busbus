@@ -148,3 +148,27 @@ export async function fetchServiceHistory(): Promise<ServiceHistory | null> {
     return null;
   }
 }
+
+/**
+ * The route seen most often at this weekday and hour, among those given.
+ *
+ * A rider standing at a stop is asking "will one come?". Averaging over every
+ * route that calls there answers a question nobody asked -- a route that
+ * barely serves the stop drags the number down. The best-served route is the
+ * one their wait actually depends on.
+ *
+ * Null when too little has been watched to say anything, on the same floor as
+ * describeService. A route seen ZERO times out of a well-watched hour is not
+ * nothing, though: that is worth telling someone before they wait.
+ */
+export function bestObserved(
+  history: ServiceHistory, routeIds: string[], at: Date,
+): { routeId: string; seen: number; days: number } | null {
+  let best: { routeId: string; seen: number; days: number } | null = null;
+  for (const routeId of routeIds) {
+    const { seen, days } = observed(history, routeId, at);
+    if (days < MIN_DAYS) continue;
+    if (!best || seen > best.seen) best = { routeId, seen, days };
+  }
+  return best;
+}

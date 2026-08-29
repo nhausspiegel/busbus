@@ -487,6 +487,7 @@ export default function App() {
         {mode === "stop" && feed?.stops.get(stopId!) && (
           <StopCard
             stop={feed.stops.get(stopId!)!} feed={feed} board={board} now={planNow}
+            history={history}
             onBack={() => setStopId(null)}
             onRouteClick={(r) => { setStopId(null); setRouteId(r); }}
             onSetDestination={() => {
