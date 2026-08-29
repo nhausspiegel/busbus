@@ -375,6 +375,40 @@ describe("TransitMap walking overlay", () => {
     expect(map.layers.has("itin-walk-guess")).toBe(false);
   });
 
+  it("draws a walk that arrives AFTER the trip is chosen", () => {
+    // The overlay is never present at mount in the real app. The rider picks a
+    // trip, the ride is drawn immediately, and the walking legs arrive a moment
+    // later when the router answers -- so the walk is always a LATE prop.
+    //
+    // Every other test here passes the overlay at mount and then fires load,
+    // which runs the effect once with the walk already in hand. That is the one
+    // ordering production never has, and it hid a missing `overlay` dependency
+    // on the effect that builds these sources: the sources were rebuilt only
+    // when the theme flipped or the feed reloaded, so the dotted line simply
+    // never appeared. The ride line survived because a separate effect pushes
+    // ride geometry through a ref; the walk had no second path.
+    const props = {
+      feed, buses, me: null, destination: null,
+      focus: null, selection: null, activeRouteIds: new Set(["A", "B"]),
+    } as const;
+    const { rerender } = render(<TransitMap {...props} overlay={null} />);
+    map.fire("load");
+    expect(map.sources.get("itin-walk")).toBeUndefined();
+
+    act(() => {
+      rerender(<TransitMap {...props} overlay={{
+        rides: [],
+        walks: [{ path: [{ lat: 41.82, lng: -71.40 }, { lat: 41.821, lng: -71.401 },
+                         { lat: 41.83, lng: -71.41 }], provisional: false }],
+      }} />);
+    });
+
+    const src = map.sources.get("itin-walk") as { data: { features: unknown[] } } | undefined;
+    expect(src).toBeTruthy();
+    expect(src!.data.features).toHaveLength(1);
+    expect(map.layers.has("itin-walk")).toBe(true);
+  });
+
   it("adds no walk source at all when nothing routed", () => {
     render(
       <TransitMap feed={feed} buses={buses} me={null} destination={null}
