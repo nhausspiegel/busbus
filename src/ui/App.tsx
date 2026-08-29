@@ -17,8 +17,9 @@ import { fetchVehicles, type Bus } from "../data/vehicles";
 import { fetchOccupancy, mergeOccupancy } from "../data/occupancy";
 import { buildBoard, groupLiveTrips } from "../data/departures";
 import { nearbyDepartures } from "../routing/nearby";
-import { walkRoute, walkLegs, type WalkStep } from "../routing/walk";
+import { walkRoute, walkLegs, stablePosition, type WalkStep } from "../routing/walk";
 import { planBetween } from "../routing/trip";
+import { sameItinerary } from "../routing/plan";
 import { sliceShape } from "../routing/shape";
 import type { Place } from "../data/geocode";
 import type { StaticFeed, DepartureBoard, Departure, LatLng, Itinerary } from "../data/types";
@@ -38,6 +39,14 @@ export default function App() {
   // the trip was re-planned every 30 seconds with no user action, hitting
   // Valhalla each time -- and a throttled response (no CORS headers) landed in
   // the catch and told a rider staring at a valid list "No shuttle route".
+  /** What the plan effect needs to read without being restarted by it. */
+  const itinerariesRef = useRef<Itinerary[] | null>(null);
+  const chosenRef = useRef<Itinerary | null>(null);
+  /** Which plan is the current one. The `cancelled` flag alone cannot clear
+   *  the spinner: a superseded run returns early and never reaches its own
+   *  `finally`, so under a steady cadence of re-plans the sheet said
+   *  "Finding shuttles..." forever. The newest run always clears it. */
+  const planGen = useRef(0);
   const boardRef = useRef(board);
   const liveTripsRef = useRef(liveTrips);
   boardRef.current = board;
@@ -68,6 +77,9 @@ export default function App() {
   /** Whether that time is a departure or a deadline. */
   const [whenMode, setWhenMode] = useState<WhenMode>("leave");
 
+  itinerariesRef.current = itineraries;
+  chosenRef.current = chosen;
+
   const mode = resolveMode({ stopId, routeId, chosen: chosen !== null, dest: dest !== null });
   // Kept stable by VALUE, not identity. Geolocation hands back a fresh object
   // every report, even when the rider has not moved a metre, and `origin` is a
@@ -77,10 +89,17 @@ export default function App() {
   // steady trickle of position updates the spinner never clears, so the sheet
   // reads "Finding shuttles..." forever with the answers sitting underneath
   // it. That is why shuttle routes looked like they were never calculated.
+  //
+  // Snapped to ten metres as well. The memo above stops a fresh OBJECT from
+  // restarting the plan; it does nothing about the low digits of a fix moving
+  // on their own, which change the walk-matrix cache key and so send a real
+  // request to a volunteer router. Snapping is what makes re-planning on every
+  // board poll free.
+  const snapped = me ? stablePosition(me) : CAMPUS;
   const origin = useMemo(
-    () => me ?? CAMPUS,
+    () => snapped,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [me?.lat, me?.lng]);
+    [snapped.lat, snapped.lng]);
 
   useEffect(() => {
     fetchStaticFeed()
@@ -182,12 +201,24 @@ export default function App() {
     () => (feed ? nearbyDepartures(feed, board, origin, planNow, 6) : []),
     [feed, board, origin, planNow]);
 
-  // Plan whenever the destination changes. Walking times come from Valhalla,
-  // one matrix call per end rather than one call per candidate stop.
+  // Plan whenever the destination changes -- and again on every board poll,
+  // because an itinerary built from live departures is only true for as long
+  // as those departures are. Left to the destination alone it froze at the
+  // moment the rider picked one and kept offering a bus that had gone.
+  //
+  // Walking times come from Valhalla, one matrix call per end rather than one
+  // per candidate stop, and the origin is snapped to ten metres, so the repeat
+  // plan is a cache hit and sends nothing. That is the whole reason the board
+  // can be a dependency: it was one before, hit Valhalla every thirty seconds,
+  // and a throttled response told riders "No shuttle route".
   useEffect(() => {
     if (!feed || !dest) { setItineraries(null); return; }
     let cancelled = false;
-    setPlanning(true);
+    const gen = ++planGen.current;
+    // The spinner is for having nothing to show, not for having something a
+    // few seconds old. Blanking a good list every poll is worse than the
+    // staleness it announces.
+    if (itinerariesRef.current === null) setPlanning(true);
     (async () => {
       try {
         const departAfter = whenMode === "leave" ? leaveAt ?? new Date() : new Date();
@@ -196,21 +227,39 @@ export default function App() {
           feed, boardRef.current, origin, dest.at, departAfter, liveTripsRef.current, deadline);
         if (cancelled) return;
         setItineraries(found);
-        // Draw the best option straight away. Apple Maps shows the first
-        // result on the map without waiting to be asked, and an empty map
-        // beside a list of times makes the rider do the work twice.
-        setPreview(found[0] ?? null);
+
+        const picked = chosenRef.current;
+        if (!picked) {
+          // Draw the best option straight away. Apple Maps shows the first
+          // result on the map without waiting to be asked, and an empty map
+          // beside a list of times makes the rider do the work twice.
+          setPreview(found[0] ?? null);
+        } else {
+          // The rider opened one. Every itinerary here is a new object, so the
+          // selection has to be carried across by what the journey IS -- its
+          // trips and stops -- or a refresh would throw their choice away and
+          // slam the map back to the first result every thirty seconds.
+          const again = found.find((i) => sameItinerary(i, picked));
+          // If it is gone, leave it alone rather than dropping them out of the
+          // trip: a bus they have already boarded stops being plannable the
+          // moment it pulls away, and that is not a reason to close the view.
+          if (again) { setChosen(again); setPreview(again); }
+        }
       } catch {
-        if (!cancelled) {
+        // Only the FIRST plan may report failure. A refresh that fails leaves
+        // the rider with what they already had, which is still true; replacing
+        // it with an error because one poll was throttled is the exact bug
+        // that made the board a ref in the first place.
+        if (!cancelled && itinerariesRef.current === null) {
           setItineraries([]);
           setNotice("Couldn't work out walking times just now. Try again in a moment.");
         }
       } finally {
-        if (!cancelled) setPlanning(false);
+        if (planGen.current === gen) setPlanning(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [feed, dest, origin, leaveAt, whenMode]);
+  }, [feed, dest, origin, leaveAt, whenMode, board]);
 
   // Draw the chosen trip: real sidewalk geometry for the walks, and only the
   // ridden slice of each route shape.

@@ -245,3 +245,22 @@ export function planTrips(opts: PlanOptions): Itinerary[] {
 
   return rankAndTrim([...bestByRoute.values()], maxResults, opts.arriveBy);
 }
+
+/** Whether two itineraries are the same journey.
+ *
+ *  The board refreshes every few seconds and every itinerary is rebuilt from
+ *  scratch, so object identity cannot survive a poll. Without this a refresh
+ *  threw away whichever option the rider had selected and slammed the map back
+ *  to the first result, mid-trip.
+ *
+ *  A journey is the trips it rides and the stops it uses. The times are what
+ *  the refresh is FOR, so they are deliberately not compared. */
+export function sameItinerary(a: Itinerary, b: Itinerary): boolean {
+  if (a.rides.length !== b.rides.length) return false;
+  return a.rides.every((r, i) => {
+    const s = b.rides[i]!;
+    return r.tripId === s.tripId
+      && r.boardStopId === s.boardStopId
+      && r.alightStopId === s.alightStopId;
+  });
+}

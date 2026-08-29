@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { planTrips } from "../src/routing/plan";
-import type { StaticFeed, DepartureBoard, Departure, Trip, Stop } from "../src/data/types";
+import { planTrips, sameItinerary } from "../src/routing/plan";
+import type { StaticFeed, DepartureBoard, Departure, Trip, Stop, Itinerary, RideLeg } from "../src/data/types";
 
 const NOW = 1_700_000_000;
 const ORIGIN = { lat: 41.8262, lng: -71.4047 };
@@ -317,5 +317,35 @@ describe("a live departure whose realtime trip stops short", () => {
     expect(ride.rides[0]!.arriveTime).toBe(NOW + 800);
     // and only one ride, not one from each source
     expect(got.filter((i) => i.rides.length === 1)).toHaveLength(1);
+  });
+});
+
+describe("sameItinerary", () => {
+  /** Live data refreshes every few seconds and every itinerary is rebuilt from
+   *  scratch, so object identity cannot survive a poll. A journey is the trips
+   *  and the stops it uses; the times are what the refresh is FOR. */
+  const it0 = (over: Partial<RideLeg> = {}) => ({
+    rides: [{
+      routeId: "R1", tripId: "T1", boardStopId: "A", alightStopId: "B",
+      departTime: 100, arriveTime: 700, live: true, numStops: 1, boardSeq: 1, ...over,
+    }],
+  } as Itinerary);
+
+  it("keeps the rider's choice when only the times moved", () => {
+    expect(sameItinerary(it0(), it0({ departTime: 160, arriveTime: 780 }))).toBe(true);
+  });
+
+  it("is a different journey when the rider gets off somewhere else", () => {
+    expect(sameItinerary(it0(), it0({ alightStopId: "C" }))).toBe(false);
+  });
+
+  it("is a different journey on a later bus", () => {
+    expect(sameItinerary(it0(), it0({ tripId: "T2" }))).toBe(false);
+  });
+
+  it("matches walking to walking", () => {
+    const walk = { rides: [] } as unknown as Itinerary;
+    expect(sameItinerary(walk, { rides: [] } as unknown as Itinerary)).toBe(true);
+    expect(sameItinerary(walk, it0())).toBe(false);
   });
 });

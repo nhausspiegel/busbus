@@ -404,3 +404,27 @@ export function walkLegs(
       : { path: [l.from, l.to], provisional: true };
   });
 }
+
+/** Grid the rider's position is snapped to, degrees. 1e-4 of latitude is
+ *  11.1m, and 8.3m of longitude at Providence. */
+const POSITION_GRID = 1e-4;
+
+/**
+ * Snap a position to a ten-metre grid.
+ *
+ * Every request in this module is cached on its own body, so an origin's
+ * coordinates are literally its cache key. A geolocation fix moves in its low
+ * digits on every report whether or not the rider has moved, which turns each
+ * report into a fresh key and a fresh request to a volunteer-run router.
+ *
+ * That is what made re-planning on live data too expensive to do: the trip was
+ * re-planned every thirty seconds, hit Valhalla every time, and a throttled
+ * response -- which has no CORS headers and so arrives as a network error --
+ * told a rider looking at a perfectly good list "No shuttle route". Snapping
+ * first makes the repeat plan a cache hit instead, so the board can refresh
+ * the itineraries without sending anything.
+ */
+export function stablePosition(p: LatLng): LatLng {
+  const snap = (v: number) => Math.round(v / POSITION_GRID) * POSITION_GRID;
+  return { lat: snap(p.lat), lng: snap(p.lng) };
+}
