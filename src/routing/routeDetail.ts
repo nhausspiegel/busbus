@@ -120,13 +120,19 @@ export function routeStops(
     if (trip.stops.length > longest.length) longest = trip.stops;
   }
 
-  // A route the GTFS export ships no trips for still has a stop list, and a
-  // rider tapping it should get the same page as any other line rather than a
-  // blank one. Only the ORDER comes from here -- there are no times behind it,
-  // so every row's next departure is whatever the live board says, which for a
-  // route with nothing reporting is honestly nothing.
-  if (longest.length === 0)
-    longest = (feed.routeStops?.get(routeId) ?? []).map((stopId, i) => ({ stopId, seq: i + 1 }));
+  // Where the export kept fewer stops than the route has, take the fuller
+  // list. The Stadium Loop ships no trips at all, and the Daytime Express
+  // ships one trip covering two of its nine calls -- so this page came up
+  // blank for one route and two-thirds short for the other, next to a map
+  // already drawing every stop. Whichever list is longer is the one that
+  // describes the line.
+  //
+  // Only the ORDER comes from here. There are no times behind it, so each
+  // row's next departure still comes from the live board, and a route with
+  // nothing reporting honestly shows nothing.
+  const served = feed.routeStops?.get(routeId) ?? [];
+  if (served.length > longest.length)
+    longest = served.map((stopId, i) => ({ stopId, seq: i + 1 }));
 
   const seen = new Set<string>();
   const ordered: { stop: Stop; seq: number; stopId: string }[] = [];
