@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { emptyHistory, recordSample, bucketOf, observed, describeService } from "../src/data/serviceHistory";
+import { emptyHistory, recordSample, bucketOf, observed, describeService, bestObserved } from "../src/data/serviceHistory";
 
 /**
  * The only honest way this app can say when service runs.
@@ -101,5 +101,36 @@ describe("daylight saving", () => {
     // record than one that says 2pm and means 3pm.
     expect(bucketOf(new Date("2023-11-07T22:13:20Z"))).toBe("2-17");
     expect(bucketOf(new Date("2023-10-31T22:13:20Z"))).toBe("2-18");
+  });
+});
+
+describe("bestObserved", () => {
+  /** A rider standing at a stop asks "will one come?". The record can answer
+   *  it for the route that serves them best, which is more use than an
+   *  average over routes that barely call there. */
+  const build = () => {
+    let h = emptyHistory("2026-07-01");
+    for (let i = 0; i < 4; i++) {
+      const at = new Date(Date.UTC(2026, 6, 3 + i * 7, 18, 20));
+      h = recordSample(h, i < 3 ? ["A", "B"] : i < 4 ? ["B"] : [], at);
+    }
+    return h;                       // A seen 3 of 4, B seen 4 of 4
+  };
+
+  it("reports the route seen most often at this hour", () => {
+    expect(bestObserved(build(), ["A", "B"], FRI_14)).toEqual({ routeId: "B", seen: 4, days: 4 });
+  });
+
+  it("ignores routes that do not serve the stop", () => {
+    expect(bestObserved(build(), ["A"], FRI_14)).toEqual({ routeId: "A", seen: 3, days: 4 });
+  });
+
+  it("says nothing when nothing has been watched enough", () => {
+    expect(bestObserved(emptyHistory("2026-07-01"), ["A"], FRI_14)).toBeNull();
+    expect(bestObserved(build(), [], FRI_14)).toBeNull();
+  });
+
+  it("reports a route never seen, which is the useful answer too", () => {
+    expect(bestObserved(build(), ["Z"], FRI_14)).toEqual({ routeId: "Z", seen: 0, days: 4 });
   });
 });

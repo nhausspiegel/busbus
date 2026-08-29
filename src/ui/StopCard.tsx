@@ -1,17 +1,24 @@
 import { clock, minsUntil } from "./format";
+import { bestObserved, type ServiceHistory } from "../data/serviceHistory";
+import { stopRoutes } from "../routing/routeDetail";
 import { stopBoard } from "../routing/stopBoard";
 import type { StaticFeed, DepartureBoard, Stop } from "../data/types";
 
 /** What can I catch from this stop. */
 export function StopCard({
-  stop, feed, board, now, onBack, onRouteClick, onSetDestination,
+  stop, feed, board, now, history = null, onBack, onRouteClick, onSetDestination,
 }: {
   stop: Stop; feed: StaticFeed | null; board: DepartureBoard; now: number;
+  /** What service has actually been seen here, when the site has a record. */
+  history?: ServiceHistory | null;
   onBack: () => void;
   onRouteClick: (routeId: string) => void;
   onSetDestination: () => void;
 }) {
   const departures = stopBoard(board, stop.id, now);
+  const watched = history
+    ? bestObserved(history, feed ? (stopRoutes(feed).get(stop.id) ?? []) : [], new Date(now * 1000))
+    : null;
 
   return (
     <div>
@@ -34,6 +41,17 @@ export function StopCard({
           No shuttle is reporting from this stop right now. Brown's timetable
           claims every route runs daily all year, so it cannot tell you whether
           one is actually coming — only a bus reporting its own position can.
+          {/* The record CAN speak about other days, and this is where a rider
+              asks: standing at the stop, deciding whether to wait. Reported for
+              the best-served route here, since that is the one their wait
+              depends on -- and still only what was seen, never a promise. */}
+          {watched && (
+            <>{" "}
+              {feed?.routes.get(watched.routeId)?.name ?? "A shuttle"} has been seen
+              here around this time on {watched.seen} of the {watched.days} days
+              watched so far.
+            </>
+          )}
         </p>
       )}
 
