@@ -14,6 +14,18 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { laneProfiles, applyLanes, DEFAULT_OPTIONS, type Pt } from "../src/render/bundle";
 import { CASES } from "../test/fixtures/bundleCases";
 
+/**
+ * NOTE: this exercises the bundler ALONE -- `applyLanes` here is called without
+ * the screen-space lane hold the map applies (`LANE_HOLD_PX` in TransitMap).
+ * That is deliberate: the hold suppresses separation over short runs, which is
+ * exactly what these cases exist to check, so applying it would hide the thing
+ * being measured.
+ *
+ * The consequence is that this is NOT a picture of what the app draws. Judging
+ * the real map from it is the trap that cost this project a lot of time --
+ * `test/squiggle.test.ts` is the production check, in screen pixels.
+ */
+
 const OPTS = DEFAULT_OPTIONS;
 const COLOURS = ["#C8102E", "#1F6FEB", "#2E7D32", "#B15B2E"];
 

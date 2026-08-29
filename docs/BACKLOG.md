@@ -55,6 +55,11 @@ check `public/service-history.json` for a populated `legs` map.
 `npx tsx scripts/bundle-cases.ts` draws the five reference cases to
 `docs/bundle-cases.svg`; both it and `test/bundle.test.ts` are driven by
 `test/fixtures/bundleCases.ts`, so picture and assertions cannot drift.
+
+**These show the bundler ALONE** — without the screen-space lane hold the map
+applies, because the hold suppresses separation over short runs and would hide
+what the cases exist to measure. They are therefore **not** a picture of what
+the app draws; `test/squiggle.test.ts` is the production check.
 Remaining soft spots:
 - The Y-merge reaches 9.9 of a 12 gap and pinches at the merge, partly
   unavoidable — two lines that merge genuinely touch.

@@ -2,6 +2,18 @@ import { describe, it, expect } from "vitest";
 import { laneProfiles, applyLanes, DEFAULT_OPTIONS, type Line, type Pt } from "../src/render/bundle";
 import { CASES } from "./fixtures/bundleCases";
 
+/**
+ * NOTE: this exercises the bundler ALONE -- `applyLanes` here is called without
+ * the screen-space lane hold the map applies (`LANE_HOLD_PX` in TransitMap).
+ * That is deliberate: the hold suppresses separation over short runs, which is
+ * exactly what these cases exist to check, so applying it would hide the thing
+ * being measured.
+ *
+ * The consequence is that this is NOT a picture of what the app draws. Judging
+ * the real map from it is the trap that cost this project a lot of time --
+ * `test/squiggle.test.ts` is the production check, in screen pixels.
+ */
+
 const OPTS = DEFAULT_OPTIONS;
 
 const caseNamed = (name: string) => {
