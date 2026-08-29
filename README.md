@@ -21,11 +21,16 @@ Debug view (raw feed contents, unstyled) stays at `?debug=1`.
 
 | | |
 |---|---|
-| **Next departures** | Stops near you, soonest first, with live buses when any are running |
 | **Trip planning** | Ranked by earliest arrival, not shortest ride — a slow bus leaving now beats an express in fifteen minutes |
 | **Walking** | Offered as a real option and ranked alongside transit, because on a campus this size it often wins |
 | **Route pages** | Every stop in riding order with its next departure |
-| **Leave at** | Plan for later today or tomorrow, which is the only way to see daytime service at night |
+| **Stop cards** | What is reporting from a stop, and what has actually been seen there before |
+| **Leave at / Arrive by** | Plan for a later departure or a deadline. It cannot conjure a shuttle: the board is live-only, so a time far enough ahead honestly offers walking and says why |
+| **Observed service** | CI records when vehicles really report, and the app states that history — the only honest answer to "does one run at this hour" |
+
+The nearby-departures board exists (`src/ui/NearbyBoard.tsx`, with tests) but is
+**hidden**: the owner found it useless. `src/ui/App.tsx` carries the element to
+restore in a comment.
 
 ## The one design idea
 
@@ -469,7 +474,8 @@ distance estimate so trips can still be ranked — no line is ever drawn from it
 ## Known limits, all upstream
 
 - **Predictions reach only ~18 minutes ahead**, and the app plans no further. `findItineraries()` — the CLI and debug-map entry point — deliberately still folds in the timetable so the ranker can be exercised when nothing is running, which is most of the time; that is why `plan-demo` output below is marked `[scheduled]`. The app itself never does this.
-- **Daytime Express has 1 static trip; Brown Stadium Loop has 0.** Brown Stadium Loop also has no shape, so it can never draw a line — though its buses would appear at their raw positions if any ever reported, since vehicles are not filtered by route. This is missing upstream data, not a bug here.
+- **Daytime Express has 1 static trip covering 2 of its 9 stops; Brown Stadium Loop has 0 trips and no shape.** The GTFS export drops them; Passio's own `getStops=2` payload has both, so `src/data/routePaths.ts` fills the shape, the stop order and the active-route list — and never overwrites what the GTFS does carry. That is what puts the Stadium Loop on the map. The **durations** are still missing and cannot be invented, so riding the Express past those two stops waits on observed leg times (`src/data/legTimes.ts`).
+- **Buses are drawn only for routes the map has a line for.** Passio reports vehicles on routes it publishes no line for — measured 2026-08-29, a Charter on route 6868 and SEAS on 3528. A marker floating on no line claims a rider can board something they cannot.
 - **An empty result is often correct.** After the Connector's last run, nothing connects College Hill to the Jewelry District, and the honest answer is "no itineraries."
 
 ## Tests
@@ -478,7 +484,7 @@ distance estimate so trips can still be ranked — no line is ever drawn from it
 npm test
 ```
 
-44 tests, no network — everything runs against frozen fixtures in `test/fixtures/`. To re-freeze after Passio changes its data:
+339 tests, no network — everything runs against frozen fixtures in `test/fixtures/`. To re-freeze after Passio changes its data:
 
 ```bash
 ./scripts/refresh-fixtures.sh
