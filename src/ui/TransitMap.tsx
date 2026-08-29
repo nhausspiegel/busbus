@@ -640,7 +640,20 @@ export function TransitMap({
     const m = map.current;
     if (!m || !ready) return;
     const jump = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    for (const b of buses) {
+    // Only buses on routes this map actually draws.
+    //
+    // Passio reports vehicles on routes it does not publish a line for --
+    // measured 2026-08-29, a Charter bus on route 6868, whose GTFS entry has
+    // no shape at all, plus SEAS on 3528. Drawn anyway, that is a shuttle
+    // marker floating on no line, snapped against an empty shape, which taps
+    // through to a route page with nothing on it. A rider cannot board a
+    // charter; showing it is a claim that they can.
+    //
+    // Filtered ONCE, because the sweep below removes any marker whose bus is
+    // gone from this same list -- skipping them in the loop alone would leave
+    // the marker behind forever.
+    const shown = buses.filter((b) => activeRouteIds.has(b.routeId));
+    for (const b of shown) {
       const color = feed?.routes.get(b.routeId)?.color ?? "#241C17";
       // Onto the line as DRAWN -- bundled into its lane and corner-rounded --
       // not the raw shape. Drawing one geometry and snapping to another is
@@ -748,7 +761,7 @@ export function TransitMap({
       }
     }
     for (const [id, mk] of busMarks.current)
-      if (!buses.some((b) => b.id === id)) { mk.remove(); busMarks.current.delete(id); }
+      if (!shown.some((b) => b.id === id)) { mk.remove(); busMarks.current.delete(id); }
 
     // Runs before the next pass of this effect as well as on unmount, so it is
     // both "a newer fix supersedes the glide in flight" and "do not leave a
@@ -757,7 +770,7 @@ export function TransitMap({
       for (const h of busGlides.current.values()) cancelAnimationFrame(h);
       busGlides.current.clear();
     };
-  }, [buses, feed, ready, zoom]);
+  }, [buses, feed, ready, zoom, activeRouteIds]);
 
   // the rider
   useEffect(() => {

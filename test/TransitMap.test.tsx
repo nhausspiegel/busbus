@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, cleanup, act } from "@testing-library/react";
 import type { LatLng, StaticFeed } from "../src/data/types";
+import type { Bus } from "../src/data/vehicles";
 
 /**
  * A MapLibre stand-in, so a test can see what the component actually draws.
@@ -71,11 +72,14 @@ class FakeMap {
 const markers: FakeMarker[] = [];
 class FakeMarker {
   lngLat: [number, number] = [0, 0];
+  /** Recorded, so a test can tell "never drawn" from "drawn and left behind".
+   *  A marker the component forgets to remove stays on the map forever. */
+  removed = false;
   constructor(public opts: { element: HTMLElement }) { markers.push(this); }
   setLngLat(v: [number, number]) { this.lngLat = v; return this; }
   getLngLat() { return { lng: this.lngLat[0], lat: this.lngLat[1] }; }
   addTo() { return this; }
-  remove() { return this; }
+  remove() { this.removed = true; return this; }
   getElement() { return this.opts.element; }
 }
 
@@ -448,5 +452,44 @@ describe("the ends of a ride", () => {
     const radius = JSON.stringify(map.paint.get("stops.circle-radius") ?? "");
     expect(radius).toContain("s1");
     expect(radius).toContain("s2");
+  });
+});
+
+describe("buses on routes the map does not draw", () => {
+  // Passio reports vehicles on routes it publishes no line for: measured
+  // 2026-08-29, a Charter on route 6868, whose GTFS entry has no shape at all.
+  // Drawn anyway that is a shuttle marker floating on nothing, snapped against
+  // an empty shape, tapping through to an empty route page -- and a rider
+  // cannot board a charter, so showing it claims something untrue.
+  const charter: Bus[] = [{
+    id: "c1", label: "127", routeId: "CHARTER",
+    lat: 41.8210, lng: -71.4040, bearing: 0, occupancy: null,
+  }];
+
+  it("does not draw one", () => {
+    render(
+      <TransitMap feed={feed} buses={charter} me={null} destination={null} overlay={null}
+        focus={null} selection={null} activeRouteIds={new Set(["A", "B"])} />);
+    map.fire("load");
+    expect(markers).toHaveLength(0);
+  });
+
+  it("removes its marker when the route stops being drawn", () => {
+    // The sweep that deletes departed buses keys off the same filtered list;
+    // skipping them in the draw loop alone would strand the marker forever.
+    const onA: Bus[] = [{ ...charter[0]!, routeId: "A" }];
+    const r = render(
+      <TransitMap feed={feed} buses={onA} me={null} destination={null} overlay={null}
+        focus={null} selection={null} activeRouteIds={new Set(["A", "B"])} />);
+    map.fire("load");
+    expect(markers).toHaveLength(1);
+    const mk = markers[0]!;
+
+    act(() => {
+      r.rerender(
+        <TransitMap feed={feed} buses={onA} me={null} destination={null} overlay={null}
+          focus={null} selection={null} activeRouteIds={new Set(["B"])} />);
+    });
+    expect(mk.removed).toBe(true);
   });
 });
