@@ -26,6 +26,9 @@ export async function planBetween(
   /** Arrive-by deadline. `now` stays the earliest-departure floor, so in this
    *  mode it should be the actual current time, not the chosen time. */
   arriveBy?: Date,
+  /** Legs that have actually been observed, for routes whose GTFS trip does
+   *  not carry their stops. */
+  legSecondsFor?: (routeId: string, from: string, to: string) => number | null,
 ): Promise<Itinerary[]> {
   // Only stops a route actually serves may take a candidate slot.
   //
@@ -64,6 +67,7 @@ export async function planBetween(
     feed, board, origin, destination,
     walkFromOrigin, walkToDestination,
     ...(liveTrips ? { liveTrips } : {}),
+    ...(legSecondsFor ? { legSecondsFor } : {}),
     ...(typeof direct === "number" ? { directWalkSeconds: direct } : {}),
     ...(arriveBy ? { arriveBy: Math.floor(arriveBy.getTime() / 1000) } : {}),
     now: Math.floor(now.getTime() / 1000),

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { planTrips, sameItinerary } from "../src/routing/plan";
+import { planTrips, sameItinerary, type PlanOptions } from "../src/routing/plan";
 import type { StaticFeed, DepartureBoard, Departure, Trip, Stop, Itinerary, RideLeg } from "../src/data/types";
 
 const NOW = 1_700_000_000;
@@ -347,5 +347,69 @@ describe("sameItinerary", () => {
     const walk = { rides: [] } as unknown as Itinerary;
     expect(sameItinerary(walk, { rides: [] } as unknown as Itinerary)).toBe(true);
     expect(sameItinerary(walk, it0())).toBe(false);
+  });
+});
+
+describe("a route whose GTFS trip does not reach the destination", () => {
+  /**
+   * The Daytime Express, in miniature. Its trip carries two of the nine stops
+   * it calls at, so a rider at a stop the trip omits was offered a walk while
+   * a shuttle they could board went past -- the original report.
+   *
+   * Passio's stop ORDER fills the gap in the route page and the map, but a
+   * ride also needs a DURATION, and there is no source for that but watching.
+   * So a ride here is a live departure plus legs that were actually measured;
+   * if any leg between the two stops has not been seen enough times, no ride
+   * is offered at all rather than one built on a guess.
+   */
+  function wideFixture(departAt: number) {
+    const stops = new Map<string, Stop>([
+      ["A", { id: "A", name: "A", lat: 41.8262, lng: -71.4047 }],
+      ["B", { id: "B", name: "B", lat: 41.8220, lng: -71.4058 }],
+      ["C", { id: "C", name: "C", lat: 41.8179, lng: -71.4069 }],
+    ]);
+    // The trip the GTFS ships knows A only -- exactly the truncated case.
+    const trip: Trip = { id: "T1", routeId: "R1", stops: [{ stopId: "A", seq: 1, time: 0 }] };
+    const feed: StaticFeed = {
+      routes: new Map([["R1", { id: "R1", name: "Route 1", shortName: "1", color: "#347f3d", shape: [] }]]),
+      stops, trips: new Map([["T1", trip]]), feedEndDate: "20991231",
+      routeStops: new Map([["R1", ["A", "B", "C"]]]),
+    };
+    const board: DepartureBoard = new Map([
+      ["A", [{ stopId: "A", tripId: "T1", routeId: "R1", seq: 1, time: departAt, live: true }]],
+    ]);
+    return { feed, board };
+  }
+
+  const opts = (f: ReturnType<typeof wideFixture>, legSecondsFor?: PlanOptions["legSecondsFor"]) => ({
+    feed: f.feed, board: f.board, origin: ORIGIN, destination: DEST, now: NOW,
+    walkFromOrigin: new Map([["A", 120]]),
+    walkToDestination: new Map([["C", 180]]),
+    ...(legSecondsFor ? { legSecondsFor } : {}),
+  });
+
+  it("rides on legs that were actually measured", () => {
+    const f = wideFixture(NOW + 300);
+    const got = planTrips(opts(f, (_r, from, to) =>
+      (from === "A" && to === "B" ? 240 : from === "B" && to === "C" ? 360 : null)));
+    expect(got).toHaveLength(1);
+    const ride = got[0]!.rides[0]!;
+    expect(ride.boardStopId).toBe("A");
+    expect(ride.alightStopId).toBe("C");
+    // Live departure, plus 240 + 360 of measured riding.
+    expect(ride.departTime).toBe(NOW + 300);
+    expect(ride.arriveTime).toBe(NOW + 300 + 600);
+    expect(got[0]!.arriveTime).toBe(NOW + 300 + 600 + 180);
+  });
+
+  it("offers nothing when a leg in between has not been watched", () => {
+    // Half a measurement is not a shorter ride, it is an unknown one.
+    const f = wideFixture(NOW + 300);
+    expect(planTrips(opts(f, (_r, from, to) => (from === "A" && to === "B" ? 240 : null)))).toEqual([]);
+  });
+
+  it("offers nothing at all without observations", () => {
+    const f = wideFixture(NOW + 300);
+    expect(planTrips(opts(f))).toEqual([]);
   });
 });
