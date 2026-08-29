@@ -67,7 +67,22 @@ export const DEFAULT_OPTIONS: BundleOptions = {
   // four. Drawn faithfully that is one route showing as two parallel lines,
   // with a narrow spur where the passes meet. A route is ONE line on a transit
   // map whichever way the bus is pointing.
-  selfMergeM: 12,
+  //
+  // 12 was tuned against that 9.0m median, which is the figure for the route
+  // as a WHOLE and is not the figure anywhere it looks wrong. Measured around
+  // Fones Alley, where the Express was reported as squiggly on a phone: within
+  // 250m it has 178 pairs of its own vertices under 60m apart, median 17.7m
+  // and 90th percentile 48.9m. Every one of those sat above the threshold, so
+  // nothing merged and the passes kept the narrow eyelet where they rejoin --
+  // two or three pixels wide at the zoom the app opens at, drawn with a six
+  // pixel stroke, which is what turns a junction into a blot.
+  //
+  // 30 clears that eyelet. Checked over the whole network at the opening zoom:
+  // no route changes shape, none of them merges with a genuinely separate
+  // street of its own, and the worst drift from the traced line is unchanged
+  // at 40m. The block loop the Express really does drive stays a block loop --
+  // that one is not an artefact and is not this setting's to remove.
+  selfMergeM: 30,
 };
 
 /** Everything about one line that does not depend on the gap, computed once. */
