@@ -534,7 +534,7 @@ export default function App() {
               </p>
             )}
             {itineraries && itineraries.length > 0 && (
-              <ItineraryList itineraries={itineraries} feed={feed} now={planNow}
+              <ItineraryList itineraries={itineraries} feed={feed} now={planNow} realNow={now}
                              selected={preview}
                              onSelect={(i) => { setChosen(i); setPreview(i); setDetent("half"); }} />
             )}
@@ -555,7 +555,8 @@ export default function App() {
         )}
 
         {mode === "detail" && chosen && (
-          <ItineraryDetail itinerary={chosen} feed={feed} now={planNow} directions={directions}
+          <ItineraryDetail itinerary={chosen} feed={feed} now={planNow} realNow={now}
+                           directions={directions}
                            onBack={() => setChosen(null)} />
         )}
         </div>

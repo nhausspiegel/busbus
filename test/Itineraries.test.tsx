@@ -275,6 +275,21 @@ describe("ItineraryList, in the shape Apple uses", () => {
     expect(screen.getByText(/Leave at/)).toBeTruthy();
   });
 
+  it("does not say leave now for a trip planned hours ahead", () => {
+    // Planning to leave at 6:30pm makes the PLANNING clock 6:30pm, so a walk
+    // departing then is "now" by that clock. At two in the afternoon the row
+    // said "Leave now" and the rider would have left immediately.
+    const evening: Itinerary = {
+      ...itinerary(ride()), rides: [],
+      departTime: NOW + 4 * 3600, arriveTime: NOW + 4 * 3600 + 900,
+      totalWalkSeconds: 900,
+    };
+    render(<ItineraryList itineraries={[evening]} feed={feed}
+                          now={NOW + 4 * 3600} realNow={NOW} onSelect={() => {}} />);
+    expect(screen.queryByText(/Leave now/)).toBeNull();
+    expect(screen.getByText(/Leave at/)).toBeTruthy();
+  });
+
   it("still says leave now when the walk starts now", () => {
     const soon: Itinerary = {
       ...itinerary(ride()), rides: [],
@@ -282,5 +297,24 @@ describe("ItineraryList, in the shape Apple uses", () => {
     };
     list([soon]);
     expect(screen.getByText(/Leave now/)).toBeTruthy();
+  });
+});
+
+describe("ItineraryDetail's departure line", () => {
+  const walk = (departIn: number): Itinerary => ({
+    ...itinerary(ride()), rides: [],
+    departTime: NOW + departIn, arriveTime: NOW + departIn + 900, totalWalkSeconds: 900,
+  });
+
+  it("counts down while the countdown is short", () => {
+    render(<ItineraryDetail itinerary={walk(600)} feed={feed} now={NOW} onBack={() => {}} />);
+    expect(screen.getByText(/Leave in 10 min/)).toBeTruthy();
+  });
+
+  it("gives a clock time once counting down stops helping", () => {
+    // "Leave in 289 min" is arithmetic homework, not an instruction.
+    render(<ItineraryDetail itinerary={walk(4 * 3600)} feed={feed} now={NOW} onBack={() => {}} />);
+    expect(screen.queryByText(/Leave in/)).toBeNull();
+    expect(screen.getByText(/Leave at/)).toBeTruthy();
   });
 });
