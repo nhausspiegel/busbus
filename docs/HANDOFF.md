@@ -118,16 +118,13 @@ panel above 820px, so those tests pin a 390px viewport.
 
 ---
 
-## 4. The two broken things, in detail
+## 4. Lane offsetting: deleted once, rebuilt, now measured
 
-### 4a / 4b. Route lines and buses -- RESOLVED BY DELETION
+**Read this before touching `src/render/bundle.ts`.**
 
-**Do not re-implement lane offsetting without reading this.**
-
-Four attempts were made to fan coincident routes into parallel lanes:
-per-segment lanes, rendering resampled points, one lane per whole route, and
-finally a smoothed per-point lane baked into the geometry. Every one looked
-worse than the last on screen. All four shared a false premise:
+Lane offsetting was tried four ways, all worse on screen, and deleted. It was
+then rebuilt properly and is what ships today (`laneProfiles` / `applyLanes`).
+The history matters because the original false premise is still true:
 
 > **A route's published shape is NOT the street centreline.** Brown's Evening
 > CW and CCW shapes are already ~7m apart -- measured -- each traced down its
@@ -135,21 +132,22 @@ worse than the last on screen. All four shared a false premise:
 > the line on the pavement, and snapping buses to that line puts the buses
 > there too.
 
-The verification was independently wrong, which is why this survived three
+The verification was independently wrong too, which is why it survived three
 "fixed" claims: it matched each bus to a route line **by colour**, and several
-Brown routes share a colour, so buses were being measured against lines that
-were not theirs and scoring under 1px.
+Brown routes share one. Join bus to route on `route_id`, never on colour.
 
-**Current state:** `parallel.ts` and `snap.ts` are deleted. Routes render
-`r.shape` unchanged; buses render at their reported `lat`/`lng`. Measured by
-`route_id` on raw coordinates, every live bus is **0.6-18.2m from its own
-route line** -- ordinary GPS error. Passio's vehicle positions and its shapes
-agree; the drawing code was what moved them apart.
+**Current state.** Routes are bundled into lanes in screen-pixel units, stops
+snap to the line as DRAWN, and buses snap to it too. The long-running "squiggle"
+was the bundler picking a lane **per vertex**: each flip slid the line a full
+lane gap sideways. Holding an assignment for 80 screen pixels (a median over
+the offset signal) fixed it -- four of five routes went to 0-2.4 sideways
+reversals per 1000 drawn pixels, and moved *closer* to their streets.
 
-**If parallel lanes are ever wanted again**, the prerequisite is establishing
-where the street centreline actually is (the basemap has it; the GTFS shape
-does not), and any measurement must join bus to route on `route_id`, never on
-colour.
+`git tag renderer-checkpoint` marks the first rendering the owner called the
+best so far. `test/squiggle.test.ts` pins it in screen pixels and fails if it
+regresses. **Do not change the bundler or the map's pixel constants without
+running it**, and see the dead ends in `docs/BACKLOG.md` first -- several
+plausible fixes are measured worse, and metre-based metrics are worthless here.
 
 ---
 
@@ -193,17 +191,19 @@ These are all verified against live responses. Do not re-derive.
 
 ## 6. Known outstanding work (not yet done)
 
-1. **Fix 4a and 4b.** Highest priority.
+See `docs/BACKLOG.md` for the full list with its evidence. The short version:
+
+1. Evening CW keeps one ~5px sideways step; needs stable lane identity across
+   bundle membership changes, and is deliberately parked against the checkpoint.
 2. `numStops` counts *hops*, not stops, so the itinerary disclosure says
    "3 stops" and lists 2 names. Decide which number the label means.
-3. **Loop boarding bug:** `rideStops` recovers the boarding stop by
-   `trip.stops.find(stopId)` — the *first* occurrence. A ride boarding on the
-   second lap of a loop resolves to seq 1 and the expanded list shows a
-   spurious extra lap. Fix needs `RideLeg` to carry `boardSeq` (touches
-   `plan.ts`).
-4. Turn-by-turn walking directions text (Valhalla returns maneuvers).
-5. iOS home-screen icon needs a PNG `apple-touch-icon`; the manifest currently
-   only has an SVG, which Android honours and Safari generally does not.
+3. Geographic vs octilinear rendering is a fork only the owner can settle.
+4. The Express's stop-to-stop times need real observations before the planner
+   can route through the seven stops its GTFS trip omits.
+
+Resolved since this was last written: the loop boarding bug (`RideLeg` carries
+`boardSeq` and `rideStops` joins on it), turn-by-turn walking directions, and
+the iOS `apple-touch-icon.png`.
 
 ---
 
@@ -211,10 +211,11 @@ These are all verified against live responses. Do not re-derive.
 
 ```bash
 npm run dev                       # http://localhost:5173
-npm test                          # 170 tests, offline
+npm test                          # 339 tests, offline
 npx tsc -b --noEmit
 npx tsx scripts/plan-demo.ts      # Angell <-> Trader Joe's, both ways
 ./.venv/bin/python busbus.py      # is Passio itself healthy?
+npx tsx scripts/record-service.ts # what is running right now, and record it
 ```
 
 Deploy: commit and `git push origin main`, then

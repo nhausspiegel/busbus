@@ -28,11 +28,23 @@ night:
 A scheduled time is therefore not a weaker claim than a live one, it is an
 unfounded one, and styling cannot fix that. The board is built from live
 departures only (`buildBoard(live, [])` in App). The timetable keeps the one
-job it is honest at: which stops a route serves, in what order, from
-`feed.trips` -- which never touches the board.
+job it is honest at: which stops a route serves, in what order -- from
+`feed.trips`, and from `feed.routeStops` where the export drops them -- which
+never touches the board.
 
-If you want to tell a rider when service actually runs, the only honest route
-is observation: record when vehicles really report, then state that history.
+Telling a rider when service actually runs is done the only honest way there
+is: observation. `scripts/record-service.ts` samples the vehicle feed every 15
+minutes from CI and commits what it saw to `public/service-history.json`; the
+route page and the stop card state that record and nothing beyond it. Counted
+in DAYS rather than samples, nothing claimed under three days observed, and
+always past tense -- it says what happened, never what will.
+
+The same recording gives the one thing GTFS cannot: how long a leg actually
+takes (`src/data/legTimes.ts`). Realtime publishes an absolute time per stop,
+so the gap between two of them on one trip is a measured duration, which is
+what lets a route be ridden past the stops its GTFS trip omits. Five samples
+minimum, median not mean. **Never** derive a duration from distance and an
+assumed speed -- that is the unfounded claim in a different coat.
 
 Routing and geocoding both run on volunteer infrastructure, and it goes down.
 Measured 2026-08-23/24:
@@ -55,11 +67,30 @@ a trailing debounce alone still fires per keystroke for a slow typist.
 ## Data source
 
 Passio GO. Use the **GTFS feeds**, not the private `mapGetData.php` endpoints —
-see README.md for why. The private JSON is for exactly three things: which
-routes are active (`outdated` flag), exact passenger counts, and the websocket.
+see README.md for why. The private JSON is for exactly four things: exact
+passenger counts, the websocket, which routes are running, and **the geometry
+and stop lists the GTFS export drops**.
+
+That last one is not a loosening of the rule, it is the rule applied where GTFS
+is silent. Measured 2026-08-29: `routes.txt` carries 22427 Brown Stadium Loop
+with **no trips and no shape**, and 3302 Daytime Express with **one trip
+covering two of its nine stops**. `src/data/routePaths.ts` fills shape, stop
+order and the active-route list, and **never overwrites what the GTFS does
+carry**. The same payload's point counts match `shapes.txt` exactly for every
+route that has both (3302:177, 3469:24, 3470:31), so it is the same geometry
+rather than a second opinion about it.
+
+Which routes are running comes from `routes` minus `excludedRoutesID` in
+`getStops=2`, **not** the `outdated` flag — that flag lies about seasonal
+suspension. Measured, the exclusion list reproduces exactly the five route ids
+that used to be hardcoded.
 
 Route id join key is `myid` / GTFS `route_id`. The private `id` field is not
 unique — do not join on it.
+
+Anything in front of `fetchStaticFeed` gets a deadline. That private call now
+sits ahead of the whole map, and this project has already watched an
+undocumented host accept a connection and never reply.
 
 No API keys anywhere. Nothing to keep out of git.
 
