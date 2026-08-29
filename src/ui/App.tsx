@@ -536,6 +536,7 @@ export default function App() {
             )}
             {itineraries && itineraries.length > 0 && (
               <ItineraryList itineraries={itineraries} feed={feed} now={planNow} realNow={now}
+                             originKnown={me !== null}
                              selected={preview}
                              onSelect={(i) => { setChosen(i); setPreview(i); setDetent("half"); }} />
             )}
