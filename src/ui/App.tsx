@@ -26,6 +26,9 @@ import type { StaticFeed, DepartureBoard, Departure, LatLng, Itinerary } from ".
 
 /** Routes Passio lists as not archived. GTFS ships every route Brown ever
  *  configured, including two with no trips at all. */
+/** Fallback only. The live answer comes from Passio's own exclusion list via
+ *  feed.activeRouteIds; this is what to draw when that could not be fetched,
+ *  since blanking the map is the worse failure. */
 const ACTIVE = new Set(["3302", "3469", "3470", "22427", "62487"]);
 const VEHICLE_POLL_MS = 10_000;
 const BOARD_POLL_MS = 30_000;
@@ -366,7 +369,7 @@ export default function App() {
         destination={dest?.at ?? null} overlay={overlay} focus={focus}
         selection={stopId ? { kind: "stop", id: stopId }
           : routeId ? { kind: "route", id: routeId } : null}
-        activeRouteIds={ACTIVE}
+        activeRouteIds={feed?.activeRouteIds ?? ACTIVE}
         onRouteClick={(r) => { setRouteId(r); setStopId(null); setDetent("half"); }}
         onStopClick={(id) => { setStopId(id); setRouteId(null); setDetent("half"); }}
         onMapClick={(p) => pickDestination(p, "Dropped pin")}
@@ -482,7 +485,7 @@ export default function App() {
 
         {mode === "route" && (
           <RouteDetail feed={feed} board={board} routeId={routeId!} buses={buses}
-                       activeRouteIds={ACTIVE}
+                       activeRouteIds={feed?.activeRouteIds ?? ACTIVE}
                        now={planNow} onBack={() => setRouteId(null)} />
         )}
 
