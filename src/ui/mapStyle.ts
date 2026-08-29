@@ -173,7 +173,11 @@ export function basemapStyle(dark: boolean): StyleSpecification {
         filter: ["in", "class", "city", "town", "suburb", "neighbourhood"],
         layout: {
           "text-field": ["get", "name"],
-          "text-font": ["Noto Sans Medium"],
+          // OpenFreeMap serves exactly three faces -- Regular, Bold and Italic.
+          // "Noto Sans Medium" 404s on every glyph range it is asked for, and
+          // MapLibre quietly falls back, so the labels drew while the console
+          // filled with failed requests for a font that does not exist.
+          "text-font": ["Noto Sans Bold"],
           "text-size": ["interpolate", ["linear"], ["zoom"], 10, 12, 16, 15],
           "text-transform": "none",
         },
