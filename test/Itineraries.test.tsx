@@ -318,3 +318,32 @@ describe("ItineraryDetail's departure line", () => {
     expect(screen.getByText(/Leave at/)).toBeTruthy();
   });
 });
+
+describe("when the app does not know where the rider is", () => {
+  // Location denied or unavailable falls back to the middle of campus, and
+  // every walk time and ETA below is measured from there. Presented without
+  // saying so, that is a computed answer resting on a premise the rider never
+  // agreed to -- the same failure as a departure time nothing is backing.
+  const walk: Itinerary = {
+    ...itinerary(ride()), rides: [], departTime: NOW,
+    arriveTime: NOW + 900, totalWalkSeconds: 900,
+  };
+
+  it("says the times are measured from campus", () => {
+    render(<ItineraryList itineraries={[walk]} feed={feed} now={NOW}
+                          originKnown={false} onSelect={() => {}} />);
+    expect(screen.getByText(/from the middle of campus/i)).toBeTruthy();
+  });
+
+  it("says nothing when it does know", () => {
+    render(<ItineraryList itineraries={[walk]} feed={feed} now={NOW}
+                          originKnown onSelect={() => {}} />);
+    expect(screen.queryByText(/middle of campus/i)).toBeNull();
+  });
+
+  it("says nothing when not told either way", () => {
+    // Absent prop must not accuse the app of guessing.
+    render(<ItineraryList itineraries={[walk]} feed={feed} now={NOW} onSelect={() => {}} />);
+    expect(screen.queryByText(/middle of campus/i)).toBeNull();
+  });
+});

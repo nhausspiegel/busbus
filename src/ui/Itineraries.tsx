@@ -85,7 +85,7 @@ function travelSeconds(it: Itinerary): number {
 }
 
 export function ItineraryList({
-  itineraries, feed, now, realNow = now, selected, onSelect,
+  itineraries, feed, now, realNow = now, originKnown = true, selected, onSelect,
 }: {
   itineraries: Itinerary[]; feed: StaticFeed | null; now: number;
   /** The rider's actual clock. `now` is the PLANNING clock -- when they have
@@ -95,11 +95,25 @@ export function ItineraryList({
    *  trip they had asked to plan for the evening. Defaults to `now`, which is
    *  what it equals whenever the rider is not planning ahead. */
   realNow?: number;
+  /** Whether these were planned from the rider's actual position. When location
+   *  is denied or unavailable the origin falls back to the middle of campus,
+   *  and every walk time and arrival below is measured from there -- a computed
+   *  answer resting on a premise the rider never agreed to, unless it is said
+   *  out loud. Defaults to true, so an absent prop never accuses the app of
+   *  guessing. */
+  originKnown?: boolean;
   /** The one currently drawn on the map. */
   selected?: Itinerary | null;
   onSelect: (i: Itinerary) => void;
 }) {
   return (
+    <>
+    {!originKnown && (
+      <p style={{ margin: "0 0 10px", fontSize: 13, color: "var(--muted)" }}>
+        Measured from the middle of campus — this device has not shared its
+        location, so the walking times below start there.
+      </p>
+    )}
     <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
       {itineraries.map((it, n) => {
         const first = it.rides[0];
@@ -179,6 +193,7 @@ export function ItineraryList({
         );
       })}
     </ul>
+    </>
   );
 }
 
