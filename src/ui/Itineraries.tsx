@@ -85,9 +85,16 @@ function travelSeconds(it: Itinerary): number {
 }
 
 export function ItineraryList({
-  itineraries, feed, now, selected, onSelect,
+  itineraries, feed, now, realNow = now, selected, onSelect,
 }: {
   itineraries: Itinerary[]; feed: StaticFeed | null; now: number;
+  /** The rider's actual clock. `now` is the PLANNING clock -- when they have
+   *  asked to leave at 6:30pm it is 6:30pm -- which is what countdowns are
+   *  measured from, and is exactly wrong for deciding whether to say "leave
+   *  now": at two in the afternoon that told them to leave immediately for a
+   *  trip they had asked to plan for the evening. Defaults to `now`, which is
+   *  what it equals whenever the rider is not planning ahead. */
+  realNow?: number;
   /** The one currently drawn on the map. */
   selected?: Itinerary | null;
   onSelect: (i: Itinerary) => void;
@@ -148,7 +155,7 @@ export function ItineraryList({
                         DEADLINE, so its departure can be hours off, and this
                         line used to say "Leave now" beside that deadline as
                         the ETA -- two contradictory instructions in one row. */}
-                    {minsUntil(it.departTime, now) === 0 ? "Leave now" : (
+                    {minsUntil(it.departTime, realNow) === 0 ? "Leave now" : (
                       <>Leave at{" "}
                         <span style={{ color: "var(--ink)", fontWeight: 600 }}>
                           {clock(it.departTime)}</span></>
@@ -176,13 +183,20 @@ export function ItineraryList({
 }
 
 export function ItineraryDetail({
-  itinerary, feed, now, directions, onBack,
+  itinerary, feed, now, realNow = now, directions, onBack,
 }: {
   itinerary: Itinerary; feed: StaticFeed | null; now: number;
+  /** The rider's actual clock. `now` is the PLANNING clock -- when they have
+   *  asked to leave at 6:30pm it is 6:30pm -- which is what countdowns are
+   *  measured from, and is exactly wrong for deciding whether to say "leave
+   *  now": at two in the afternoon that told them to leave immediately for a
+   *  trip they had asked to plan for the evening. Defaults to `now`, which is
+   *  what it equals whenever the rider is not planning ahead. */
+  realNow?: number;
   directions?: WalkDirections; onBack: () => void;
 }) {
   const nameOf = (id: string) => feed?.stops.get(id)?.name ?? id;
-  const leaveIn = minsUntil(itinerary.departTime, now);
+  const leaveIn = minsUntil(itinerary.departTime, realNow);
 
   return (
     <div>
@@ -192,7 +206,12 @@ export function ItineraryDetail({
       }}>← All options</button>
 
       <div className="eyebrow">
-        {leaveIn === 0 ? "Leave now" : `Leave in ${leaveIn} min`}
+        {/* A countdown is only useful while it is short. "Leave in 289 min"
+            is arithmetic homework; past an hour the clock time is the thing a
+            rider can act on. */}
+        {leaveIn === 0 ? "Leave now"
+          : leaveIn <= 60 ? `Leave in ${leaveIn} min`
+          : `Leave at ${clock(itinerary.departTime)}`}
       </div>
       <h2 className="display" style={{ fontSize: 30, margin: "3px 0 14px" }}>
         Arrive {clock(itinerary.arriveTime)}
