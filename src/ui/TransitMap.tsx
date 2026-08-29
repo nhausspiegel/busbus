@@ -6,10 +6,9 @@ import type { StaticFeed, LatLng } from "../data/types";
 import type { Bus } from "../data/vehicles";
 import { basemapStyle } from "./mapStyle";
 import { stationFeatures, rideFeatures, lineFeature } from "../render/network";
-import { stopPaint, stopBasePaint, tickPaint, routeLinePaint, stopRadius,
+import { stopPaint, stopBasePaint, tickPaint, routeLinePaint,
          DIM, type MapState } from "../render/symbols";
-import { pointAlongShape, snapToShape, sliceShape } from "../routing/shape";
-import { haversineMeters } from "../routing/walk";
+import { pointAlongShape, snapToShape } from "../routing/shape";
 import { stations } from "../routing/routeDetail";
 import { laneProfiles, applyLanes, DEFAULT_OPTIONS, type LaneProfile, type Pt }
   from "../render/bundle";
@@ -365,16 +364,10 @@ export function TransitMap({
     // apart regardless and a lane cannot be read anyway.
     // Thin the stroke when zoomed out, as any transit map does -- a 6px line
     // on a network 150px wide is 4% of it and reads as a blob.
-    // Full weight at zoom 16, not 14.
-    //
-    // A phone opens the app fitted to the whole network, which lands at about
-    // 14.2 -- so the old ramp hit its heaviest stroke at exactly the scale
-    // where every route overlaps every other one. Six pixels of line under ten
-    // of casing, five routes deep, turns a block loop twenty metres wide into
-    // one blob: the streets are still under there, but nothing can be read off
-    // them. The geometry was never the whole story at that zoom, the ink was.
-    const lineWidth: maplibregl.ExpressionSpecification =
-      ["interpolate", ["linear"], ["zoom"], 11, 2, 14, 4, 16, 6];
+    // The line's own width lives in routeLinePaint(), which is what this layer
+    // is painted from; only the casing is set here. Declaring a `lineWidth`
+    // beside it looked like it did something and did not -- the width change
+    // it was meant to carry never reached the map.
     const caseWidth: maplibregl.ExpressionSpecification =
       ["interpolate", ["linear"], ["zoom"], 11, 3.5, 14, 6.5, 16, 10];
     m.addLayer({
@@ -874,9 +867,6 @@ export function TransitMap({
     // did not before, so the itinerary's own line was drawn over a full-
     // strength network and the rider had to pick their ride out of five
     // equally bright lines -- most of why this view read as messy.
-    const ridden = overlay?.rides.map((r) => r.routeId) ?? [];
-    const tripLit: maplibregl.ExpressionSpecification | null = ridden.length
-      ? ["in", ["get", "routeId"], ["literal", ridden]] : null;
     // A stop belongs to its routes, so selecting one keeps those at full
     // strength: the rider wants to see where it can take them.
     const stopRoutesLit = stopFocus

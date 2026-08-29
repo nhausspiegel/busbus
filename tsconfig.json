@@ -6,6 +6,10 @@
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "strict": true,
+    // Dead locals are invisible otherwise: `nearby` was recomputed on every
+    // render and referenced only from inside a JSX comment, which is not a use.
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noUncheckedIndexedAccess": true,
     "noEmit": true,
     "skipLibCheck": true,

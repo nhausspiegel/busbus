@@ -465,7 +465,6 @@ export function laneProfiles(lines: Line[], o: BundleOptions): LaneProfile[] {
   const miterOf: number[][] = [];
   paths.forEach((path, l) => {
     const segN: Pt[] = [];
-    const segLen: number[] = [];
     for (let i = 1; i < path.length; i++) {
       const dx = path[i]!.x - path[i - 1]!.x, dy = path[i]!.y - path[i - 1]!.y;
       const d = Math.hypot(dx, dy) || 1;

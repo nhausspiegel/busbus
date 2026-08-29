@@ -120,8 +120,12 @@ export function tickPaint(s: MapState, edge: boolean): Record<string, unknown> {
  *  the segment being ridden is drawn brightly on top by the itinerary layer,
  *  and leaving the whole loop lit made the two impossible to tell apart. */
 export function routeLinePaint(s: MapState): Record<string, unknown> {
+  // Full weight at zoom 16, not 14. A phone opens the app fitted to the whole
+  // network, which lands about 14.2 -- so the old ramp hit its heaviest stroke
+  // at exactly the scale where all five routes overlap each other, and a block
+  // loop twenty metres across became one blob under six pixels of line.
   const width: ExpressionSpecification =
-    ["interpolate", ["linear"], ["zoom"], 11, 2, 14, 6];
+    ["interpolate", ["linear"], ["zoom"], 11, 2, 14, 4, 16, 6];
   let opacity: ExpressionSpecification | number = 1;
   if (s.routeFocus)
     opacity = ["case", ["==", ["get", "routeId"], s.routeFocus], 1, DIM];
