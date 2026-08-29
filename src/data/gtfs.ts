@@ -1,5 +1,6 @@
 import { unzipSync, strFromU8 } from "fflate";
 import { GTFS_STATIC_URL, httpGetBytes } from "./passio";
+import { fetchRoutePaths, fillMissingShapes } from "./routePaths";
 import type { StaticFeed, Route, Stop, Trip, TripStop, LatLng } from "./types";
 
 /** GTFS times are "HH:MM:SS" and MAY exceed 24h for post-midnight service.
@@ -124,5 +125,15 @@ export function parseStaticFeed(zipBytes: Uint8Array): StaticFeed {
 }
 
 export async function fetchStaticFeed(): Promise<StaticFeed> {
-  return parseStaticFeed(await httpGetBytes(GTFS_STATIC_URL));
+  const feed = parseStaticFeed(await httpGetBytes(GTFS_STATIC_URL));
+  // One live route -- 22427, Brown Stadium Loop -- is in routes.txt with no
+  // trips and no shape, so the GTFS alone cannot draw it and the app left it
+  // off a map that Passio's own app shows it on. Filled in from the private
+  // endpoint, which is the same geometry the shapes come from, and only for
+  // routes the GTFS leaves empty. A failure here costs that one route its
+  // line, which is what happens today anyway.
+  try {
+    fillMissingShapes(feed, await fetchRoutePaths());
+  } catch { /* GTFS-shaped routes are unaffected */ }
+  return feed;
 }
