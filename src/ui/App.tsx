@@ -13,6 +13,7 @@ import { AlertBanner } from "./AlertBanner";
 import { fetchAlerts, type Alert } from "../data/alerts";
 import { fetchStaticFeed } from "../data/gtfs";
 import { fetchServiceHistory, type ServiceHistory } from "../data/serviceHistory";
+import { legSeconds } from "../data/legTimes";
 import { fetchLiveDepartures } from "../data/realtime";
 import { fetchVehicles, type Bus } from "../data/vehicles";
 import { fetchOccupancy, mergeOccupancy } from "../data/occupancy";
@@ -46,6 +47,7 @@ export default function App() {
   /** What the plan effect needs to read without being restarted by it. */
   const itinerariesRef = useRef<Itinerary[] | null>(null);
   const chosenRef = useRef<Itinerary | null>(null);
+  const historyRef = useRef<ServiceHistory | null>(null);
   /** Which plan is the current one. The `cancelled` flag alone cannot clear
    *  the spinner: a superseded run returns early and never reaches its own
    *  `finally`, so under a steady cadence of re-plans the sheet said
@@ -86,6 +88,7 @@ export default function App() {
 
   itinerariesRef.current = itineraries;
   chosenRef.current = chosen;
+  historyRef.current = history;
 
   const mode = resolveMode({ stopId, routeId, chosen: chosen !== null, dest: dest !== null });
   // Kept stable by VALUE, not identity. Geolocation hands back a fresh object
@@ -232,8 +235,13 @@ export default function App() {
       try {
         const departAfter = whenMode === "leave" ? leaveAt ?? new Date() : new Date();
         const deadline = whenMode === "arrive" ? leaveAt ?? undefined : undefined;
+        // Legs the recorder has actually watched, so a route whose GTFS trip
+        // omits its stops can still be ridden -- with a measured duration
+        // rather than an invented one.
+        const observed = historyRef.current;
         const found = await planBetween(
-          feed, boardRef.current, origin, dest.at, departAfter, liveTripsRef.current, deadline);
+          feed, boardRef.current, origin, dest.at, departAfter, liveTripsRef.current, deadline,
+          observed ? (r, from, to) => legSeconds(observed, r, from, to) : undefined);
         if (cancelled) return;
         setItineraries(found);
 
@@ -268,7 +276,7 @@ export default function App() {
       }
     })();
     return () => { cancelled = true; };
-  }, [feed, dest, origin, leaveAt, whenMode, board]);
+  }, [feed, dest, origin, leaveAt, whenMode, board, history]);
 
   // Draw the chosen trip: real sidewalk geometry for the walks, and only the
   // ridden slice of each route shape.

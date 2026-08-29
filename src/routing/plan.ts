@@ -19,6 +19,13 @@ export interface PlanOptions {
   /** Each live trip's own stop sequence, from groupLiveTrips(). A live ride is
    *  planned entirely from these, never from the static trip. */
   liveTrips?: Map<string, Departure[]>;
+  /** Observed seconds for one stop-to-stop leg, from legTimes.ts.
+   *
+   *  The only source of durations for a route whose GTFS trip does not carry
+   *  its stops -- the Daytime Express ships one trip covering two of its nine
+   *  calls. Returns null for a leg not watched enough times, and a ride is
+   *  built only when EVERY leg between the two stops is known. */
+  legSecondsFor?: (routeId: string, from: string, to: string) => number | null;
   /** Walking seconds straight from origin to destination, if known. */
   directWalkSeconds?: number;
   maxResults?: number;
@@ -157,12 +164,12 @@ export function planTrips(opts: PlanOptions): Itinerary[] {
       // away all live data, and a colliding seq would have silently measured
       // the ride from a different stop than the rider is standing at.
       const boardSched = boardingStop(trip, dep.stopId, dep.seq);
-      if (!boardSched) continue;
+      let fromStatic = 0;
 
-      for (const alight of trip.stops) {
+      for (const alight of boardSched ? trip.stops : []) {
         // Strictly downstream, in the STATIC sequence -- the only one both
         // ends of this comparison share.
-        if (alight.seq <= boardSched.seq) continue;
+        if (alight.seq <= boardSched!.seq) continue;
 
         const finalWalk = walkToDestination.get(alight.stopId);
         if (finalWalk === undefined) continue;
@@ -170,7 +177,7 @@ export function planTrips(opts: PlanOptions): Itinerary[] {
         const alightStop = feed.stops.get(alight.stopId);
         if (!alightStop) continue;
 
-        const rideSecs = alight.time - boardSched.time;
+        const rideSecs = alight.time - boardSched!.time;
         if (rideSecs <= 0) continue;
 
         const arriveStop = dep.time + rideSecs;
@@ -182,8 +189,8 @@ export function planTrips(opts: PlanOptions): Itinerary[] {
           departTime: dep.time,
           arriveTime: arriveStop,
           live: dep.live,
-          numStops: alight.seq - boardSched.seq,
-          boardSeq: boardSched.seq,
+          numStops: alight.seq - boardSched!.seq,
+          boardSeq: boardSched!.seq,
         };
 
         found.push({
@@ -191,6 +198,54 @@ export function planTrips(opts: PlanOptions): Itinerary[] {
           departTime: dep.time - walkSecs,
           walkToStop: { from: origin, to: boardStop, seconds: walkSecs },
           rides: [ride],
+          walkFromStop: { from: alightStop, to: destination, seconds: finalWalk },
+          totalWalkSeconds: walkSecs + finalWalk,
+          transfers: 0,
+          allLive: dep.live,
+        });
+        fromStatic++;
+      }
+      if (fromStatic > 0) continue;
+
+      // Nothing in the GTFS could carry this departure anywhere. That is the
+      // Daytime Express: one trip covering two of its nine calls, so a rider
+      // at a stop the trip omits was offered a walk while a shuttle they could
+      // board went past.
+      //
+      // Passio's stop ORDER says where the bus goes next; legs that were
+      // actually watched say how long it takes. Both halves are required --
+      // the moment one leg in the chain has not been seen enough times, every
+      // stop past it is unknown and nothing further is offered. A ride here is
+      // still a live departure and a duration that really happened, which is
+      // the same standard as everywhere else.
+      const order = feed.routeStops?.get(dep.routeId);
+      if (!order || !opts.legSecondsFor) continue;
+      const start = order.indexOf(dep.stopId);
+      if (start < 0) continue;
+
+      let ridden = 0;
+      for (let i = start + 1; i < order.length; i++) {
+        const from = order[i - 1]!, to = order[i]!;
+        if (from === to) continue;
+        const leg = opts.legSecondsFor(dep.routeId, from, to);
+        if (leg === null) break;
+        ridden += leg;
+
+        const finalWalk = walkToDestination.get(to);
+        if (finalWalk === undefined) continue;
+        const alightStop = feed.stops.get(to);
+        if (!alightStop) continue;
+
+        found.push({
+          arriveTime: dep.time + ridden + finalWalk,
+          departTime: dep.time - walkSecs,
+          walkToStop: { from: origin, to: boardStop, seconds: walkSecs },
+          rides: [{
+            routeId: dep.routeId, tripId: dep.tripId,
+            boardStopId: dep.stopId, alightStopId: to,
+            departTime: dep.time, arriveTime: dep.time + ridden,
+            live: dep.live, numStops: i - start, boardSeq: dep.seq,
+          }],
           walkFromStop: { from: alightStop, to: destination, seconds: finalWalk },
           totalWalkSeconds: walkSecs + finalWalk,
           transfers: 0,
