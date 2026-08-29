@@ -14,7 +14,10 @@
  */
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fetchVehicles } from "../src/data/vehicles";
+import { fetchLiveDepartures } from "../src/data/realtime";
+import { groupLiveTrips } from "../src/data/departures";
 import { emptyHistory, recordSample, type ServiceHistory } from "../src/data/serviceHistory";
+import { recordLegs } from "../src/data/legTimes";
 
 const FILE = "public/service-history.json";
 
@@ -41,7 +44,20 @@ async function main() {
   // inference from the schedule, and none from a bus sitting on another route.
   const running = [...new Set(buses.map((b) => b.routeId).filter(Boolean))];
 
-  const next = recordSample(history, running, now);
+  let next = recordSample(history, running, now);
+
+  // While a bus is out, realtime publishes an absolute time per stop, so the
+  // gap between two of them on one trip is a leg that really took that long.
+  // This is the only source for the durations the GTFS drops -- its Daytime
+  // Express trip carries two of the route's nine stops -- and it can only be
+  // collected while something is running, which is why it rides along here.
+  const live = await fetchLiveDepartures().catch(() => []);
+  let legs = 0;
+  for (const stops of groupLiveTrips(live).values()) {
+    const before = Object.keys(next.legs ?? {}).length;
+    next = recordLegs(next, stops);
+    legs += Object.keys(next.legs ?? {}).length - before;
+  }
   const label = `${buses.length} vehicles, routes running: ` +
     `${running.length ? running.sort().join(" ") : "(none)"}`;
 
@@ -49,14 +65,15 @@ async function main() {
   // so a sample every fifteen minutes only moves the record on the first run
   // of each hour. Writing anyway would mean a commit every run for no new
   // information, so the file is left alone unless the RECORD moved.
-  const same = JSON.stringify([history.days, history.seen])
-            === JSON.stringify([next.days, next.seen]);
+  const same = JSON.stringify([history.days, history.seen, history.legs])
+            === JSON.stringify([next.days, next.seen, next.legs]);
   if (same) {
     console.log(`${now.toISOString()}  ${label} -- already recorded, file unchanged`);
     return;
   }
   writeFileSync(FILE, JSON.stringify(next));
-  console.log(`${now.toISOString()}  ${label} -- recorded`);
+  console.log(`${now.toISOString()}  ${label}, ${Object.keys(next.legs ?? {}).length} legs known` +
+    `${legs ? ` (+${legs} new)` : ""} -- recorded`);
 }
 
 await main();
