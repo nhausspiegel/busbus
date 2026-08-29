@@ -17,14 +17,31 @@ import type { LatLng, StaticFeed } from "./types";
  * 3302:177, 3469:24, 3470:31 -- and the Stadium Loop's three stops are already
  * in stops.txt.
  */
+/** Give up rather than hanging the whole app on it.
+ *
+ *  This call sits in front of the GTFS feed, so anything it does, the map does
+ *  too -- and this project has already watched an undocumented host accept a
+ *  connection and never reply, for twenty seconds an attempt. Measured today
+ *  it answers in 80ms; the deadline is for the day it does not. Losing it
+ *  costs the Stadium Loop its line, not the app its map. */
+const TIMEOUT_MS = 5_000;
+
 export async function fetchRoutePathPayload(): Promise<unknown> {
-  const res = await fetch(`${PRIVATE_BASE}/mapGetData.php?getStops=2`, {
-    // User-Agent only under Node: in a browser it is a forbidden header, and
-    // asking for it turns this into a preflight passiogo.com does not answer.
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...(IS_NODE ? { "User-Agent": USER_AGENT } : {}) },
-    body: JSON.stringify({ s0: SYSTEM_ID, sA: 1 }),
-  });
+  const ctl = new AbortController();
+  const bell = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(`${PRIVATE_BASE}/mapGetData.php?getStops=2`, {
+      // User-Agent only under Node: in a browser it is a forbidden header, and
+      // asking for it turns this into a preflight passiogo.com does not answer.
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(IS_NODE ? { "User-Agent": USER_AGENT } : {}) },
+      body: JSON.stringify({ s0: SYSTEM_ID, sA: 1 }),
+      signal: ctl.signal,
+    });
+  } finally {
+    clearTimeout(bell);
+  }
   if (!res.ok) throw new Error(`getStops -> HTTP ${res.status}`);
   // Returned raw: one request carries both the geometry and the stop lists,
   // and asking twice for the same payload is a second call to someone else's
