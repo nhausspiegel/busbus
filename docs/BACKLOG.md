@@ -44,6 +44,12 @@ five samples per leg and **no shuttle has reported yet** — measured 2026-08-29
 one charter bus and zero trip predictions. Nothing to do but wait for service;
 check `public/service-history.json` for a populated `legs` map.
 
+Known asymmetry while that lands: `transfers.ts` builds the FIRST leg from
+`trip1.stops` directly, so a route whose GTFS trip omits its stops can be the
+second leg of a transfer but never the first. Left alone deliberately —
+transfers are secondary, the direct path covers the Express, and fixing it means
+duplicating the observed-leg walk into another code path.
+
 ### 4. Corner radius is an unpicked knob
 
 `CORNER_RADIUS_PX` in `src/ui/TransitMap.tsx` is 10, chosen by me not by eye.
