@@ -88,6 +88,22 @@ const LANE_GAP_PX = 5;
 /** Corner radius for every turn, in screen pixels. Constant at every zoom, the
  *  way the Underground and the NYC subway map draw a line. */
 const CORNER_RADIUS_PX = 10;
+/**
+ * How far a route must hold a lane, ON SCREEN, before the line moves into it.
+ *
+ * The bundler picks a lane per VERTEX, so a route can flip lanes over a
+ * stretch far too short to mean anything, and every flip slides the line up to
+ * a full lane gap sideways. That is the squiggle: measured at the zoom the app
+ * opens at, routes reversed sideways 8 to 27 times per 1000 drawn pixels with
+ * swings up to 4.7px, on lines drawn 6px wide.
+ *
+ * Holding the assignment for 80px takes four of the five routes to 0-2.4
+ * reversals per 1000px, and moves them CLOSER to the streets they run on --
+ * worst sideways displacement falls from 4.9, 4.1, 4.7 and 6.4 pixels to 0.1,
+ * 2.6, 2.2 and 4.8. A lane a route holds for less than that was never worth
+ * drawing; the line just went and came back.
+ */
+const LANE_HOLD_PX = 80;
 
 /** Ground metres one screen pixel covers at this latitude and zoom. */
 function metresPerPixel(lat: number, zoom: number): number {
@@ -284,9 +300,12 @@ export function TransitMap({
     const minGap = zoom < 13 ? 0 : LANE_GAP_PX * mpp;
     const radius = CORNER_RADIUS_PX * mpp;
 
+    // In densified steps, since that is what the profile counts in.
+    const hold = Math.round((LANE_HOLD_PX * mpp) / DEFAULT_OPTIONS.stepM);
+
     const drawn = new Map<string, LatLng[]>();
     for (const p of profiles)
-      drawn.set(p.id, applyLanes(p, minGap, radius).map(fromPlane));
+      drawn.set(p.id, applyLanes(p, minGap, radius, hold).map(fromPlane));
     drawnRef.current = drawn;
     // Same geometry, same moment: the stops are placed from `drawn` right here
     // rather than once at startup, so they cannot drift off the line.
