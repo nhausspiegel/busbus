@@ -12,6 +12,7 @@ import { StopCard } from "./StopCard";
 import { AlertBanner } from "./AlertBanner";
 import { fetchAlerts, type Alert } from "../data/alerts";
 import { fetchStaticFeed } from "../data/gtfs";
+import { fetchServiceHistory, type ServiceHistory } from "../data/serviceHistory";
 import { fetchLiveDepartures } from "../data/realtime";
 import { fetchVehicles, type Bus } from "../data/vehicles";
 import { fetchOccupancy, mergeOccupancy } from "../data/occupancy";
@@ -75,6 +76,9 @@ export default function App() {
   const [routeId, setRouteId] = useState<string | null>(null);
   const [stopId, setStopId] = useState<string | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  /** What service has actually been seen, recorded by CI. Read once: it moves
+   *  at most once an hour and is only ever read to describe past days. */
+  const [history, setHistory] = useState<ServiceHistory | null>(null);
   /** null means "leave now"; a Date plans for later today. */
   const [leaveAt, setLeaveAt] = useState<Date | null>(null);
   /** Whether that time is a departure or a deadline. */
@@ -103,6 +107,8 @@ export default function App() {
     () => snapped,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [snapped.lat, snapped.lng]);
+
+  useEffect(() => { void fetchServiceHistory().then(setHistory); }, [refreshKey]);
 
   useEffect(() => {
     fetchStaticFeed()
@@ -486,7 +492,7 @@ export default function App() {
         {mode === "route" && (
           <RouteDetail feed={feed} board={board} routeId={routeId!} buses={buses}
                        activeRouteIds={feed?.activeRouteIds ?? ACTIVE}
-                       now={planNow} onBack={() => setRouteId(null)} />
+                       now={planNow} history={history} onBack={() => setRouteId(null)} />
         )}
 
         {mode === "results" && (
