@@ -48,6 +48,10 @@ const PAUSE_MS = 350;
  *  take ten seconds or never arrive; without this the whole run stalls with
  *  nothing printed, which is exactly what it did the first time. */
 const TIMEOUT_MS = 15_000;
+/** How much longer than its source a matched shape may be. Following the road
+ *  properly adds a little; anything beyond this is the shape re-covering
+ *  ground, which is what a broken seam looks like. */
+const MAX_STRETCH = 1.12;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -77,14 +81,50 @@ async function matchChunk(pts: LatLng[]): Promise<LatLng[] | null> {
   return (best.geometry?.coordinates ?? []).map(([lng, lat]) => ({ lat, lng }));
 }
 
-/** Drop a point that repeats the one before it. Chunks overlap on purpose, so
- *  their matched output does too. */
-function appendUnique(into: LatLng[], pts: LatLng[]): void {
-  for (const p of pts) {
-    const last = into[into.length - 1];
-    if (last && haversineMeters(last, p) < 1) continue;
+/**
+ * Join a chunk onto the route, cutting the ground it has already covered.
+ *
+ * Chunks overlap by OVERLAP source points on purpose, so a chunk's matched
+ * geometry starts some way BEHIND where the previous one ended. The first
+ * version of this only skipped points within a metre of the one just appended,
+ * which does nothing about an overlap whose points are a few metres from the
+ * previous match rather than on top of it -- so every seam re-traversed the
+ * overlap and the shape doubled back on itself.
+ *
+ * That is not a subtle defect. Measured on route 3469's output, turn angle
+ * came out with a 90th percentile of 47 degrees and a 99th of 180 -- a full
+ * reversal -- against a median of 0.5. Corner rounding then turned those
+ * reversals into a visible wobble down Thayer Street rather than into spikes,
+ * which is exactly why a "sharp turns" check read clean while the map looked
+ * wrong.
+ *
+ * The cut is made where the new chunk passes closest to the point already
+ * reached: everything before that is the overlap, and only what comes after
+ * advances the route.
+ */
+function stitch(into: LatLng[], pts: LatLng[]): void {
+  if (pts.length === 0) return;
+  if (into.length === 0) { into.push(...pts); return; }
+
+  const last = into[into.length - 1]!;
+  let cut = 0, best = Infinity;
+  pts.forEach((p, i) => {
+    const d = haversineMeters(p, last);
+    if (d < best) { best = d; cut = i; }
+  });
+
+  for (const p of pts.slice(cut + 1)) {
+    const tail = into[into.length - 1]!;
+    if (haversineMeters(tail, p) < 1) continue;
     into.push(p);
   }
+}
+
+/** Total length of a polyline, metres. */
+function pathLength(pts: LatLng[]): number {
+  let d = 0;
+  for (let i = 1; i < pts.length; i++) d += haversineMeters(pts[i - 1]!, pts[i]!);
+  return d;
 }
 
 /** How far each source point ended up from the matched line. */
@@ -109,8 +149,8 @@ async function main() {
       if (slice.length < 2) break;
       chunks++;
       const got = await matchChunk(slice);
-      if (got && got.length) appendUnique(matched, got);
-      else { failedChunks++; appendUnique(matched, slice); }   // keep the source here
+      if (got && got.length) stitch(matched, got);
+      else { failedChunks++; stitch(matched, slice); }   // keep the source here
       process.stdout.write(got ? "." : "x");
       await sleep(PAUSE_MS);
     }
@@ -119,13 +159,22 @@ async function main() {
     const dev = deviation(route.shape, matched);
     const median = dev[Math.floor(dev.length / 2)] ?? 0;
     const max = dev[dev.length - 1] ?? 0;
-    const ok = matched.length > route.shape.length / 2 && max <= MAX_MOVE_M;
+
+    // A shape that re-traverses ground is LONGER than the one it matched.
+    // This is the check the first version needed and did not have: the seams
+    // were doubling back, every per-point measure looked fine, and the defect
+    // only showed up as a wobble on the map. Length cannot be fooled by it.
+    const stretch = pathLength(matched) / Math.max(1, pathLength(route.shape));
+    const ok = matched.length > route.shape.length / 2
+      && max <= MAX_MOVE_M
+      && stretch <= MAX_STRETCH;
 
     console.log(
       `${route.id.padEnd(6)} ${route.name.slice(0, 20).padEnd(22)}` +
       ` src=${String(route.shape.length).padStart(4)} matched=${String(matched.length).padStart(5)}` +
       ` chunks=${chunks} failed=${failedChunks}` +
       ` moved median=${median.toFixed(1)}m max=${max.toFixed(1)}m` +
+      ` length=${(stretch * 100).toFixed(0)}%` +
       (ok ? "  KEPT" : "  REJECTED"));
 
     if (ok) { out[route.id] = matched.map((p) => [p.lng, p.lat]); kept++; }
