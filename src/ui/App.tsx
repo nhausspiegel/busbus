@@ -4,7 +4,6 @@ import { TransitMap, CAMPUS, type Overlay } from "./TransitMap";
 import { Sheet, type Detent } from "./Sheet";
 import { SearchBar } from "./SearchBar";
 import { ItineraryList, ItineraryDetail, type WalkDirections } from "./Itineraries";
-import { NearbyBoard } from "./NearbyBoard";
 import { RouteDetail } from "./RouteDetail";
 import { WhenControl, type WhenMode } from "./WhenControl";
 import { resolveMode } from "./mode";
@@ -18,7 +17,6 @@ import { fetchLiveDepartures } from "../data/realtime";
 import { fetchVehicles, type Bus } from "../data/vehicles";
 import { fetchOccupancy, mergeOccupancy } from "../data/occupancy";
 import { buildBoard, groupLiveTrips } from "../data/departures";
-import { nearbyDepartures } from "../routing/nearby";
 import { walkRoute, walkLegs, stablePosition, type WalkStep } from "../routing/walk";
 import { planBetween } from "../routing/trip";
 import { sameItinerary } from "../routing/plan";
@@ -208,10 +206,6 @@ export default function App() {
   // In arrive-by mode the chosen time is a deadline, not a departure, so the
   // clock the screen reasons from stays the real one.
   const planNow = leaveAt && whenMode === "leave" ? Math.floor(leaveAt.getTime() / 1000) : now;
-
-  const nearby = useMemo(
-    () => (feed ? nearbyDepartures(feed, board, origin, planNow, 6) : []),
-    [feed, board, origin, planNow]);
 
   // Plan whenever the destination changes -- and again on every board poll,
   // because an itinerary built from live departures is only true for as long
@@ -477,7 +471,11 @@ export default function App() {
                          onChange={setLeaveAt} onModeChange={setWhenMode} />
             {/* The nearby board is hidden, not deleted -- the user found it
                 useless but may want it back. NearbyBoard.tsx and its tests are
-                untouched; restore it by putting this element back:
+                untouched. To restore: re-import NearbyBoard and recreate
+                  const nearby = useMemo(
+                    () => (feed ? nearbyDepartures(feed, board, origin, planNow, 6) : []),
+                    [feed, board, origin, planNow]);
+                then put this element back:
                 <NearbyBoard feed={feed} nearby={nearby} buses={buses}
                              now={planNow} loading={!feed} me={!!me}
                              onRouteClick={setRouteId} onLocate={locate} /> */}
