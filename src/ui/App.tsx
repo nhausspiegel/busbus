@@ -506,6 +506,14 @@ export default function App() {
         {mode === "results" && (
           <>
             <div className="eyebrow">To {dest!.label}</div>
+            {/* The time control belongs WITH the results it changes. It used to
+                render only on the nearby screen, so the moment a rider picked
+                a destination it vanished -- leaving no way to say "arrive by"
+                or to plan for later without clearing the destination and
+                starting again, which is the one screen where the question
+                actually comes up. Apple Maps keeps it on the results too. */}
+            <WhenControl at={leaveAt} mode={whenMode}
+                         onChange={setLeaveAt} onModeChange={setWhenMode} />
             <h1 className="display" style={{ fontSize: 28, margin: "4px 0 12px" }}>
               {planning ? "Finding shuttles…"
                 : itineraries?.length ? "Soonest arrival first" : "No shuttle route"}
