@@ -50,11 +50,41 @@ second leg of a transfer but never the first. Left alone deliberately —
 transfers are secondary, the direct path covers the Express, and fixing it means
 duplicating the observed-leg walk into another code path.
 
-### 4. Corner radius is an unpicked knob
+### 4. Corner radius is a DEAD knob, and reviving it is a design choice
 
-`CORNER_RADIUS_PX` in `src/ui/TransitMap.tsx` is 10, chosen by me not by eye.
-`npx tsx scripts/bundle-knobs.ts` renders 0 / 8 / 16 / 28 to
-`docs/bundle-knobs.svg`. Ask which.
+`CORNER_RADIUS_PX` in `src/ui/TransitMap.tsx` is 10 and **does nothing**.
+Measured: 6 / 10 / 16 / 24 produce byte-identical geometry at the opening zoom
+and differ by at most 0.18px at zoom 16.5.
+
+The cause is in `roundCorners`:
+
+```ts
+const cut = Math.min(radius / Math.tan(theta / 2), inL * 0.4, outL * 0.4);
+```
+
+The clamp is 40% of the ADJACENT SEGMENT, but the path reaching it is densified
+to `stepM` (10m), so the cut can never exceed 4m however large a radius is
+asked for — 0.6px at zoom 14.2. Every setting clamps to the same 4m.
+
+Clamping against the run to the next **corner** instead makes it real; that was
+written and reverted, because reviving it is not a free bug fix:
+
+| corner | 22427 | 62487 | 3302 | 3470 | 3469 | (wiggles/1000px, caps 2/5/5/5/16) |
+|---|---|---|---|---|---|---|
+| 0px | 0.0 | 3.1 | 2.0 | 5.1 | 17.4 | |
+| 2px | 0.0 | 2.3 | 2.0 | 3.4 | 14.1 | **the most that fits** |
+| 3px | 0.0 | 5.3 | 5.8 | 3.4 | 14.0 | over cap |
+| 10px | 11.7 | 12.3 | 5.8 | 22.9 | 20.9 | far over |
+
+Cutting a corner IS a deviation from the source line, so `squiggle.test.ts`
+counts it as one — the metric was calibrated while rounding was inert. And
+today's accidental 4m clamp is WORLD-space: 0.6px zoomed out, 4.8px zoomed in.
+No single screen-space value reproduces the current look at both ends.
+
+So the fork is: keep corners as sharp as they effectively are now, or accept a
+softer, more Underground-like corner and teach the straightness metric to
+ignore deviations at genuine corners. Owner's call; do not change it silently,
+the renderer is at `renderer-checkpoint`.
 
 ### 5. Route rendering polish
 
