@@ -258,4 +258,29 @@ describe("ItineraryList, in the shape Apple uses", () => {
     expect(screen.getByText("Walk 15 min")).toBeTruthy();
     expect(screen.queryByText(/Bus departs/)).toBeNull();
   });
+
+  it("says when to leave for a walk that does not start now", () => {
+    // Arrive-by anchors the walk on the DEADLINE, so its departure can be
+    // hours away. The row said "Leave now" regardless and printed the deadline
+    // beside it as the ETA -- "Leave now, 6:30 PM ETA" for a twenty minute
+    // walk at two in the afternoon, which is two contradictory instructions in
+    // one line.
+    const later: Itinerary = {
+      ...itinerary(ride()), rides: [],
+      departTime: NOW + 4 * 3600, arriveTime: NOW + 4 * 3600 + 900,
+      totalWalkSeconds: 900,
+    };
+    list([later]);
+    expect(screen.queryByText(/Leave now/)).toBeNull();
+    expect(screen.getByText(/Leave at/)).toBeTruthy();
+  });
+
+  it("still says leave now when the walk starts now", () => {
+    const soon: Itinerary = {
+      ...itinerary(ride()), rides: [],
+      departTime: NOW, arriveTime: NOW + 900, totalWalkSeconds: 900,
+    };
+    list([soon]);
+    expect(screen.getByText(/Leave now/)).toBeTruthy();
+  });
 });

@@ -143,7 +143,18 @@ export function ItineraryList({
                     {" · "}{clock(it.arriveTime)} ETA
                   </>
                 ) : (
-                  <>Leave now · {clock(it.arriveTime)} ETA</>
+                  <>
+                    {/* Not always now. Arrive-by anchors a walk on the
+                        DEADLINE, so its departure can be hours off, and this
+                        line used to say "Leave now" beside that deadline as
+                        the ETA -- two contradictory instructions in one row. */}
+                    {minsUntil(it.departTime, now) === 0 ? "Leave now" : (
+                      <>Leave at{" "}
+                        <span style={{ color: "var(--ink)", fontWeight: 600 }}>
+                          {clock(it.departTime)}</span></>
+                    )}
+                    {" · "}{clock(it.arriveTime)} ETA
+                  </>
                 )}
               </div>
 
