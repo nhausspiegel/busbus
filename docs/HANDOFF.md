@@ -195,15 +195,15 @@ See `docs/BACKLOG.md` for the full list with its evidence. The short version:
 
 1. Evening CW keeps one ~5px sideways step; needs stable lane identity across
    bundle membership changes, and is deliberately parked against the checkpoint.
-2. `numStops` counts *hops*, not stops, so the itinerary disclosure says
-   "3 stops" and lists 2 names. Decide which number the label means.
-3. Geographic vs octilinear rendering is a fork only the owner can settle.
-4. The Express's stop-to-stop times need real observations before the planner
+2. Geographic vs octilinear rendering is a fork only the owner can settle.
+3. The Express's stop-to-stop times need real observations before the planner
    can route through the seven stops its GTFS trip omits.
 
 Resolved since this was last written: the loop boarding bug (`RideLeg` carries
-`boardSeq` and `rideStops` joins on it), turn-by-turn walking directions, and
-the iOS `apple-touch-icon.png`.
+`boardSeq` and `rideStops` joins on it), turn-by-turn walking directions, the
+iOS `apple-touch-icon.png`, and the `numStops` label -- "3 stops" is the length
+of the ride, the disclosure below it is headed "Stops on the way" and lists the
+one fewer you pass through, so neither number reads as broken.
 
 ---
 

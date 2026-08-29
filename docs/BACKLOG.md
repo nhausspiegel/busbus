@@ -50,16 +50,7 @@ check `public/service-history.json` for a populated `legs` map.
 `npx tsx scripts/bundle-knobs.ts` renders 0 / 8 / 16 / 28 to
 `docs/bundle-knobs.svg`. Ask which.
 
-### 5. Stop selection has no animation
-
-Paint transitions are real (0 idle frames vs 20 over 308ms) but were measured on
-`routes-line`, never on the circles, so selecting a stop still reads as a jump.
-A halo marker was tried and removed: it looked like a stray circle, and its CSS
-animation fought MapLibre for the marker element's `transform` — the same
-failure that once laid the bus markers out in document flow. Whatever replaces
-it **must not animate `transform` on a marker element**.
-
-### 6. Route rendering polish
+### 5. Route rendering polish
 
 `npx tsx scripts/bundle-cases.ts` draws the five reference cases to
 `docs/bundle-cases.svg`; both it and `test/bundle.test.ts` are driven by
@@ -71,12 +62,12 @@ Remaining soft spots:
   offset it still leaves a sharp corner. Guarded at the densities actually used
   (10, 20), not below.
 
-### 7. NearbyBoard is hidden, not deleted
+### 6. NearbyBoard is hidden, not deleted
 
 The owner found it useless but may want it back. `NearbyBoard.tsx` and its tests
 are untouched; `src/ui/App.tsx` carries the element to restore in a comment.
 
-### 8. Documentation upkeep
+### 7. Documentation upkeep
 
 This file and `HANDOFF.md` drift fast, because the work moves faster than the
 prose. Re-true both whenever a "Still to do" item ships, and delete rather than
@@ -123,6 +114,12 @@ Newest first. Each line is the rule, not the change.
 - **Read the rider's clock, not the planning clock.** "Leave now" was decided
   against the *planning* time, so a trip planned for the evening told the rider
   to leave immediately.
+- **An animation is not verified by looking at a preview.** rAF does not fire in
+  a hidden tab, so the clock has to be driven by hand. Doing that for the
+  stop-selection tween — which was carried as "still reads as a jump", and does
+  not — found a real defect: `if (!start) start = now` treats a frame timestamp
+  of 0 as falsy, so the tween measured from the SECOND frame and could stall.
+  Browsers pass large timestamps, which is exactly why it survived.
 
 **Earlier**
 
