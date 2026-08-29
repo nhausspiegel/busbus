@@ -86,6 +86,14 @@ class FakeMarker {
 let map: FakeMap;
 const frames = new Map<number, FrameRequestCallback>();
 let nextFrame = 1;
+/** Runs frames at `now` until none are left -- a tween schedules its next
+ *  frame from inside the current one, so a single tick only advances it once
+ *  and "did it finish" needs draining, not counting. Bounded so a runaway
+ *  animation fails the test rather than hanging it. */
+const settle = (now: number) => {
+  for (let i = 0; i < 20 && frames.size; i++) tick(now);
+};
+
 /** Runs every frame queued so far, at time `now`. */
 const tick = (now: number) => {
   const due = [...frames.values()];
@@ -491,5 +499,62 @@ describe("buses on routes the map does not draw", () => {
           focus={null} selection={null} activeRouteIds={new Set(["B"])} />);
     });
     expect(mk.removed).toBe(true);
+  });
+});
+
+describe("selecting a stop grows the dot instead of jumping", () => {
+  // The dot is a CIRCLE LAYER, not a marker, so the tween drives
+  // `circle-radius` and never touches a marker's transform -- an earlier halo
+  // did, and fought MapLibre for the element, which is the same failure that
+  // once laid the bus markers out in document flow.
+  //
+  // Driven frame by frame on purpose. requestAnimationFrame does not fire in a
+  // hidden tab, so an animation "verified" by looking at a preview is not
+  // verified at all; the only honest check is to advance the clock by hand.
+  const props = {
+    feed, buses: [] as Bus[], me: null, destination: null, overlay: null,
+    focus: null, activeRouteIds: new Set(["A", "B"]),
+  } as const;
+
+  /** The radius the expression gives the selected stop at zoom 16. */
+  const selectedAt16 = (): number => {
+    const expr = map.paint.get("stops.circle-radius") as unknown[];
+    // ["interpolate", ["linear"], ["zoom"], 13, <case>, 16, <case>]
+    const at16 = expr[6] as unknown[];
+    return at16[2] as number;                 // the selected branch's value
+  };
+
+  it("eases from the unselected size to the full one", () => {
+    const r = render(<TransitMap {...props} selection={null} />);
+    map.fire("load");
+    act(() => { r.rerender(<TransitMap {...props} selection={{ kind: "stop", id: "s1" }} />); });
+
+    tick(0);
+    const first = selectedAt16();
+    tick(120);                                 // half of SELECT_MS
+    const middle = selectedAt16();
+    settle(240);
+    const last = selectedAt16();
+
+    // Starts at the ordinary dot size, ends at the selected one, and passes
+    // through neither in one step -- that is the difference from a jump.
+    expect(first).toBeCloseTo(4.5, 1);
+    expect(last).toBeCloseTo(6.5, 1);
+    expect(middle).toBeGreaterThan(first);
+    expect(middle).toBeLessThan(last);
+  });
+
+  it("shrinks back when the selection is cleared", () => {
+    const r = render(<TransitMap {...props} selection={{ kind: "stop", id: "s1" }} />);
+    map.fire("load");
+    tick(0); settle(240);
+    expect(selectedAt16()).toBeCloseTo(6.5, 1);
+
+    act(() => { r.rerender(<TransitMap {...props} selection={null} />); });
+    tick(0);
+    const start = selectedAt16();
+    settle(240);
+    expect(selectedAt16()).toBeLessThan(start);
+    expect(selectedAt16()).toBeCloseTo(4.5, 1);
   });
 });
