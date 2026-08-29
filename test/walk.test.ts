@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { haversineMeters, nearestStops, decodePolyline6, parseWalkRoute , walkLegs , walkSeconds, walkRoute, resetValhalla, cooldownMs , parseOsrmRoute } from "../src/routing/walk";
+import { haversineMeters, nearestStops, decodePolyline6, parseWalkRoute , walkLegs , walkSeconds, walkRoute, resetValhalla, cooldownMs , parseOsrmRoute, stablePosition } from "../src/routing/walk";
 import type { Stop } from "../src/data/types";
 
 const s = (id: string, lat: number, lng: number): Stop => ({ id, name: id, lat, lng });
@@ -277,5 +277,39 @@ describe("parseOsrmRoute", () => {
   it("returns nothing rather than throwing on a shape it does not know", () => {
     expect(parseOsrmRoute({})).toEqual({ path: [], steps: [] });
     expect(parseOsrmRoute(null)).toEqual({ path: [], steps: [] });
+  });
+});
+
+describe("stablePosition", () => {
+  /**
+   * The walk-matrix cache is keyed on the request body, so the origin's
+   * coordinates ARE the cache key. Geolocation reports a fresh fix every few
+   * seconds and the low digits move whether or not the rider has, so an
+   * unrounded origin produces a new key -- and a real request to a volunteer
+   * router -- on a cadence nobody asked for.
+   *
+   * Snapping to about ten metres is what lets the trip be re-planned on every
+   * board poll for free. Ten metres of walking is a few seconds against walks
+   * measured in minutes.
+   */
+  it("collapses a jittering fix to one point", () => {
+    const a = stablePosition({ lat: 41.82650, lng: -71.40250 });
+    const b = stablePosition({ lat: 41.826504, lng: -71.402497 });
+    expect(b).toEqual(a);
+  });
+
+  it("still moves when the rider does", () => {
+    const a = stablePosition({ lat: 41.82650, lng: -71.40250 });
+    const b = stablePosition({ lat: 41.82750, lng: -71.40250 });   // ~111m
+    expect(b).not.toEqual(a);
+    expect(haversineMeters(a, b)).toBeGreaterThan(100);
+  });
+
+  it("never moves a fix far enough to matter", () => {
+    for (const p of [
+      { lat: 41.826499, lng: -71.402501 },
+      { lat: 41.833333, lng: -71.411111 },
+      { lat: 41.820001, lng: -71.399999 },
+    ]) expect(haversineMeters(p, stablePosition(p))).toBeLessThan(8);
   });
 });
