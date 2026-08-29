@@ -493,16 +493,38 @@ export default function App() {
               {planning ? "Finding shuttles…"
                 : itineraries?.length ? "Soonest arrival first" : "No shuttle route"}
             </h1>
+            {/* The old copy here named service hours -- "weekdays 7am-7pm",
+                "suspended for the summer". Nothing in reach can support that:
+                calendar.txt is one row running every route daily through 2027,
+                there is no calendar_dates.txt, and the `outdated` flag lies
+                about suspension. It is the timetable claim this project
+                refuses, written as prose, and it asserts a bus is NOT running,
+                which is no safer than asserting one is. Say only what the
+                board can show. */}
             {!planning && itineraries?.length === 0 && (
               <p style={{ color: "var(--muted)", fontSize: 14, margin: 0 }}>
-                No shuttle connects here, and it is too far to walk. Daytime routes run
-                weekdays 7am–7pm; the Evening routes are suspended for the summer.
+                {board.size === 0
+                  ? "No shuttle anywhere is reporting a position right now, so there is nothing to plan a ride with."
+                  : "No reporting shuttle gets you there, and it is too far to walk."}
               </p>
             )}
             {itineraries && itineraries.length > 0 && (
               <ItineraryList itineraries={itineraries} feed={feed} now={planNow}
                              selected={preview}
                              onSelect={(i) => { setChosen(i); setPreview(i); setDetent("half"); }} />
+            )}
+            {/* Asking for a later time and being handed a walk reads as "no
+                shuttle serves this", which is a claim about the future the
+                board cannot make. It is built from buses reporting now, and a
+                bus that will run at eight tomorrow is not reporting yet. Say
+                that, rather than letting the silence speak for it. */}
+            {!planning && leaveAt && itineraries?.length
+              && itineraries.every((i) => i.rides.length === 0) && (
+              <p style={{ color: "var(--muted)", fontSize: 13, margin: "12px 0 0" }}>
+                Only buses reporting right now can be planned with, so no shuttle can be
+                shown for {whenMode === "arrive" ? "a deadline" : "a departure"} that far
+                ahead — walking is all this can be sure of.
+              </p>
             )}
           </>
         )}
