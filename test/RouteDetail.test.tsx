@@ -2,6 +2,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import { RouteDetail } from "../src/ui/RouteDetail";
+import { emptyHistory, recordSample } from "../src/data/serviceHistory";
 import type { StaticFeed, DepartureBoard, Stop } from "../src/data/types";
 import type { Bus } from "../src/data/vehicles";
 
@@ -119,5 +120,30 @@ describe("RouteDetail", () => {
                         now={NOW} activeRouteIds={active} onBack={noop} />);
     expect(screen.getAllByText("· Live").length).toBeGreaterThan(0);
     expect(screen.getByText("Every 15 min")).toBeTruthy();
+  });
+
+  it("states what service has been SEEN when nothing is reporting", () => {
+    // The only thing in this app that speaks about other days, and the only
+    // honest way to answer "does it run at this hour" -- the timetable claims
+    // every route runs daily through 2027, so it cannot answer at all.
+    let h = emptyHistory("2026-08-01");
+    for (let i = 0; i < 4; i++) {
+      // Four weeks at the same local hour as NOW, all inside one DST period.
+      // Stepping BACKWARD from NOW would cross the November change and split
+      // these across two hour buckets -- which is correct, since a rider reads
+      // the clock on the wall, but would leave neither bucket with enough days
+      // to say anything.
+      const at = new Date((NOW + i * 7 * 86_400) * 1000);
+      h = recordSample(h, i < 3 ? ["R1"] : [], at);
+    }
+    render(<RouteDetail feed={feed} board={new Map()} routeId="R1" buses={[]}
+                        now={NOW} activeRouteIds={active} history={h} onBack={noop} />);
+    expect(screen.getByText(/3 of the 4/)).toBeTruthy();
+  });
+
+  it("says nothing about other days without a record", () => {
+    render(<RouteDetail feed={feed} board={new Map()} routeId="R1" buses={[]}
+                        now={NOW} activeRouteIds={active} onBack={noop} />);
+    expect(screen.queryByText(/Seen running/)).toBeNull();
   });
 });

@@ -3,16 +3,20 @@ import { routeStops, stations, nextStopIndex, headwayMinutes } from "../routing/
 import type { StaticFeed, DepartureBoard } from "../data/types";
 import { occupancyLabel, type Bus } from "../data/vehicles";
 import { fullness } from "../data/occupancy";
+import { describeService, type ServiceHistory } from "../data/serviceHistory";
 
 /** How many departure chips to show. Apple shows three; a fourth pushes the
  *  stop list off the first screen of the sheet. */
 const CHIPS = 3;
 
 export function RouteDetail({
-  feed, board, routeId, buses, now, activeRouteIds, onBack,
+  feed, board, routeId, buses, now, activeRouteIds, history = null, onBack,
 }: {
   feed: StaticFeed | null; board: DepartureBoard; routeId: string;
-  buses: Bus[]; now: number; activeRouteIds: Set<string>; onBack: () => void;
+  buses: Bus[]; now: number; activeRouteIds: Set<string>;
+  /** What service has actually been seen, when the site has a record. */
+  history?: ServiceHistory | null;
+  onBack: () => void;
 }) {
   const route = feed?.routes.get(routeId);
   const stops = feed ? routeStops(feed, board, routeId, now) : [];
@@ -121,6 +125,12 @@ export function RouteDetail({
           No bus is reporting on this route, so there are no departure times to
           show. The stops below are the route's real order; the timetable is not
           used for times because it claims every route runs daily all year.
+          {/* What HAS been seen, when enough has been. This is the only thing
+              here that speaks about other days, and it is a record rather
+              than a forecast -- it says what happened, never what will. */}
+          {history && describeService(history, routeId, new Date(now * 1000)) && (
+            <> {describeService(history, routeId, new Date(now * 1000))}</>
+          )}
         </p>
       )}
 

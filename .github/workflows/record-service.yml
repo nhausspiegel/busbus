@@ -1,0 +1,51 @@
+# Watch when shuttles actually report, and keep the record.
+#
+# The timetable cannot say whether a bus runs at a given hour -- calendar.txt
+# is one row marking every route running daily through 2027 and there is no
+# calendar_dates.txt -- so the app refuses to show a scheduled time. This is
+# the honest alternative: look on a schedule, write down what was there, and
+# let the app state that record.
+name: Record observed service
+
+on:
+  schedule:
+    # Every 15 minutes. A bucket counts a date once, so this is far more often
+    # than the record can move; the extra samples only make it likelier that a
+    # short burst of service is caught at all.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Never two at once: they would race on the same file and one would lose.
+concurrency:
+  group: record-service
+  cancel-in-progress: false
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsx scripts/record-service.ts
+      # The script leaves the file untouched unless the record actually moved,
+      # so most runs commit nothing at all.
+      - name: Commit the record if it moved
+        run: |
+          if git diff --quiet -- public/service-history.json; then
+            echo "no change to record"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/service-history.json
+          git commit -m "chore: record observed service"
+          # Someone else may have pushed while this ran.
+          git pull --rebase --autostash origin main
+          git push origin HEAD:main

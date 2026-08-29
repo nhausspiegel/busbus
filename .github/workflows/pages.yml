@@ -3,6 +3,13 @@ name: Deploy debug map to GitHub Pages
 on:
   push:
     branches: [main]
+    # The service recorder commits every time its record moves, up to once an
+    # hour. Redeploying the whole site for each of those would be most of the
+    # deploys this repo ever does, for a file the app re-reads anyway. The
+    # daily run below is what carries the accumulated record to the site.
+    paths-ignore: ["public/service-history.json"]
+  schedule:
+    - cron: "17 8 * * *"
   workflow_dispatch:
 
 permissions:
