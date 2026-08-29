@@ -22,6 +22,9 @@ import type { StaticFeed, LatLng, Itinerary } from "../data/types";
 // public/maplibre/ so their relative import survives.
 maplibregl.setWorkerUrl(`${import.meta.env.BASE_URL}maplibre/maplibre-gl-worker.mjs`);
 
+/** Fallback only, like the one in App: the live answer is Passio's own
+ *  exclusion list, carried on the feed. Left hardcoded here it would quietly
+ *  disagree with the real map about which routes exist. */
 const ACTIVE = new Set(["3302", "3469", "3470", "22427", "62487"]);
 const BROWN: [number, number] = [-71.4015, 41.8265];
 
@@ -108,8 +111,9 @@ export default function DebugMap() {
   useEffect(() => {
     const m = map.current;
     if (!m || !feed || !styleReady) return;
+    const active = feed.activeRouteIds ?? ACTIVE;
     for (const r of feed.routes.values()) {
-      if (!ACTIVE.has(r.id) || r.shape.length < 2) continue;
+      if (!active.has(r.id) || r.shape.length < 2) continue;
       const id = `route-${r.id}`;
       if (m.getSource(id)) continue;
       m.addSource(id, {
@@ -133,7 +137,7 @@ export default function DebugMap() {
         if (f) new maplibregl.Popup().setLngLat(e.lngLat).setText(String(f.properties?.["name"])).addTo(m);
       });
     }
-    setStatus(`${[...feed.routes.values()].filter((r) => ACTIVE.has(r.id)).length} routes, ${feed.stops.size} stops`);
+    setStatus(`${[...feed.routes.values()].filter((r) => active.has(r.id)).length} routes, ${feed.stops.size} stops`);
   }, [feed, styleReady]);
 
   // live buses, polled
