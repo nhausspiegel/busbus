@@ -123,3 +123,22 @@ describe("the Stadium Loop's route page", () => {
     expect(rows.every((r) => r.next === null)).toBe(true);
   });
 });
+
+describe("the Daytime Express's route page", () => {
+  it("lists every stop it calls at, not the two the export kept", () => {
+    // Not a missing route this time, a truncated one: trips.txt has a single
+    // trip for 3302 covering Hillel House and South Street Landing, while
+    // Passio lists nine calls over eight distinct stops. Left alone the map
+    // drew nine dots and the route page listed two, which is the same data
+    // disagreeing with itself on one screen.
+    const f = parseStaticFeed(new Uint8Array(readFileSync("public/gtfs/google_transit.zip")));
+    const fromTrips = routeStops(f, new Map(), "3302", 0);
+    expect(fromTrips).toHaveLength(2);
+
+    withRouteStops(f, parseRouteStops(payload));
+    const rows = routeStops(f, new Map(), "3302", 0);
+    expect(rows).toHaveLength(8);                       // nine calls, one repeat
+    expect(rows[0]!.stop.name).toBe("Hillel House");    // still in riding order
+    expect(rows.map((r) => r.stop.id)).toContain("166667");
+  });
+});
