@@ -65,9 +65,16 @@ export function NearbyBoard({
           <p style={{ margin: 0, fontSize: 15 }}>
             No shuttle is reporting from any stop near here right now.
           </p>
+          {/* No service hours here. This app has no source for them: the feed's
+              calendar.txt is a single row marking every route running daily
+              through 2027, there is no calendar_dates.txt at all, and Passio's
+              own `outdated` flag lies about seasonal suspension. Printing
+              "weekdays 7am-7pm" was the same unfounded claim as printing a
+              departure time, just in prose -- and it told riders service was
+              over when a bus may well have been running. */}
           <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--muted)" }}>
-            Daytime routes run weekdays 7am–7pm. The Evening routes are suspended for
-            the summer and return in the semester.
+            A departure appears here only while a bus is reporting its own position,
+            so an empty board means none are reporting — not that none exist.
           </p>
         </div>
       )}

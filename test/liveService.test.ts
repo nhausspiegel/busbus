@@ -7,9 +7,11 @@ import { serviceDayStart, scheduledDepartures, buildBoard, groupLiveTrips } from
 import { nearbyDepartures } from "../src/routing/nearby";
 import { planTrips } from "../src/routing/plan";
 
-/** The live path has never run against real service: Brown's Evening routes
- *  are suspended for the summer and the Daytime routes stop at 7pm, so every
- *  frozen fixture captured so far has zero vehicles reporting. These tests
+/** The live path has never run against real service: every frozen fixture
+ *  captured so far has zero vehicles reporting. Why is not something this
+ *  repo can state -- the feed has no field in which "not running today" could
+ *  be written -- so the fact is the empty fixtures, not a service pattern.
+ *  These tests
  *  synthesise a feed where buses ARE running, using the same protobuf library
  *  that decodes the real one, so the live-overrides-timetable path is actually
  *  exercised rather than assumed. */
