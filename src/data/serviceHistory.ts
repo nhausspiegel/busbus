@@ -37,6 +37,10 @@ export interface ServiceHistory {
   days: Record<Bucket, Tally>;
   /** Days each route was seen running, per bucket. */
   seen: Record<string, Record<Bucket, Tally>>;
+  /** Observed seconds for one stop-to-stop leg, keyed `routeId|from|to`. Kept
+   *  here rather than in their own file so the recorder writes once and CI
+   *  commits once. See legTimes.ts. */
+  legs?: Record<string, number[]>;
 }
 
 export function emptyHistory(since: string): ServiceHistory {
