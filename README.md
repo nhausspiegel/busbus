@@ -130,7 +130,10 @@ changes. Route coordinates: left alone. Five separate attempts at the
 parallel-route styling failed by breaking this — rounding corners with a radius
 in *metres* (22px of corner-cutting at z18, 1.6px at z14, and the route pulled
 off its road to achieve it), or fanning routes apart by rewriting their
-coordinates. `src/render/bundle.ts` is the version that respects it.
+coordinates. The version that respects it snaps routes to real OSM road nodes
+at build time and lets MapLibre do the displacement in device pixels via
+`line-offset` — `src/render/lanes.ts`, and `docs/RENDERING.md` for the whole
+design.
 
 ### How to tell whether it worked
 
@@ -141,11 +144,11 @@ survived three rounds of "fixed" because the check could not fail. Two habits:
   transform can hold exactly the right coordinate while the browser paints it
   somewhere else entirely — that was a real bug, and it read as "the buses are
   off their routes" for a long time.
-- **Render the thing and look at it.** `npx tsx scripts/bundle-cases.ts` draws
-  the bundler's five reference cases to `docs/bundle-cases.svg`;
-  `scripts/bundle-knobs.ts` renders a tuning knob at several settings for
-  choosing by eye. Both are deliberately abstract geometry, not Providence —
-  the problem is general and a bug is easier to see on a rectangle.
+- **Show the owner, and believe what they say.** They are the only one who can
+  see the window. Reading a screenshot and reporting what it shows has twice
+  produced the *opposite* of what was on screen here, including which side of a
+  road a line sat on. Screenshots spot that something is wrong; they never
+  decide what is right.
 - **Measure in the units the defect is seen in.** The long-running "squiggle"
   survived a dozen attempts because every measure taken of it was in *metres*
   while the offsets causing it are in *device pixels* — so a number could
@@ -155,7 +158,10 @@ survived three rounds of "fixed" because the check could not fail. Two habits:
   once the drawn line gains or loses vertices. Compare to the source polyline by
   **geometry**, at the zoom the app actually opens at, and pin **both** axes:
   straightness bought by shoving the line off its street is not a win.
-  `test/squiggle.test.ts` does this and fails if it regresses.
+  `test/snappedShapes.test.ts` does this and fails if it regresses. The same
+  trap caught a second victim: the sign of a lane's `line-offset` MUST flip
+  where the canonical frame opposes travel, so counting those flips measures
+  the correction rather than the defect.
 - **A check that cannot fail proves nothing.** Revert the fix and watch the test
   go red before believing it. Every guard added this way here caught something;
   the ones added without it were the ones that let defects through.

@@ -7,25 +7,42 @@ compaction: everything needed to act is here or named by file.
 with, and the approaches already ruled out, which is what stops the next
 session repeating them.
 
-Last trued against the code on **2026-08-29**.
+Last trued against the code on **2026-08-30**.
+
+For how route lines are drawn, read `docs/RENDERING.md` first.
 
 ---
 
 ## Still to do
 
-### 1. Evening CW keeps one visible sideways step
+### 1. Three side-jumps remain
 
-Route 3469 steps about 5 screen pixels sideways near Brook/Power. Not noise:
-the route passes that spot twice, the bundle drops from three members to two,
-and `spread()` re-centres the whole bundle on the mean, so every remaining line
-shifts when one leaves.
+A **side-jump** is the road running straight (turn < 60°) while the line hops
+to the other side of it (world-space displacement swings > 90°). Measured
+2026-08-30, three remain of four:
 
-Fixing it properly means **stable lane identity across membership changes** —
-the LOOM line-ordering problem — rather than re-spreading per point. Deliberately
-not attempted yet: lines closing ranks when a route leaves the corridor is
-defensible behaviour, and the renderer is at a state the owner called the best
-so far (`git tag renderer-checkpoint`). Capped where it stands by
-`test/squiggle.test.ts` so it cannot quietly get worse.
+```
+3469  41.82788,-71.40317   turn=2   swing=178    (Angell)
+3470  41.82613,-71.40462   turn=3   swing=177
+62487 41.82392,-71.40014   turn=0   swing=180
+```
+
+Cause: group membership changes, and both routes want the side they held on
+the previous segment, so one must give. `relaxOrder` in `src/render/lanes.ts`
+weights each claim by how straight the route runs through the segment, which
+fixed the junction-stub cases but not these -- here the conflict is real and
+someone genuinely has to move.
+
+Whether that is even wrong is a judgement call: two lines swapping order over a
+long block is a *lane change*, which real transit maps do draw. What is
+definitely wrong is doing it abruptly. The honest fix is the LOOM line-ordering
+formulation -- minimise order changes over the whole network at once, rather
+than segment by segment.
+
+**Measure it with the world-space displacement, never with the sign of
+`offsetPx`.** That sign must flip wherever the canonical frame opposes travel,
+precisely so the line stays on the same side of the road; counting those flips
+calls the correction a defect, which has now been done twice.
 
 ### 2. Geographic vs octilinear — a fork only the owner can settle
 
@@ -50,58 +67,20 @@ second leg of a transfer but never the first. Left alone deliberately —
 transfers are secondary, the direct path covers the Express, and fixing it means
 duplicating the observed-leg walk into another code path.
 
-### 4. Corner radius is a DEAD knob, and reviving it is a design choice
+### 4. `snap-to-streets.ts` hardcodes the active route ids
 
-`CORNER_RADIUS_PX` in `src/ui/TransitMap.tsx` is 10 and **does nothing**.
-Measured: 6 / 10 / 16 / 24 produce byte-identical geometry at the opening zoom
-and differ by at most 0.18px at zoom 16.5.
-
-The cause is in `roundCorners`:
-
-```ts
-const cut = Math.min(radius / Math.tan(theta / 2), inL * 0.4, outL * 0.4);
-```
-
-The clamp is 40% of the ADJACENT SEGMENT, but the path reaching it is densified
-to `stepM` (10m), so the cut can never exceed 4m however large a radius is
-asked for — 0.6px at zoom 14.2. Every setting clamps to the same 4m.
-
-Clamping against the run to the next **corner** instead makes it real; that was
-written and reverted, because reviving it is not a free bug fix:
-
-| corner | 22427 | 62487 | 3302 | 3470 | 3469 | (wiggles/1000px, caps 2/5/5/5/16) |
-|---|---|---|---|---|---|---|
-| 0px | 0.0 | 3.1 | 2.0 | 5.1 | 17.4 | |
-| 2px | 0.0 | 2.3 | 2.0 | 3.4 | 14.1 | **the most that fits** |
-| 3px | 0.0 | 5.3 | 5.8 | 3.4 | 14.0 | over cap |
-| 10px | 11.7 | 12.3 | 5.8 | 22.9 | 20.9 | far over |
-
-Cutting a corner IS a deviation from the source line, so `squiggle.test.ts`
-counts it as one — the metric was calibrated while rounding was inert. And
-today's accidental 4m clamp is WORLD-space: 0.6px zoomed out, 4.8px zoomed in.
-No single screen-space value reproduces the current look at both ends.
-
-So the fork is: keep corners as sharp as they effectively are now, or accept a
-softer, more Underground-like corner and teach the straightness metric to
-ignore deviations at genuine corners. Owner's call; do not change it silently,
-the renderer is at `renderer-checkpoint`.
+`const ACTIVE` in the script lists the five route ids. A route Passio adds
+keeps its raw traced shape and draws without lane offsets -- degraded, not
+broken -- until someone re-runs the script. Worth deriving from the feed the
+next time the script is touched; not worth a special trip.
 
 ### 5. Route rendering polish
 
-`npx tsx scripts/bundle-cases.ts` draws the five reference cases to
-`docs/bundle-cases.svg`; both it and `test/bundle.test.ts` are driven by
-`test/fixtures/bundleCases.ts`, so picture and assertions cannot drift.
-
-**These show the bundler ALONE** — without the screen-space lane hold the map
-applies, because the hold suppresses separation over short runs and would hide
-what the cases exist to measure. They are therefore **not** a picture of what
-the app draws; `test/squiggle.test.ts` is the production check.
-Remaining soft spots:
-- The Y-merge reaches 9.9 of a 12 gap and pinches at the merge, partly
-  unavoidable — two lines that merge genuinely touch.
-- `trimFolds` drops vertices where an offset self-intersects; well below the
-  offset it still leaves a sharp corner. Guarded at the densities actually used
-  (10, 20), not below.
+Corner radius is no longer a knob at all: `CORNER_RADIUS_PX` and the densifier
+that clamped it dead are both deleted, and corners are `line-join: round`,
+which MapLibre draws correctly *within* a feature. What remains is boundaries
+**between** features -- see `docs/RENDERING.md`, "The fragile part". Fewer,
+longer features is the only lever; `JUNCTION_M` took the count from 56 to 50.
 
 ### 6. NearbyBoard is hidden, not deleted
 
@@ -119,6 +98,23 @@ accumulate — the value is in being correct cold, not in being a diary.
 ## Done, and the rule each one established
 
 Newest first. Each line is the rule, not the change.
+
+**2026-08-30**
+
+- **Snap to the road, offset in pixels.** Routes are matched to real OSM road
+  nodes at build time, and MapLibre displaces them with `line-offset` in device
+  pixels. The gap is 5.00px at every zoom, by construction -- there is no
+  length in the expression that could be metres. Nine tuning mechanisms deleted.
+- **A lane change shorter than a junction is not a lane change.** At a corner a
+  crossing route genuinely shares a metre or two of the same OSM way, so
+  membership goes 2 -> 3 -> 2 over seven metres and a stub feature is emitted
+  at its own offset. MapLibre joins only WITHIN a feature, so each boundary is
+  a fake join: a nub under round caps, a notch under butt caps. Changing the
+  cap changed only which artefact appeared.
+- **Going straight is the stronger claim to a lane.** When two routes on one
+  segment both want the side they already held, the loser used to be whichever
+  route id sorted first -- so a line running dead straight through a junction
+  was shoved aside by one that had just turned in.
 
 **2026-08-29**
 
@@ -190,7 +186,9 @@ vertices, so compare to the source polyline **by geometry**.
 What worked: measure the drawn line against its own source, at the zoom the app
 actually opens at (~14.2 on a phone), and pin both axes — sideways reversals AND
 distance off-street, since straightness bought by shoving the line off its road
-is not a win. Now `test/squiggle.test.ts`.
+is not a win. `test/squiggle.test.ts` did that job and is deleted -- it
+measured a wobble the current design cannot produce. `test/snappedShapes.test.ts`
+replaces it, and pins the offsets in pixels.
 
 ### Scaling the ease-in taper with zoom
 
@@ -212,15 +210,29 @@ a median deletes an excursion shorter than half its window and leaves a
 sustained change in place. Four of five routes went to 0–2.4 reversals per
 1000px and moved *closer* to their streets.
 
-### Street-matching the shapes to road centrelines
+### Street-matching the shapes to road centrelines — REVERSED 2026-08-30
 
-The obvious idea, and it does not pay. `scripts/match-shapes.ts` works and its
-seam bug is fixed (chunks used to re-traverse their overlap: p99 turn angle
-180°, a full reversal). But measured **point-to-segment in both directions, the
-matched line sits within 7.4m of Passio's traced line everywhere** — the same
-line with more vertices, worth about 5 pixels at zoom 16. Its output is not
-committed and nothing reads it. Do not re-run this expecting the routes to move
-onto their roads; they are already on them.
+**This entry used to say street-matching "does not pay". That was wrong, and it
+is now the architecture that ships** (`docs/RENDERING.md`). The measurement
+behind the old entry was correct; the conclusion drawn from it was not, which
+is the more useful lesson.
+
+What was measured: matched geometry sits within 7.4m of Passio's traced line
+everywhere, about 5 pixels at zoom 16. What was concluded: matching is not
+worth it, because the routes are already on their roads.
+
+The error is that **moving the line was never the point.** The point is that
+matching gives every route segment a *shared identity* -- two routes down one
+street cite the same OSM node ids and therefore have byte-identical
+coordinates. That turns "are these the same street?" from a proximity-and-angle
+guess made per vertex at draw time into exact string equality. Nine tuning
+mechanisms existed only to survive that guess, and all nine are now deleted.
+
+A measurement answers the question you asked. Before recording something as a
+dead end, check that the question was the one that mattered.
+
+(`scripts/match-shapes.ts`, the ~60-request OSRM matcher this entry described,
+is deleted. `scripts/snap-to-streets.ts` does the job with ONE Overpass call.)
 
 ### Passio's `outdated` flag as the source of truth for active routes
 

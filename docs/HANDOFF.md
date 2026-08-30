@@ -11,23 +11,17 @@ to `main`) · debug view at `?debug=1`
 
 ## 1. The single most important thing
 
-**Two map problems are still broken, and the user says they got WORSE after my
-last change. Do not claim they are fixed without the user confirming visually.**
+**Read `docs/RENDERING.md` before touching how route lines are drawn.** The
+rendering was rebuilt on 2026-08-30 and the owner called it correct for the
+first time; `git tag renderer-checkpoint` marks it. The design is small and the
+reasons are load-bearing, and the previous design survived ~100 commits mostly
+because each session found it already written and assumed it had to stay.
 
-I declared these fixed three separate times based on screenshots and local
-measurements. Each time I was wrong. Twice my measurement method itself was
-broken. The user has had to push back three times. Treat any instinct to say
-"fixed" as a signal to go measure again, on production, and preferably to just
-show the user and ask.
-
-The two problems:
-
-1. **Route lines look bad.** The user's reference is Apple Maps' transit view
-   (NYC subway): coincident lines run parallel, smooth, constant width and
-   constant spacing at every zoom.
-2. **Buses do not appear to sit on their routes.**
-
----
+**Do not claim a rendering fix without the owner confirming visually.** I
+declared these fixed several times from screenshots and local measurements, and
+was wrong every time; twice the measurement method was itself broken. The owner
+is the only one who can see the window. Their observation is the ground truth
+and the starting point, never a claim to triage.
 
 ## 2. How the user wants to be worked with
 
@@ -75,6 +69,7 @@ busbus.py                  live-verification tool, NOT app code. Don't import.
 scripts/plan-demo.ts       terminal routefinder; defaults to
                            129 Angell St <-> Trader Joe's, both directions
 scripts/refresh-fixtures.sh re-freeze GTFS fixture + public/gtfs copy
+scripts/snap-to-streets.ts  re-snap routes to OSM roads (one Overpass call)
 
 src/data/
   passio.ts       endpoints, IS_NODE, httpGetBytes
@@ -98,12 +93,18 @@ src/routing/
   routeDetail.ts  a route's stops in riding order
   rideStops.ts    stops a ride passes through
   shape.ts        slice a route polyline between two stops
-  parallel.ts     >>> lane assignment for coincident routes — SEE §4
-  snap.ts         >>> snap a bus onto its route + lane — SEE §4
+
+src/render/
+  lanes.ts        >>> lane assignment + pixel offsets — SEE docs/RENDERING.md
+  symbols.ts      paint expressions (route width/colour, line-offset)
+  network.ts      basemap road network drawing
+
+src/data/snappedShapes.ts   snapped node table -> route shapes
+scripts/snap-to-streets.ts  build step: routes -> real OSM road nodes
 
 src/ui/
   App.tsx         all state; mode precedence via mode.ts
-  TransitMap.tsx  >>> MapLibre; the file with the problems
+  TransitMap.tsx  MapLibre; LANE_GAP_PX lives here
   mapStyle.ts     hand-written vector basemap style (light + dark)
   Sheet.tsx       3-detent draggable bottom sheet
   SearchBar / Itineraries / NearbyBoard / RouteDetail / StopCard /
@@ -111,45 +112,37 @@ src/ui/
   DebugMap.tsx    raw-data view at ?debug=1
 ```
 
-**170 tests**, `npm test`, all offline. jsdom component tests exist
+**345 tests**, `npm test`, all offline. jsdom component tests exist
 (`test/Sheet.test.tsx`, `test/Itineraries.test.tsx`) — note the
 `/** @vitest-environment jsdom */` docblock and that the sheet is a fixed side
 panel above 820px, so those tests pin a 390px viewport.
 
 ---
 
-## 4. Lane offsetting: deleted once, rebuilt, now measured
+## 4. Lane offsetting — see `docs/RENDERING.md`
 
-**Read this before touching `src/render/bundle.ts`.**
-
-Lane offsetting was tried four ways, all worse on screen, and deleted. It was
-then rebuilt properly and is what ships today (`laneProfiles` / `applyLanes`).
-The history matters because the original false premise is still true:
+The full design lives in `docs/RENDERING.md`. The three facts worth carrying
+here, because each cost real time:
 
 > **A route's published shape is NOT the street centreline.** Brown's Evening
-> CW and CCW shapes are already ~7m apart -- measured -- each traced down its
-> own side of the road. Offsetting outward from an already-offset shape puts
-> the line on the pavement, and snapping buses to that line puts the buses
-> there too.
+> CW and CCW shapes are ~7m apart -- measured -- each traced down its own side
+> of the road. Offsetting outward from an already-offset shape puts the line on
+> the pavement, and snapping buses to it puts the buses there too. This is why
+> routes are snapped to real OSM road nodes at build time
+> (`scripts/snap-to-streets.ts`) rather than offset from the raw trace.
 
-The verification was independently wrong too, which is why it survived three
-"fixed" claims: it matched each bus to a route line **by colour**, and several
-Brown routes share one. Join bus to route on `route_id`, never on colour.
+> **The gap is held in device pixels, by MapLibre's `line-offset`.** Never bake
+> it into geometry: that is what made the gap grow from 3.7px at zoom 13 to
+> 13.5px at zoom 18 for a year.
 
-**Current state.** Routes are bundled into lanes in screen-pixel units, stops
-snap to the line as DRAWN, and buses snap to it too. The long-running "squiggle"
-was the bundler picking a lane **per vertex**: each flip slid the line a full
-lane gap sideways. Holding an assignment for 80 screen pixels (a median over
-the offset signal) fixed it -- four of five routes went to 0-2.4 sideways
-reversals per 1000 drawn pixels, and moved *closer* to their streets.
+> **Verification was once wrong in a way that hid the defect** -- it matched
+> each bus to a route line **by colour**, and several Brown routes share one.
+> Join bus to route on `route_id`, never on colour.
 
-`git tag renderer-checkpoint` marks the first rendering the owner called the
-best so far. `test/squiggle.test.ts` pins it in screen pixels and fails if it
-regresses. **Do not change the bundler or the map's pixel constants without
-running it**, and see the dead ends in `docs/BACKLOG.md` first -- several
-plausible fixes are measured worse, and metre-based metrics are worthless here.
-
----
+`test/snappedShapes.test.ts` pins the geometry and the lane offsets. Do not
+change `src/render/lanes.ts` or the map's pixel constants without running it,
+and read the traps at the end of `docs/RENDERING.md` first -- two of them have
+been walked into twice.
 
 ## 4b. Reflexes that wasted real time
 
@@ -219,25 +212,27 @@ These are all verified against live responses. Do not re-derive.
 
 See `docs/BACKLOG.md` for the full list with its evidence. The short version:
 
-1. Evening CW keeps one ~5px sideways step; needs stable lane identity across
-   bundle membership changes, and is deliberately parked against the checkpoint.
+1. Three **side-jumps** remain: places where the road runs straight but a line
+   hops to the other side of it, because group membership changes and the two
+   routes cannot both keep the side they held. Measured, listed with
+   coordinates in `docs/BACKLOG.md`.
 2. Geographic vs octilinear rendering is a fork only the owner can settle.
 3. The Express's stop-to-stop times need real observations before the planner
    can route through the seven stops its GTFS trip omits.
+4. `scripts/snap-to-streets.ts` hardcodes the five active route ids in `ACTIVE`.
+   A route Passio adds keeps its raw trace and draws without lanes -- degraded,
+   not broken -- until the script is re-run.
 
 Resolved since this was last written: the loop boarding bug (`RideLeg` carries
 `boardSeq` and `rideStops` joins on it), turn-by-turn walking directions, the
-iOS `apple-touch-icon.png`, and the `numStops` label -- "3 stops" is the length
-of the ride, the disclosure below it is headed "Stops on the way" and lists the
-one fewer you pass through, so neither number reads as broken.
-
----
+iOS `apple-touch-icon.png`, the `numStops` label, and the whole route-rendering
+rebuild described in `docs/RENDERING.md`.
 
 ## 7. How to work on it
 
 ```bash
 npm run dev                       # http://localhost:5173
-npm test                          # 339 tests, offline
+npm test                          # 345 tests, offline
 npx tsc -b --noEmit
 npx tsx scripts/plan-demo.ts      # Angell <-> Trader Joe's, both ways
 ./.venv/bin/python busbus.py      # is Passio itself healthy?

@@ -22,7 +22,25 @@ The standing examples so far, kept short on purpose:
   style). ~60 rate-limited requests for a road network that is one query.
 - Inventing a metric instead of measuring the thing complained about. Three
   proxies for the map "squiggle" each moved the wrong way, and one counted a
-  successful fix as the defect.
+  successful fix as the defect. Same trap, second victim: the sign of a lane's
+  `line-offset` must flip where the canonical frame opposes travel, so counting
+  those flips measures the correction, not the defect.
+- Treating what a defect looks like instead of what causes it. Route corners
+  grew nubs under round line caps; switching to butt caps replaced them with
+  notches. Both are the same defect -- a boundary between two features, which
+  MapLibre cannot join -- and the cap only chose which artefact appeared. When
+  a fix changes the shape of a symptom without reducing it, the cause is
+  somewhere else.
+- Filing a dead end when the measurement answered a different question.
+  Street-matching was recorded as "does not pay" because the matched line sat
+  within 7.4m of the traced one -- true, and beside the point: matching exists
+  to give segments a shared IDENTITY, not to move them. It is now the
+  architecture that ships. Before recording a dead end, check that the question
+  measured was the one that mattered.
+- Leaving docs pointing at deleted files. `HANDOFF.md` sent the next session to
+  `src/render/bundle.ts` and `test/squiggle.test.ts` for weeks after both were
+  gone. Deleting a file means re-truing every doc that names it, in the same
+  commit.
 - Reporting what a screenshot shows. I have twice stated the opposite of what
   was on screen, including which side of a road a line sat on. Screenshots
   spot that something is wrong; they never decide what is right.
@@ -129,6 +147,10 @@ No API keys anywhere. Nothing to keep out of git.
 ## Working style
 
 - **Reuse before writing.** Check `busbus.py` for an existing helper first.
+- **Route rendering has its own doc.** `docs/RENDERING.md` -- read it before
+  touching `src/render/lanes.ts`, `scripts/snap-to-streets.ts`, or the map's
+  pixel constants. It ends with the traps, two of which have caught someone
+  twice.
 - **Data you already have beats an API you have to call.** Before querying a
   service, say what is already committed, vendored, parsed, or downloaded by
   the app. Street geometry is the standing example: this app ships a street
