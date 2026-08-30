@@ -252,6 +252,57 @@ export interface LaneRun {
  * maximal stretch carrying the same set of routes. Runs overlap by one node so
  * consecutive runs meet on screen instead of leaving a gap.
  */
+/**
+ * A lane change shorter than a junction is not a lane change.
+ *
+ * The lane is decided per road segment, and at a corner the crossing route
+ * genuinely shares a metre or two of the same OSM way -- so membership goes
+ * 2 -> 3 -> 2 over seven metres, everyone re-centres, and a seven-metre
+ * feature is emitted at its own offset. Every feature boundary is a join
+ * MapLibre cannot build, because it can only join within one feature: a nub
+ * under round caps, a notch under butt caps. Changing the cap only changed
+ * which artefact appeared.
+ *
+ * Measured, the six of these run 4.0-7.1m and the shortest real street block
+ * is 34.2m, so nothing sits in the gap to be classified wrongly. World metres
+ * on purpose: this is a fact about how OSM draws a junction, not about the
+ * display, so it must not move with zoom -- unlike the offset itself, which is
+ * only ever pixels.
+ */
+const JUNCTION_M = 25;
+
+/** Per-segment offsets for one route, with junction stubs absorbed. */
+function laneOffsets(
+  lanes: Map<string, SegmentLanes>, routeId: string, pts: LatLng[], gapPx: number,
+): number[] {
+  const off = pts.slice(1).map((b, i) => offsetFor(lanes, routeId, pts[i]!, b, gapPx));
+  const K = 111_320, KX = K * Math.cos((pts[0]!.lat * Math.PI) / 180);
+  const segM = off.map((_, i) =>
+    Math.hypot((pts[i + 1]!.lng - pts[i]!.lng) * KX, (pts[i + 1]!.lat - pts[i]!.lat) * K));
+
+  for (;;) {
+    const runs: { s: number; e: number; m: number }[] = [];
+    for (let i = 0; i < off.length; i++) {
+      const last = runs[runs.length - 1];
+      if (last && Math.abs(off[i]! - off[last.s]!) < 1e-9) { last.e = i; last.m += segM[i]!; }
+      else runs.push({ s: i, e: i, m: segM[i]! });
+    }
+    if (runs.length < 2) return off;
+
+    let worst = -1;
+    for (let r = 0; r < runs.length; r++)
+      if (runs[r]!.m < JUNCTION_M && (worst < 0 || runs[r]!.m < runs[worst]!.m)) worst = r;
+    if (worst < 0) return off;
+
+    // Absorbed by whichever neighbour holds more road, so a stub never decides
+    // the lane of the street it interrupts.
+    const prev = runs[worst - 1], next = runs[worst + 1];
+    const take = !prev ? next! : !next ? prev : prev.m >= next.m ? prev : next;
+    const v = off[take.s]!;
+    for (let i = runs[worst]!.s; i <= runs[worst]!.e; i++) off[i] = v;
+  }
+}
+
 export function laneRuns(shapes: Map<string, LatLng[]>, gapPx: number): LaneRun[] {
   const lanes = laneIndex(shapes);
   relaxOrder(shapes, lanes);
@@ -259,22 +310,19 @@ export function laneRuns(shapes: Map<string, LatLng[]>, gapPx: number): LaneRun[
 
   for (const [routeId, pts] of shapes) {
     if (pts.length < 2) continue;
+    const off = laneOffsets(lanes, routeId, pts, gapPx);
     let path: LatLng[] = [pts[0]!];
-    let current: number | null = null;
+    let current = off[0]!;
 
     for (let i = 1; i < pts.length; i++) {
-      const a = pts[i - 1]!, b = pts[i]!;
-      const off = offsetFor(lanes, routeId, a, b, gapPx);
-      if (current === null) current = off;
-      else if (Math.abs(off - current) > 1e-9) {
+      if (Math.abs(off[i - 1]! - current) > 1e-9) {
         if (path.length >= 2) out.push({ routeId, offsetPx: current, path });
-        path = [a];                        // overlap by one node so runs meet
-        current = off;
+        path = [pts[i - 1]!];              // overlap by one node so runs meet
+        current = off[i - 1]!;
       }
-      path.push(b);
+      path.push(pts[i]!);
     }
-    if (path.length >= 2 && current !== null)
-      out.push({ routeId, offsetPx: current, path });
+    if (path.length >= 2) out.push({ routeId, offsetPx: current, path });
   }
   return out;
 }
@@ -333,10 +381,11 @@ export function laneApprox(
   for (const [routeId, pts] of shapes) {
     if (pts.length < 2) { out.set(routeId, pts.slice()); continue; }
     const KX = K * Math.cos((pts[0]!.lat * Math.PI) / 180);
+    const off = laneOffsets(lanes, routeId, pts, gapPx);
     const moved = pts.map((p, i) => {
       const j = i === 0 ? 1 : i;               // the segment this vertex is on
       const a = pts[j - 1]!, b = pts[j]!;
-      const offM = offsetFor(lanes, routeId, a, b, gapPx) * mpp;
+      const offM = off[j - 1]! * mpp;
       const ax = a.lng * KX, ay = a.lat * K, bx = b.lng * KX, by = b.lat * K;
       const L = Math.hypot(bx - ax, by - ay) || 1;
       const nx = (by - ay) / L, ny = -(bx - ax) / L;
