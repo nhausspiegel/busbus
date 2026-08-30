@@ -37,6 +37,17 @@ The standing examples so far, kept short on purpose:
   to give segments a shared IDENTITY, not to move them. It is now the
   architecture that ships. Before recording a dead end, check that the question
   measured was the one that mattered.
+- Shipping a run of "fixes" each measured against something other than the
+  complaint. Five rendering changes in one day each improved the number they
+  aimed at -- side-jumps, stub length, nubs -- and the owner said the map looked
+  worse after every one. All five were reverted to `renderer-checkpoint`. The
+  number that tracked how it LOOKED was the count of visible feature boundaries,
+  and not one of the five was measured against it. Find the number that moves
+  with the complaint before changing anything.
+- Judging a half-wired rewrite by how it looks. The one-feature-per-route
+  rendering was abandoned as "looks awful" while its stop and bus snapping were
+  still unported and two tests were red. That is not evidence about the design.
+  Finish wiring, or do not look.
 - Leaving docs pointing at deleted files. `HANDOFF.md` sent the next session to
   `src/render/bundle.ts` and `test/squiggle.test.ts` for weeks after both were
   gone. Deleting a file means re-truing every doc that names it, in the same

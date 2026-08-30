@@ -112,7 +112,7 @@ src/ui/
   DebugMap.tsx    raw-data view at ?debug=1
 ```
 
-**345 tests**, `npm test`, all offline. jsdom component tests exist
+**344 tests**, `npm test`, all offline. jsdom component tests exist
 (`test/Sheet.test.tsx`, `test/Itineraries.test.tsx`) — note the
 `/** @vitest-environment jsdom */` docblock and that the sheet is a fixed side
 panel above 820px, so those tests pin a 390px viewport.
@@ -212,10 +212,12 @@ These are all verified against live responses. Do not re-derive.
 
 See `docs/BACKLOG.md` for the full list with its evidence. The short version:
 
-1. Three **side-jumps** remain: places where the road runs straight but a line
-   hops to the other side of it, because group membership changes and the two
-   routes cannot both keep the side they held. Measured, listed with
-   coordinates in `docs/BACKLOG.md`.
+1. **Every run boundary is visible** -- 47 of them, 25 overspilling a corner
+   and 21 wider than the stroke. This is the ceiling on how good the map can
+   look, and no cap style touches it. `docs/BACKLOG.md` item 1, and
+   `docs/RENDERING.md` for why. Five attempted fixes were reverted on
+   2026-08-30; read the table at the end of `docs/RENDERING.md` before trying
+   a sixth.
 2. Geographic vs octilinear rendering is a fork only the owner can settle.
 3. The Express's stop-to-stop times need real observations before the planner
    can route through the seven stops its GTFS trip omits.
@@ -232,7 +234,7 @@ rebuild described in `docs/RENDERING.md`.
 
 ```bash
 npm run dev                       # http://localhost:5173
-npm test                          # 345 tests, offline
+npm test                          # 344 tests, offline
 npx tsc -b --noEmit
 npx tsx scripts/plan-demo.ts      # Angell <-> Trader Joe's, both ways
 ./.venv/bin/python busbus.py      # is Passio itself healthy?
