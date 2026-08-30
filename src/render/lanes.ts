@@ -43,52 +43,106 @@ export interface SegmentLanes {
 /**
  * Which end of each segment the lane ladder is measured from.
  *
- * This has to be a property of the ROAD and it has to be CONTINUOUS, and the
- * two are easy to get separately and wrong together:
+ * The frame only has to give the routes on a segment a SHARED reference so
+ * their order is stable; which of the two ends it picks is arbitrary. What it
+ * must never do is reverse along a road, because every route on that segment
+ * then mirrors at once and the whole bundle swaps sides mid-street.
  *
- * - Taking the travel direction of the lowest-id route on the segment is
- *   continuous along a shared stretch but changes across a junction, where the
- *   route set changes. The frame mirrors and a line jumps from one end of the
- *   group to the other -- reported as blue on the far left of three lines
- *   reappearing on the far right after the intersection.
- * - Comparing the segment's own endpoints is independent of the routes, but
- *   flips at any bend that turns back across the axis being compared. That
- *   sends the line across the road mid-street and leaves a stray cap where the
- *   two halves meet -- measured at 19 flips over 60 run boundaries, and visible
- *   as nubs on corners.
+ * Three ways to choose it are wrong, each differently:
  *
- * So the orientation is propagated over the road graph instead: one segment is
- * oriented arbitrarily and every segment reachable from it is oriented to
- * continue the flow through the node they share. Continuous by construction,
- * and it never asks who is driving.
+ * - The travel direction of the lowest-id route is continuous along a shared
+ *   stretch but changes across a junction, where the route set changes.
+ * - Comparing the segment's own endpoints is independent of the routes but
+ *   flips at any bend that turns back across the axis compared -- 19 flips
+ *   over 60 run boundaries. There is no fixed reference direction that avoids
+ *   this: a street lying along the tie boundary flips segment to segment.
+ * - Orienting the road GRAPH as a flow cannot work at all. A junction of three
+ *   segments has no orientation that lets all three agree, so it left 16 flips.
+ *
+ * The mistake in that last one is asking for more than is needed. Nothing
+ * requires the third arm of a junction to agree with the other two -- only
+ * that a frame not reverse where a route CONTINUES from one segment to the
+ * next, which is exactly where a reversal is visible. That is a parity
+ * constraint per consecutive pair, and consecutive pairs constrain far fewer
+ * things than a flow does.
+ *
+ * Two routes driving one stretch in opposite directions impose the SAME
+ * constraint, so they never conflict. Only an odd cycle can, which is
+ * geometry that genuinely cannot be oriented; those are counted and the
+ * constraint dropped rather than silently satisfied.
  */
 function orientSegments(shapes: Map<string, LatLng[]>): Map<string, string> {
-  const from = new Map<string, string>();
-  // Walk each route in id order and orient every segment it is the first to
-  // claim, in ITS OWN direction of travel.
+  // Union-find over segments, carrying the parity of each node against its
+  // root: 0 means "same orientation as the root", 1 means "reversed".
+  const parent = new Map<string, string>(), parity = new Map<string, number>();
+
+  const find = (x: string): { root: string; p: number } => {
+    const up = parent.get(x);
+    if (up === undefined) { parent.set(x, x); parity.set(x, 0); return { root: x, p: 0 }; }
+    if (up === x) return { root: x, p: 0 };
+    const r = find(up);
+    const p = parity.get(x)! ^ r.p;
+    parent.set(x, r.root); parity.set(x, p);          // path compression
+    return { root: r.root, p };
+  };
+
+  /** Require bit(x) XOR bit(y) === d. False if that contradicts what is known. */
+  const join = (x: string, y: string, d: number): boolean => {
+    const fx = find(x), fy = find(y);
+    if (fx.root === fy.root) return (fx.p ^ fy.p) === d;
+    parent.set(fx.root, fy.root);
+    parity.set(fx.root, fx.p ^ fy.p ^ d);
+    return true;
+  };
+
+  /** 0 if travelling a -> b runs along the key's own low-to-high order. */
+  const travelBit = (k: string, a: LatLng) => (k.slice(0, k.indexOf("|")) === endKey(a) ? 0 : 1);
+
+  // An odd cycle -- a route that turns back on itself -- cannot have every
+  // constraint satisfied, so one per cycle must be dropped, and a dropped
+  // constraint is a reversal on screen. WHERE it is dropped is the whole
+  // question: taking them in route order drops whichever the walk happens to
+  // reach last, which put a reversal on a dead-straight stretch of road.
   //
-  // A route is a PATH, so "which side" is well defined along it and propagates
-  // without ever flipping. A road NETWORK is not: it branches, so there is no
-  // consistent orientation over it at all, and every attempt to define one per
-  // segment failed somewhere different -- the lowest-id route's direction
-  // flipped across junctions, comparing endpoints flipped at bends, and
-  // propagating over the graph still left 16 flips because a junction of three
-  // segments cannot orient all of them to agree.
-  //
-  // Ordering by id means the lowest-id route is oriented perfectly end to end,
-  // and every later route inherits the frame on stretches it shares. What is
-  // left changes sign only where a route joins or leaves a shared stretch --
-  // which is exactly where its lane changes anyway, so the seam is one the map
-  // was always going to show.
+  // So satisfy the straightest first. A reversal at a hairpin is where the
+  // road doubles back anyway; a reversal mid-street is the defect. Sorting by
+  // turn angle is not a threshold -- nothing is classified, every constraint
+  // is still tried, and only the order changes.
+  const K = 111_320;
+  const wants: { k0: string; k1: string; d: number; turn: number; seq: string }[] = [];
   for (const routeId of [...shapes.keys()].sort()) {
     const pts = shapes.get(routeId)!;
-    for (let i = 1; i < pts.length; i++) {
-      const k = segKey(pts[i - 1]!, pts[i]!);
-      if (!from.has(k)) from.set(k, endKey(pts[i - 1]!));
+    const KX = K * Math.cos((pts[0]!.lat * Math.PI) / 180);
+    for (let i = 2; i < pts.length; i++) {
+      const k0 = segKey(pts[i - 2]!, pts[i - 1]!), k1 = segKey(pts[i - 1]!, pts[i]!);
+      if (k0 === k1) continue;                        // a turnaround constrains nothing
+      const ux = (pts[i - 1]!.lng - pts[i - 2]!.lng) * KX, uy = (pts[i - 1]!.lat - pts[i - 2]!.lat) * K;
+      const vx = (pts[i]!.lng - pts[i - 1]!.lng) * KX, vy = (pts[i]!.lat - pts[i - 1]!.lat) * K;
+      const lu = Math.hypot(ux, uy), lv = Math.hypot(vx, vy);
+      const turn = lu < 1e-9 || lv < 1e-9
+        ? 0 : Math.acos(Math.max(-1, Math.min(1, (ux * vx + uy * vy) / (lu * lv))));
+      wants.push({ k0, k1, d: travelBit(k0, pts[i - 2]!) ^ travelBit(k1, pts[i - 1]!),
+                   turn, seq: `${routeId}:${String(i).padStart(5, "0")}` });
     }
   }
+  wants.sort((a, b) => a.turn - b.turn || (a.seq < b.seq ? -1 : 1));
+
+  contradictions = 0;
+  for (const w of wants) if (!join(w.k0, w.k1, w.d)) contradictions++;
+
+  const from = new Map<string, string>();
+  for (const pts of shapes.values())
+    for (let i = 1; i < pts.length; i++) {
+      const k = segKey(pts[i - 1]!, pts[i]!);
+      const bar = k.indexOf("|");
+      from.set(k, find(k).p === 0 ? k.slice(0, bar) : k.slice(bar + 1));
+    }
   return from;
 }
+
+/** Consecutive-pair constraints that could not be satisfied at once: odd
+ *  cycles in the road graph. Read by the tests; 0 today. */
+export let contradictions = 0;
 
 export function laneIndex(shapes: Map<string, LatLng[]>): Map<string, SegmentLanes> {
   const oriented = orientSegments(shapes);
