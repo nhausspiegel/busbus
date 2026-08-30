@@ -10,8 +10,7 @@ import { stopPaint, stopBasePaint, tickPaint, routeLinePaint,
          DIM, type MapState } from "../render/symbols";
 import { pointAlongShape, snapToShape } from "../routing/shape";
 import { stations } from "../routing/routeDetail";
-import { laneProfiles, applyLanes, DEFAULT_OPTIONS, type LaneProfile, type Pt }
-  from "../render/bundle";
+import { laneRuns, laneApprox } from "../render/lanes";
 
 // MapLibre's worker is a separate ES module that imports a sibling. Rollup
 // cannot see it (the path is built from a runtime string) and ?url would copy
@@ -79,44 +78,27 @@ function rideEnds(o: Overlay | null, rep: Map<string, string>): string[] {
  *  showing motion and what Apple pays too. */
 const GLIDE_MS = 10_000;
 
-/** Minimum clear space between routes sharing a street, in screen pixels. A
- *  floor, not a target: routes already further apart than this are left alone,
- *  so two genuinely parallel streets are never dragged together. */
+/** Clear space between routes sharing a street, in screen pixels.
+ *
+ *  An exact gap now, not a floor. Routes are snapped to the road centreline, so
+ *  two on one street have identical geometry and there is no traced separation
+ *  left to inherit -- which is what used to make this grow with zoom, from
+ *  3.7px at zoom 13 to 13.5px at zoom 18. MapLibre applies it via line-offset,
+ *  in pixels, on the GPU. */
 const LANE_GAP_PX = 5;
 
-/** Corner radius for every turn, in screen pixels. Constant at every zoom, the
- *  way the Underground and the NYC subway map draw a line. */
-const CORNER_RADIUS_PX = 10;
-/**
- * How far a route must hold a lane, ON SCREEN, before the line moves into it.
- *
- * The bundler picks a lane per VERTEX, so a route can flip lanes over a
- * stretch far too short to mean anything, and every flip slides the line up to
- * a full lane gap sideways. That is the squiggle: measured at the zoom the app
- * opens at, routes reversed sideways 8 to 27 times per 1000 drawn pixels with
- * swings up to 4.7px, on lines drawn 6px wide.
- *
- * Holding the assignment for 80px takes four of the five routes to 0-2.4
- * reversals per 1000px, and moves them CLOSER to the streets they run on --
- * worst sideways displacement falls from 4.9, 4.1, 4.7 and 6.4 pixels to 0.1,
- * 2.6, 2.2 and 4.8. A lane a route holds for less than that was never worth
- * drawing; the line just went and came back.
- */
-const LANE_HOLD_PX = 80;
+// CORNER_RADIUS_PX and LANE_HOLD_PX are gone. Rounding is `line-join: round`,
+// done by the GPU at the true stroke width, so there is no fillet to clamp --
+// the old radius was inert anyway, killed by the 10m resampling. The hold
+// existed to damp lane flapping caused by guessing "same street" per vertex;
+// with the road known, a lane changes only where a route joins or leaves.
 
 /** Ground metres one screen pixel covers at this latitude and zoom. */
 function metresPerPixel(lat: number, zoom: number): number {
   return (156_543.03392 * Math.cos((lat * Math.PI) / 180)) / 2 ** zoom;
 }
 
-// The bundler works in a flat metric plane, so route coordinates are projected
-// into local metres about the campus and back. Over a few kilometres the error
-// is far below a pixel, and it keeps the geometry out of degrees, where a
-// "constant" offset would silently change size with latitude.
-const M_PER_DEG_LAT = 111_320;
-const mPerDegLng = M_PER_DEG_LAT * Math.cos((41.8265 * Math.PI) / 180);
-const toPlane = (p: LatLng): Pt => ({ x: p.lng * mPerDegLng, y: p.lat * M_PER_DEG_LAT });
-const fromPlane = (p: Pt): LatLng => ({ lng: p.x / mPerDegLng, lat: p.y / M_PER_DEG_LAT });
+
 
 /** Room to leave around something being framed.
  *
@@ -217,7 +199,8 @@ export function TransitMap({
   placeCb.current = onPlaceClick;
   /** Bundle analysis, which does not depend on the scale. Rebuilt only when
    *  the set of drawn routes changes. */
-  const profilesRef = useRef<LaneProfile[]>([]);
+  /** Route id -> its road centreline. Displacing it is MapLibre's job. */
+  const shapesRef = useRef<Map<string, LatLng[]>>(new Map());
   const colorRef = useRef<Map<string, string>>(new Map());
   /** The routes as actually drawn at the current zoom, shared with the bus
    *  markers so a vehicle rides the line the rider can see. */
@@ -272,40 +255,33 @@ export function TransitMap({
    * the rider zooms. Nothing positioned along a route may read `route.shape`.
    */
   /**
-   * Draw each route, fanned apart only where it genuinely shares a street.
+   * Draw each route, fanned apart where it genuinely shares a street.
    *
-   * The lane geometry comes from src/render/bundle.ts, which enforces a
-   * MINIMUM separation rather than an exact one: a route running alone does
-   * not move at all, and two routes already further apart than the minimum --
-   * genuinely different parallel streets -- are left where they are. The
-   * minimum is a pixel quantity, so it is converted to metres at the current
-   * scale and the geometry is rebuilt when the zoom changes.
+   * Routes arrive snapped to OSM road centrelines (scripts/snap-to-streets.ts),
+   * so two on one street have IDENTICAL geometry and "same street" is an
+   * equality on a segment rather than a guess from proximity. All this has to
+   * decide is which lane, in src/render/lanes.ts.
    *
-   * MapLibre's own `line-offset` is deliberately NOT used. It places the
-   * offset vertex on the miter, so a corner of interior angle t extends by
-   * offset / sin(t/2) -- at Brown's sharpest corner, 1.9x -- and that miter is
-   * the spike that made five earlier attempts at this unusable.
+   * `line-offset` IS used now. An earlier comment here said it was deliberately
+   * avoided because it puts the offset vertex on the miter and spikes at sharp
+   * corners -- but that was written when the input was Passio's traced shape,
+   * where the offset had to fight geometry it did not understand. Offsetting by
+   * hand cost a miter limit, a bevel, fold trimming, a resampling step and a
+   * lane hold, and STILL held the gap in metres so it grew from 3.7px at zoom
+   * 13 to 13.5px at zoom 18. The GPU does it in pixels, correctly, for free.
    */
   function drawRoutes(m: maplibregl.Map, zoom: number) {
-    const profiles = profilesRef.current;
-    if (profiles.length === 0) return;
-    // Below z13 the whole network is a couple of hundred pixels wide and the
-    // strokes are 2px; a lane cannot be read, and 5px of ground at that scale
-    // is nearly 200m of displacement.
-    // Both are PIXEL quantities converted to ground units at this scale, so a
-    // gap and a corner look the same at every zoom. Baking either in as metres
-    // is what pulled the routes off their streets in five earlier attempts.
+    const shapes = shapesRef.current;
+    if (shapes.size === 0) return;
+    // The geometry drawn is the ROAD CENTRELINE. MapLibre displaces it by
+    // `line-offset`, in pixels, on the GPU -- so the gap is the same width at
+    // every zoom by construction rather than by arithmetic, and corners are
+    // joined properly instead of being offset by hand and repaired after.
+    //
+    // Only the snapping copy depends on scale: a stop has to sit on the line a
+    // rider SEES, which is the centreline displaced.
     const mpp = metresPerPixel(CAMPUS.lat, zoom);
-    const minGap = zoom < 13 ? 0 : LANE_GAP_PX * mpp;
-    const radius = CORNER_RADIUS_PX * mpp;
-
-    // In densified steps, since that is what the profile counts in.
-    const hold = Math.round((LANE_HOLD_PX * mpp) / DEFAULT_OPTIONS.stepM);
-
-    const drawn = new Map<string, LatLng[]>();
-    for (const p of profiles)
-      drawn.set(p.id, applyLanes(p, minGap, radius, hold).map(fromPlane));
-    drawnRef.current = drawn;
+    drawnRef.current = laneApprox(shapes, LANE_GAP_PX, mpp);
     // Same geometry, same moment: the stops are placed from `drawn` right here
     // rather than once at startup, so they cannot drift off the line.
     const stopSrc = m.getSource("stops") as maplibregl.GeoJSONSource | undefined;
@@ -320,12 +296,19 @@ export function TransitMap({
       rideSrc.setData({ type: "FeatureCollection",
                         features: rideFeatures(feed, overlayRef.current, drawnRef.current) });
 
+    // One feature per RUN of constant lane. A route changes lane only where
+    // another joins or leaves it, so a run is a stretch carrying the same set
+    // of routes; runs overlap by a node so they meet on screen.
     const data: GeoJSON.FeatureCollection = {
       type: "FeatureCollection",
-      features: [...drawn].map(([routeId, path]) => ({
+      features: laneRuns(shapes, LANE_GAP_PX).map((run) => ({
         type: "Feature",
-        properties: { routeId, color: colorRef.current.get(routeId) ?? "#888" },
-        geometry: { type: "LineString", coordinates: path.map((q) => [q.lng, q.lat]) },
+        properties: {
+          routeId: run.routeId,
+          color: colorRef.current.get(run.routeId) ?? "#888",
+          laneOffset: run.offsetPx,
+        },
+        geometry: { type: "LineString", coordinates: run.path.map((q) => [q.lng, q.lat]) },
       })),
     };
 
@@ -376,6 +359,7 @@ export function TransitMap({
       paint: {
         "line-color": darkRef.current ? "#15110F" : "#FFFFFF",
         "line-width": caseWidth, "line-opacity": 0.9,
+        "line-offset": ["get", "laneOffset"],
         "line-opacity-transition": { duration: 220, delay: 0 },
       },
     });
@@ -390,7 +374,8 @@ export function TransitMap({
     m.addLayer({
       id: "routes-hit", type: "line", source: "routes",
       layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": "#000", "line-opacity": 0, "line-width": 24 },
+      paint: { "line-color": "#000", "line-opacity": 0, "line-width": 24,
+               "line-offset": ["get", "laneOffset"] },
     });
     m.on("click", "routes-hit", (e: maplibregl.MapLayerMouseEvent) => {
       if (pressHandled.current) return;      // this click ended a long press
@@ -537,8 +522,7 @@ export function TransitMap({
       (r) => activeRouteIds.has(r.id) && r.shape.length >= 2);
     // Which routes share which stretches of street: the costly half, and it
     // does not depend on the zoom, so it is kept out of the per-zoom redraw.
-    profilesRef.current = laneProfiles(
-      active.map((r) => ({ id: r.id, points: r.shape.map(toPlane) })), DEFAULT_OPTIONS);
+    shapesRef.current = new Map(active.map((r) => [r.id, r.shape]));
     colorRef.current = new Map(active.map((r) => [r.id, r.color]));
 
     try {
@@ -621,7 +605,7 @@ export function TransitMap({
   // Declared BEFORE the bus effect so drawnRef is fresh when the markers move.
   useEffect(() => {
     const m = map.current;
-    if (!m || !ready || !m.getSource("routes") || profilesRef.current.length === 0) return;
+    if (!m || !ready || !m.getSource("routes") || shapesRef.current.size === 0) return;
     try { drawRoutes(m, zoom); } catch { /* style churn; the next render redraws */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoom, ready]);

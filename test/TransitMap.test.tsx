@@ -174,29 +174,51 @@ describe("TransitMap", () => {
     return nearest;
   };
 
-  it("separates two routes that share a street", () => {
-    // A and B are the same street traced twice, in opposite directions. Drawn
-    // straight from Passio's coordinates they land on top of each other and
-    // read as one line; src/render/bundle.ts pushes them apart by a minimum
-    // gap measured in screen pixels.
+  it("gives two routes sharing a street opposite lanes", () => {
+    // A and B are one street driven in both directions. This used to assert
+    // that their GEOMETRY was pushed apart, because the app offset the lines
+    // itself. It no longer does: routes are snapped to the road centreline, so
+    // sharing a street means sharing coordinates EXACTLY, and the displacement
+    // is `line-offset` in pixels applied by the GPU.
+    //
+    // So the contract is the other way round now -- the geometry must be
+    // identical, and the lanes must differ by the gap. Asserting a geometric
+    // separation here would be asserting the bug back.
     mount();
     map.fire("load");
-    const b = (map.getSource("routes") as { data: GeoJSON.FeatureCollection })
-      .data.features.find((q) => q.properties?.["routeId"] === "B");
-    const mid = (b!.geometry as GeoJSON.LineString).coordinates[6]!;
-    expect(toDrawn("A", mid[0]!, mid[1]!)).toBeGreaterThan(1);
+    const feats = (map.getSource("routes") as { data: GeoJSON.FeatureCollection })
+      .data.features;
+    const a = feats.find((q) => q.properties?.["routeId"] === "A")!;
+    const b = feats.find((q) => q.properties?.["routeId"] === "B")!;
+    const ca = (a.geometry as GeoJSON.LineString).coordinates;
+    const cb = [...(b.geometry as GeoJSON.LineString).coordinates].reverse();
+    expect(ca).toEqual(cb);                       // one road, one geometry
+
+    const oa = a.properties?.["laneOffset"] as number;
+    const ob = b.properties?.["laneOffset"] as number;
+    // Opposite sides of the centreline, one gap apart. B drives the street the
+    // other way, so its own offset is negated to keep it on the same side of
+    // the ROAD -- without that both land on top of each other.
+    expect(Math.abs(oa)).toBeCloseTo(2.5, 6);
+    expect(Math.abs(ob)).toBeCloseTo(2.5, 6);
+    expect(oa).toBeCloseTo(ob, 6);
   });
 
-  it("puts each bus on the line drawn for its own route", () => {
-    // The feed puts this bus off its shape, as a real GPS fix does, and the
-    // drawn line is not the raw shape -- it has been bundled into a lane and
-    // its corners rounded. The bus must sit on what was DRAWN. Snapping to one
+  it("puts each bus in its own lane, not on the bare centreline", () => {
+    // The feed puts this bus off its shape, as a real GPS fix does. It must sit
+    // on the line a rider SEES -- and that line is the centreline displaced
+    // into A's lane by line-offset, not the centreline itself. Snapping to one
     // geometry while drawing another is exactly how buses ended up beside
     // their own route.
     mount();
     map.fire("load");
     const [lng, lat] = markers[0]!.lngLat;
-    expect(toDrawn("A", lng, lat)).toBeLessThan(0.5);
+
+    // A shares this street with B, so A's lane is half a gap off the centre.
+    // At the fake map's zoom that is a real distance on the ground, and the
+    // bus must be out there with the stroke rather than back on the centreline.
+    const mpp = (156_543.03392 * Math.cos((41.8265 * Math.PI) / 180)) / 2 ** 14.2;
+    expect(toDrawn("A", lng, lat)).toBeCloseTo(2.5 * mpp, 0);
     // ...and genuinely moved, so this cannot pass by the bus already being there.
     expect(Math.abs(lat - 41.8228) + Math.abs(lng - -71.4002)).toBeGreaterThan(1e-6);
   });

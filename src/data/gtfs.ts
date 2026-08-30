@@ -1,7 +1,8 @@
 import { unzipSync, strFromU8 } from "fflate";
-import { GTFS_STATIC_URL, httpGetBytes } from "./passio";
+import { GTFS_STATIC_URL, httpGetBytes, IS_NODE } from "./passio";
 import { fetchRoutePathPayload, parseRoutePaths, fillMissingShapes,
          parseRouteStops, withRouteStops, parseActiveRoutes } from "./routePaths";
+import { parseSnapped, withSnappedShapes } from "./snappedShapes";
 import type { StaticFeed, Route, Stop, Trip, TripStop, LatLng } from "./types";
 
 /** GTFS times are "HH:MM:SS" and MAY exceed 24h for post-midnight service.
@@ -140,5 +141,15 @@ export async function fetchStaticFeed(): Promise<StaticFeed> {
     const active = parseActiveRoutes(payload);
     if (active.size) feed.activeRouteIds = active;
   } catch { /* GTFS-shaped routes are unaffected */ }
+
+  // Then put every route on the centreline of the road it actually drives.
+  // Built at build time by scripts/snap-to-streets.ts; a failure here leaves
+  // the traced shapes, which is where the app was before.
+  if (!IS_NODE) {
+    try {
+      const res = await fetch(`${import.meta.env.BASE_URL}gtfs/shapes-snapped.json`);
+      if (res.ok) withSnappedShapes(feed, parseSnapped(await res.json()));
+    } catch { /* traced shapes still describe the route */ }
+  }
   return feed;
 }

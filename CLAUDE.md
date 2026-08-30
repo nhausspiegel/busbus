@@ -2,6 +2,38 @@
 
 Brown University shuttle app.
 
+## 0. FIRST: when you get it wrong, write it down here
+
+*This is the highest-priority instruction in this file. It comes before the
+non-negotiables, because it is how they got written.*
+
+**Whenever a decision turns out to be incorrect or misaligned with what the
+owner actually wanted, add a note to THIS file saying what not to do next
+time.** Not to the backlog, not to a commit message that scrolls away -- here,
+because this file is what the next session reads before touching anything.
+
+Write the rule, not the story: what the wrong instinct was, and what to do
+instead. One or two sentences. The bullets under Working style below were
+all earned this way, and each one exists because it was done wrong first.
+
+The standing examples so far, kept short on purpose:
+
+- Reaching for a remote API for data the project already has (see Working
+  style). ~60 rate-limited requests for a road network that is one query.
+- Inventing a metric instead of measuring the thing complained about. Three
+  proxies for the map "squiggle" each moved the wrong way, and one counted a
+  successful fix as the defect.
+- Reporting what a screenshot shows. I have twice stated the opposite of what
+  was on screen, including which side of a road a line sat on. Screenshots
+  spot that something is wrong; they never decide what is right.
+- Explaining a report away. "It may just not be visible at that zoom" is not an
+  answer to "it doesn't work". The owner is the only one who can see the
+  window, so their observation is the starting point, not a claim to triage.
+
+---
+
+## What exists
+
 - **Routing engine: done.** `src/routing/plan.ts` ranks by earliest arrival and
   offers walking as an option. Pure functions, no network, fully fixture-tested.
   `npx tsx scripts/plan-demo.ts` (defaults to 129 Angell St <-> Trader Joe's,
@@ -97,6 +129,13 @@ No API keys anywhere. Nothing to keep out of git.
 ## Working style
 
 - **Reuse before writing.** Check `busbus.py` for an existing helper first.
+- **Data you already have beats an API you have to call.** Before querying a
+  service, say what is already committed, vendored, parsed, or downloaded by
+  the app. Street geometry is the standing example: this app ships a street
+  basemap, and the campus road network is ONE Overpass query -- snapping routes
+  to streets was first built as ~60 rate-limited OSRM requests taking minutes.
+  And prefer one bulk request to N per-item ones; N is slower AND ruder, and
+  this project has already been throttled into looking broken.
 - **Stdlib before dependencies.** New packages need a reason stated out loud.
 - **Minimum that works.** No abstractions for one caller, no config for a
   constant, no scaffolding for a feature that isn't requested.

@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { parseStaticFeed } from "../src/data/gtfs";
-import { laneProfiles, applyLanes, DEFAULT_OPTIONS, type Line, type Pt } from "../src/render/bundle";
+import { laneApprox } from "../src/render/lanes";
+import { parseSnapped } from "../src/data/snappedShapes";
 import { stationFeatures, rideFeatures } from "../src/render/network";
 import { haversineMeters } from "../src/routing/walk";
 import type { LatLng } from "../src/data/types";
@@ -19,22 +20,17 @@ import type { LatLng } from "../src/data/types";
 const feed = parseStaticFeed(new Uint8Array(readFileSync("public/gtfs/google_transit.zip")));
 const ACTIVE = new Set(["3302", "3469", "3470", "22427", "62487"]);
 
-// The same projection TransitMap uses: a flat plane about Brown's latitude.
-const M_PER_DEG_LAT = 111_320;
-const mPerDegLng = M_PER_DEG_LAT * Math.cos((41.8265 * Math.PI) / 180);
-const toPlane = (p: LatLng): Pt => ({ x: p.lng * mPerDegLng, y: p.lat * M_PER_DEG_LAT });
-const fromPlane = (p: Pt): LatLng => ({ lng: p.x / mPerDegLng, lat: p.y / M_PER_DEG_LAT });
+/** The snapped road centrelines the app actually draws. */
+const snapped = parseSnapped(
+  JSON.parse(readFileSync("public/gtfs/shapes-snapped.json", "utf8")));
 
-/** The network as drawn at one zoom, exactly as the map builds it. */
+/** Where the lines land at one zoom, as the map places stops against them.
+ *
+ *  MapLibre applies the lane offset itself, so this is the same displacement
+ *  the GPU will use -- see laneApprox. The bundler this used to call is gone. */
 function drawAt(zoom: number): Map<string, LatLng[]> {
   const mpp = (156_543.03392 * Math.cos((41.8265 * Math.PI) / 180)) / 2 ** zoom;
-  const lines: Line[] = [...feed.routes.values()]
-    .filter((r) => ACTIVE.has(r.id) && r.shape.length >= 2)
-    .map((r) => ({ id: r.id, points: r.shape.map(toPlane) }));
-  const out = new Map<string, LatLng[]>();
-  for (const p of laneProfiles(lines, DEFAULT_OPTIONS))
-    out.set(p.id, applyLanes(p, zoom < 13 ? 0 : 5 * mpp, 10 * mpp).map(fromPlane));
-  return out;
+  return laneApprox(new Map([...snapped].filter(([id]) => ACTIVE.has(id))), 5, mpp);
 }
 
 /** How far `p` is from the nearest vertex of `line`, metres. */

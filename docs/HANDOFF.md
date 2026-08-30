@@ -151,6 +151,32 @@ plausible fixes are measured worse, and metre-based metrics are worthless here.
 
 ---
 
+## 4b. Reflexes that wasted real time
+
+Distinct from the technical dead ends in `docs/BACKLOG.md`: those are ideas that
+were measured and lost. These are *habits* — the wrong instinct reached for
+before thinking, each one caught by the owner rather than by me.
+
+- **Reaching for a remote API for data the project already has.** Snapping
+  routes to street centrelines was first built as ~60 rate-limited OSRM map
+  requests taking many minutes, when this app already ships a street basemap
+  and the whole campus road network is ONE Overpass query. Before calling a
+  service, ask what is already downloaded, vendored, or committed. Volunteer
+  infrastructure is not a convenience layer over data you can hold.
+- **Inventing a metric instead of measuring the thing complained about.** Three
+  separate proxies for the map "squiggle" each moved the wrong way or counted a
+  successful fix as the defect. Measure in the units the defect is seen in.
+- **Reading a screenshot and reporting what it shows.** I have twice stated the
+  opposite of what was on screen — including which side of a road a line sat
+  on. Screenshots are for spotting that something is wrong, never for deciding
+  what is right. Measure it, or ask.
+- **Explaining a report away.** "It may just not be visible at that zoom" is not
+  an answer to "it doesn't work". The owner is the only one who can see the
+  window; their observation is the ground truth and the starting point, not a
+  claim to be triaged.
+
+---
+
 ## 5. Passio data quirks that cost real time
 
 These are all verified against live responses. Do not re-derive.
