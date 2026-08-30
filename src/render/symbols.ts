@@ -134,6 +134,10 @@ export function routeLinePaint(s: MapState): Record<string, unknown> {
     "line-opacity-transition": { duration: EMPHASIS_MS, delay: 0 },
     "line-width-transition": { duration: EMPHASIS_MS, delay: 0 },
     "line-color": ["get", "color"],
+    // The lane. In PIXELS, applied by the GPU, so the gap between two routes
+    // sharing a street is the same width at every zoom -- which is the whole
+    // reason none of this is computed as geometry any more.
+    "line-offset": ["get", "laneOffset"],
     "line-width": s.routeFocus
       ? ["case", ["==", ["get", "routeId"], s.routeFocus], 8, 4] as ExpressionSpecification
       : width,
