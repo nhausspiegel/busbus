@@ -36,8 +36,26 @@ const endKey = (p: LatLng) => `${p.lng},${p.lat}`;
 export interface SegmentLanes {
   /** Routes on this segment, sorted by id. */
   users: string[];
-  /** The node this segment is entered from by the side-defining route. */
+  /** The node the road's own canonical direction starts from. */
   forward: string;
+}
+
+/**
+ * Which end of a segment the ladder is measured from.
+ *
+ * A property of the ROAD, decided by comparing the two endpoints, so it does
+ * not change when the set of routes on the segment changes.
+ *
+ * This used to be the travel direction of the lowest-id route present, which
+ * is stable ALONG a shared stretch but not ACROSS an intersection: where a
+ * route joins or leaves, the reference route changes, the frame mirrors, and a
+ * line jumps from one end of the group to the other. Reported as blue running
+ * on the far left of three lines and reappearing on the far right after the
+ * junction.
+ */
+function canonicalFrom(a: LatLng, b: LatLng): LatLng {
+  if (a.lng !== b.lng) return a.lng < b.lng ? a : b;
+  return a.lat < b.lat ? a : b;
 }
 
 /**
@@ -55,18 +73,16 @@ export interface SegmentLanes {
  * property of the road, which is what it has to be.
  */
 export function laneIndex(shapes: Map<string, LatLng[]>): Map<string, SegmentLanes> {
-  const on = new Map<string, { users: Set<string>; from: Map<string, string> }>();
+  const on = new Map<string, { users: Set<string>; forward: string }>();
   for (const [routeId, pts] of shapes)
     for (let i = 1; i < pts.length; i++) {
-      const k = segKey(pts[i - 1]!, pts[i]!);
-      const e = on.get(k) ?? on.set(k, { users: new Set(), from: new Map() }).get(k)!;
+      const a = pts[i - 1]!, b = pts[i]!;
+      const k = segKey(a, b);
+      const e = on.get(k)
+        ?? on.set(k, { users: new Set(), forward: endKey(canonicalFrom(a, b)) }).get(k)!;
       e.users.add(routeId);
-      e.from.set(routeId, endKey(pts[i - 1]!));
     }
-  return new Map([...on].map(([k, e]) => {
-    const users = [...e.users].sort();
-    return [k, { users, forward: e.from.get(users[0]!)! }];
-  }));
+  return new Map([...on].map(([k, e]) => [k, { users: [...e.users].sort(), forward: e.forward }]));
 }
 
 /** The signed lane offset, in pixels, for one route on one segment. */
