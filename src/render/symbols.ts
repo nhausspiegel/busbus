@@ -125,7 +125,7 @@ export function routeLinePaint(s: MapState): Record<string, unknown> {
   // at exactly the scale where all five routes overlap each other, and a block
   // loop twenty metres across became one blob under six pixels of line.
   const width: ExpressionSpecification =
-    ["interpolate", ["linear"], ["zoom"], 11, 2, 14, 4, 16, 6];
+    ["interpolate", ["linear"], ["zoom"], 11, 1.5, 14, 3, 16, 4.5];
   let opacity: ExpressionSpecification | number = 1;
   if (s.routeFocus)
     opacity = ["case", ["==", ["get", "routeId"], s.routeFocus], 1, DIM];
@@ -139,7 +139,7 @@ export function routeLinePaint(s: MapState): Record<string, unknown> {
     // reason none of this is computed as geometry any more.
     "line-offset": ["get", "laneOffset"],
     "line-width": s.routeFocus
-      ? ["case", ["==", ["get", "routeId"], s.routeFocus], 8, 4] as ExpressionSpecification
+      ? ["case", ["==", ["get", "routeId"], s.routeFocus], 6, 3] as ExpressionSpecification
       : width,
     "line-opacity": opacity,
   };

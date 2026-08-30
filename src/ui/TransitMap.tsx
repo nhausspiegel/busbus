@@ -352,7 +352,7 @@ export function TransitMap({
     // beside it looked like it did something and did not -- the width change
     // it was meant to carry never reached the map.
     const caseWidth: maplibregl.ExpressionSpecification =
-      ["interpolate", ["linear"], ["zoom"], 11, 3.5, 14, 6.5, 16, 10];
+      ["interpolate", ["linear"], ["zoom"], 11, 2.5, 14, 5, 16, 7.5];
     m.addLayer({
       id: "routes-case", type: "line", source: "routes",
       layout: { "line-cap": "round", "line-join": "round" },
