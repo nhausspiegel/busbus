@@ -1,6 +1,9 @@
 # How route lines are drawn
 
-Written 2026-08-30, when the owner first called the rendering correct. It
+Written 2026-08-30. The state described here is `git tag renderer-checkpoint`
+-- the rendering the owner called correct. Four later "fixes" were measured and
+**every one made it slightly worse**, so they were reverted wholesale; see
+"What was tried and reverted" at the end. It
 exists because the whole design lived in commit messages and one session's
 head, and the previous design survived ~100 commits mostly because each session
 found it already written and assumed it was load-bearing.
@@ -85,25 +88,17 @@ a `const ACTIVE`, so adding a route means re-running it.
 
 - `segKey(a, b)` — an unordered pair of exact coordinate strings. Equality is
   exact, which is only sound because of the shared node table above.
-- `orientSegments` — a **canonical frame** per segment, propagated along whole
-  routes in id order. Without it, two routes driving one street in opposite
-  directions each offset along their own travel normal and land exactly on top
-  of each other.
-- `laneIndex` — for each segment, which routes use it, in a stable order.
-- `relaxOrder` — resolves who gets which side. Two routes on a segment often
-  both want the side they held on the previous segment and one must give; with
-  no reason to prefer either, the loser was whichever route id sorted first, so
-  a line running dead straight through a junction got shoved aside by one that
-  had just turned in. Each claim is weighted by how straight the route runs
-  through the segment (1 dead ahead, 0 at a right angle).
-- `laneOffsets` — the per-segment offsets for one route, **with junction stubs
-  absorbed**. See the next section; this is the subtle one.
-- `laneRuns` — splits a route into features wherever the offset changes, each
-  carrying `laneOffset`. Consecutive runs overlap by one node.
+- `laneIndex` — for each segment, which routes use it, sorted by route id, plus
+  a `forward` end. Sorting by id is what keeps a route on the same side along
+  its length; `forward` is the travel direction of the **lowest-id route** on
+  the segment, because MapLibre offsets to the right of a feature's own
+  direction and two routes driving one street in opposite directions would
+  otherwise land in the same lane — measured at exactly 0.00px apart.
+- `laneRuns` — splits a route into one feature per stretch of constant offset,
+  each carrying `laneOffset`. Runs overlap by one node. **This is where the
+  open defect lives** — see "The fragile part" below.
 - `laneApprox` / `laneSnap` — the same offsets applied per vertex, so stops and
   buses sit on the line **as drawn**, not on the centreline underneath it.
-  These must always go through `laneOffsets`, or they will disagree with the
-  drawn line at exactly the junctions that are hardest to get right.
 
 The offset is centred: `(index − (n−1)/2) × LANE_GAP_PX`. Centring means every
 line shifts when a route joins or leaves the group. **The owner has explicitly
@@ -136,22 +131,21 @@ That single fact produced two symptoms that looked unrelated:
 Changing the cap only changed which one appeared. The real fix is to have
 **fewer, longer** features.
 
-Hence `JUNCTION_M = 25` in `laneOffsets`. At a corner the crossing route
-genuinely shares a metre or two of the same OSM way, so membership goes
-2 → 3 → 2 over seven metres, everyone re-centres, and a seven-metre feature is
-emitted at its own offset. Any run shorter than a junction is absorbed into
-whichever neighbour holds more road, so a stub never decides the lane of the
-street it interrupts.
+Measured 2026-08-30, that is not a rare edge: **all 47 run boundaries are
+visible.** 25 of them fall on a corner, where the outgoing feature overspills
+the turn and the route appears to bend at two points instead of one. 21 are
+wider than the 4.5px stroke, which leaves a clean gap in the line.
 
-Measured before the fix: six runs of 4.0–7.1m, and the shortest real street
-block 34.2m. Nothing lies in that gap, so the constant is not a tuned knob.
+No cap style fixes this. It is the split itself. The honest options are:
 
-**It is in world metres on purpose.** It describes how OSM draws a junction —
-a fact about the data, not about the display — so it must not move with zoom.
-That is not a relapse into metre-based symbology: the *offset* is still pixels
-and only pixels.
+1. **Fewer boundaries.** Anything that reduces how often the lane changes.
+   Absorbing junction stubs took 47 to 45 and was still not close.
+2. **One feature per route**, with the offset applied to the geometry and
+   rebuilt whenever the scale changes. That is the only way a lane change can
+   be a ramp rather than a jump, and it makes every corner a real join. It was
+   attempted and looked worse than what it replaced -- see the end of this doc.
 
----
+Until one of those lands, this is the ceiling on how good the map can look.
 
 ## Current numbers
 
@@ -160,16 +154,17 @@ Re-derive rather than trust; every one of these came from a script.
 | measure | value |
 |---|---|
 | lane gap | 5.00px at every zoom (was 3.7px @z13 → 13.5px @z18) |
-| features drawn | 50 for 5 routes |
-| shortest run | 34.2m (was 4.0m) |
+| features drawn | 52 for 5 routes |
+| visible run boundaries | 47 -- 25 on corners, 21 wider than the stroke |
+| shortest run | 4.0m |
 | snapped length ÷ traced length | 0.98–1.01× per route |
 | two-way distance, snapped vs trace | ≤7.4m p90 |
 | reversals >150° | 0, except one real hairpin on Allens Ave |
-| side-jumps (road straight, line hops across it) | 3 |
-| knobs | `LANE_GAP_PX`, `JUNCTION_M` |
+| side-jumps (road straight, line hops across it) | 4 |
+| knobs | `LANE_GAP_PX` |
 
-`test/snappedShapes.test.ts` pins length ratio, reversals, two-way distance,
-the exact offset set, and the minimum run length.
+`test/snappedShapes.test.ts` pins length ratio, reversals, two-way distance and
+the exact offset set.
 
 ---
 
@@ -187,3 +182,32 @@ the exact offset set, and the minimum run length.
   which is the original defect.
 - **Do not reach for the cap style when a corner looks wrong.** Look for a
   feature boundary first.
+
+---
+
+## What was tried and reverted, 2026-08-30
+
+Four changes on top of this baseline. Each was measured, each looked defensible
+on its own number, and the owner reported the map looked **worse** after every
+one. All four were reverted together, back to this state.
+
+| change | its own number | what it cost |
+|---|---|---|
+| tie the lane ladder to the road, thin the strokes | fixed a reported side-swap | run boundaries 47 → **60** — the worst of the five |
+| butt caps, orient the frame along routes | removed the corner nubs | replaced them with notches; 49 boundaries |
+| order lanes by which route runs straight | — | 51 boundaries |
+| absorb lane changes shorter than a junction (`JUNCTION_M`) | shortest run 4.0m → 34.2m, boundaries → 45 | side-jumps unchanged; corner overspill still 25 |
+| frame continuity by union-find parity | side-jumps 4 → 1 | boundaries back up to 50, corners 25 → **31** |
+
+The lesson is in the last column. Every one of these optimised a number that
+was real, and every one was measured against something other than the thing
+that had been complained about. **The boundary count is the number that tracks
+what the map looks like**, and nothing above moved it in the right direction.
+
+A fifth attempt -- one feature per route, geometry displaced per zoom, lane
+changes tapered over 18px -- would have taken the boundary count to zero by
+construction. It was abandoned mid-implementation because the map looked worse
+on screen while it was still half-wired (the stop and bus snapping had not been
+moved over, and two `TransitMap` tests were failing). **It is not a measured
+dead end** and remains the most promising direction; it just has to be finished
+before it can be judged.

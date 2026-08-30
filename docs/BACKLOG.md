@@ -15,34 +15,49 @@ For how route lines are drawn, read `docs/RENDERING.md` first.
 
 ## Still to do
 
-### 1. Three side-jumps remain
+### 1. Every run boundary is visible — the ceiling on the map's looks
 
-A **side-jump** is the road running straight (turn < 60°) while the line hops
-to the other side of it (world-space displacement swings > 90°). Measured
-2026-08-30, three remain of four:
+A route is cut into one feature per stretch of constant lane offset, and
+MapLibre can only build a join **within** a feature. So every cut is a join it
+cannot make. Measured 2026-08-30 on `renderer-checkpoint`:
 
 ```
-3469  41.82788,-71.40317   turn=2   swing=178    (Angell)
-3470  41.82613,-71.40462   turn=3   swing=177
-62487 41.82392,-71.40014   turn=0   swing=180
+52 features for 5 routes
+47 boundaries, ALL of them visible
+   25 on a corner   -- the outgoing feature overspills the turn, so the route
+                       appears to bend at two points instead of one
+   21 wider than the 4.5px stroke -- a clean gap in the line
+median step 3.4px, max 7.0px
 ```
 
-Cause: group membership changes, and both routes want the side they held on
-the previous segment, so one must give. `relaxOrder` in `src/render/lanes.ts`
-weights each claim by how straight the route runs through the segment, which
-fixed the junction-stub cases but not these -- here the conflict is real and
-someone genuinely has to move.
+Round caps make each one a nub, butt caps make it a notch. **The cap is not the
+defect and no cap fixes it.** Read `docs/RENDERING.md`, "The fragile part".
 
-Whether that is even wrong is a judgement call: two lines swapping order over a
-long block is a *lane change*, which real transit maps do draw. What is
-definitely wrong is doing it abruptly. The honest fix is the LOOM line-ordering
-formulation -- minimise order changes over the whole network at once, rather
-than segment by segment.
+Two ways out, and only the second can reach zero:
 
-**Measure it with the world-space displacement, never with the sign of
-`offsetPx`.** That sign must flip wherever the canonical frame opposes travel,
-precisely so the line stays on the same side of the road; counting those flips
-calls the correction a defect, which has now been done twice.
+1. Fewer boundaries. Absorbing junction stubs got 47 → 45. Not close.
+2. One feature per route: offset applied to the geometry, rebuilt whenever the
+   scale changes, lane changes tapered over a fixed number of pixels. Zero
+   boundaries by construction, every corner a real join, and a lane change
+   becomes a ramp instead of a jump.
+
+(2) was started and abandoned half-wired — the stop and bus snapping had not
+been moved onto the new geometry and two `TransitMap` tests were failing, so
+what was on screen was not what the design would produce. **It is not a
+measured dead end.** Finish it before judging it.
+
+### 1b. Four side-jumps
+
+The road runs straight (turn < 60°) but the line hops across it (world-space
+displacement swings > 90°). Four, measured on the checkpoint. Fixes for these
+were built and reverted — see the table at the end of `docs/RENDERING.md` —
+because each traded a side-jump for more run boundaries, and boundaries are
+the number that tracks what the map looks like.
+
+**Measure this in world space, never with the sign of `offsetPx`.** That sign
+must flip wherever the canonical frame opposes travel, precisely so the line
+stays on the same side of the road; counting those flips calls the correction a
+defect, which has now been done twice.
 
 ### 2. Geographic vs octilinear — a fork only the owner can settle
 
@@ -80,7 +95,7 @@ Corner radius is no longer a knob at all: `CORNER_RADIUS_PX` and the densifier
 that clamped it dead are both deleted, and corners are `line-join: round`,
 which MapLibre draws correctly *within* a feature. What remains is boundaries
 **between** features -- see `docs/RENDERING.md`, "The fragile part". Fewer,
-longer features is the only lever; `JUNCTION_M` took the count from 56 to 50.
+longer features is the only lever, and see item 1: it is the open defect.
 
 ### 6. NearbyBoard is hidden, not deleted
 
@@ -105,16 +120,14 @@ Newest first. Each line is the rule, not the change.
   nodes at build time, and MapLibre displaces them with `line-offset` in device
   pixels. The gap is 5.00px at every zoom, by construction -- there is no
   length in the expression that could be metres. Nine tuning mechanisms deleted.
-- **A lane change shorter than a junction is not a lane change.** At a corner a
-  crossing route genuinely shares a metre or two of the same OSM way, so
-  membership goes 2 -> 3 -> 2 over seven metres and a stub feature is emitted
-  at its own offset. MapLibre joins only WITHIN a feature, so each boundary is
-  a fake join: a nub under round caps, a notch under butt caps. Changing the
-  cap changed only which artefact appeared.
-- **Going straight is the stronger claim to a lane.** When two routes on one
-  segment both want the side they already held, the loser used to be whichever
-  route id sorted first -- so a line running dead straight through a junction
-  was shoved aside by one that had just turned in.
+  This is `renderer-checkpoint`, and the owner called it correct.
+- **Five follow-up "fixes" were reverted, all of them.** Junction-stub
+  absorption, butt caps, straightness-weighted lane ordering, frame continuity
+  by union-find, and a lane ladder tied to the road. Each improved the number
+  it was aimed at; every one raised the count of visible run boundaries, and
+  the owner reported the map looked worse after each. **Measure the boundary
+  count before believing any rendering change.** The full table is at the end
+  of `docs/RENDERING.md`.
 
 **2026-08-29**
 
