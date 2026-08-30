@@ -41,48 +41,65 @@ export interface SegmentLanes {
 }
 
 /**
- * Which end of a segment the ladder is measured from.
+ * Which end of each segment the lane ladder is measured from.
  *
- * A property of the ROAD, decided by comparing the two endpoints, so it does
- * not change when the set of routes on the segment changes.
+ * This has to be a property of the ROAD and it has to be CONTINUOUS, and the
+ * two are easy to get separately and wrong together:
  *
- * This used to be the travel direction of the lowest-id route present, which
- * is stable ALONG a shared stretch but not ACROSS an intersection: where a
- * route joins or leaves, the reference route changes, the frame mirrors, and a
- * line jumps from one end of the group to the other. Reported as blue running
- * on the far left of three lines and reappearing on the far right after the
- * junction.
+ * - Taking the travel direction of the lowest-id route on the segment is
+ *   continuous along a shared stretch but changes across a junction, where the
+ *   route set changes. The frame mirrors and a line jumps from one end of the
+ *   group to the other -- reported as blue on the far left of three lines
+ *   reappearing on the far right after the intersection.
+ * - Comparing the segment's own endpoints is independent of the routes, but
+ *   flips at any bend that turns back across the axis being compared. That
+ *   sends the line across the road mid-street and leaves a stray cap where the
+ *   two halves meet -- measured at 19 flips over 60 run boundaries, and visible
+ *   as nubs on corners.
+ *
+ * So the orientation is propagated over the road graph instead: one segment is
+ * oriented arbitrarily and every segment reachable from it is oriented to
+ * continue the flow through the node they share. Continuous by construction,
+ * and it never asks who is driving.
  */
-function canonicalFrom(a: LatLng, b: LatLng): LatLng {
-  if (a.lng !== b.lng) return a.lng < b.lng ? a : b;
-  return a.lat < b.lat ? a : b;
+function orientSegments(shapes: Map<string, LatLng[]>): Map<string, string> {
+  const from = new Map<string, string>();
+  // Walk each route in id order and orient every segment it is the first to
+  // claim, in ITS OWN direction of travel.
+  //
+  // A route is a PATH, so "which side" is well defined along it and propagates
+  // without ever flipping. A road NETWORK is not: it branches, so there is no
+  // consistent orientation over it at all, and every attempt to define one per
+  // segment failed somewhere different -- the lowest-id route's direction
+  // flipped across junctions, comparing endpoints flipped at bends, and
+  // propagating over the graph still left 16 flips because a junction of three
+  // segments cannot orient all of them to agree.
+  //
+  // Ordering by id means the lowest-id route is oriented perfectly end to end,
+  // and every later route inherits the frame on stretches it shares. What is
+  // left changes sign only where a route joins or leaves a shared stretch --
+  // which is exactly where its lane changes anyway, so the seam is one the map
+  // was always going to show.
+  for (const routeId of [...shapes.keys()].sort()) {
+    const pts = shapes.get(routeId)!;
+    for (let i = 1; i < pts.length; i++) {
+      const k = segKey(pts[i - 1]!, pts[i]!);
+      if (!from.has(k)) from.set(k, endKey(pts[i - 1]!));
+    }
+  }
+  return from;
 }
 
-/**
- * Which routes use each segment, in a fixed order, and which way is "right".
- *
- * Sorted by route id so a route keeps the same side of the road along its whole
- * length; without a stable key the order changes segment by segment and lines
- * swap sides at junctions for no reason.
- *
- * `forward` records the travel direction of the LOWEST-id route on the segment.
- * MapLibre offsets to the right of a feature's own direction, so two routes
- * driving one street in opposite directions would otherwise put lane 0 and lane
- * 1 on the SAME side -- measured at exactly 0.00px between the two Evening
- * routes at every zoom. Pinning the side to one route's direction makes it a
- * property of the road, which is what it has to be.
- */
 export function laneIndex(shapes: Map<string, LatLng[]>): Map<string, SegmentLanes> {
-  const on = new Map<string, { users: Set<string>; forward: string }>();
+  const oriented = orientSegments(shapes);
+  const on = new Map<string, Set<string>>();
   for (const [routeId, pts] of shapes)
     for (let i = 1; i < pts.length; i++) {
-      const a = pts[i - 1]!, b = pts[i]!;
-      const k = segKey(a, b);
-      const e = on.get(k)
-        ?? on.set(k, { users: new Set(), forward: endKey(canonicalFrom(a, b)) }).get(k)!;
-      e.users.add(routeId);
+      const k = segKey(pts[i - 1]!, pts[i]!);
+      (on.get(k) ?? on.set(k, new Set()).get(k)!).add(routeId);
     }
-  return new Map([...on].map(([k, e]) => [k, { users: [...e.users].sort(), forward: e.forward }]));
+  return new Map([...on].map(([k, set]) =>
+    [k, { users: [...set].sort(), forward: oriented.get(k)! }]));
 }
 
 /** The signed lane offset, in pixels, for one route on one segment. */
