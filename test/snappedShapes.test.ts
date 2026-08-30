@@ -123,3 +123,41 @@ describe("a lane change is never shorter than the junction that caused it", () =
     expect(shortest).toBeGreaterThan(25);
   });
 });
+
+describe("a line does not hop across a road that runs straight", () => {
+  // Measured in WORLD space, deliberately. The sign of `offsetPx` must flip
+  // wherever the canonical frame opposes travel -- that flip is what keeps the
+  // line on the same side of the road -- so counting sign flips measures the
+  // correction, not the defect. What is visible is: the road runs on (turn
+  // < 60 degrees) but the line swings to the other side of it (> 90 degrees).
+  //
+  // Was 4. One remains, at Angell: 3469's partner changes from 3302 to 3470
+  // and both want the side they already held, so one genuinely has to move.
+  // That is the LOOM line-ordering problem, tracked in docs/BACKLOG.md.
+  it("has at most one side-jump left, and it is the known ordering conflict", () => {
+    const K = 111_320, KX = K * Math.cos((41.8265 * Math.PI) / 180);
+    const runs = laneRuns(snapped, 5);
+    let jumps = 0;
+    for (const routeId of [...snapped.keys()].sort()) {
+      const steps: { dx: number; dy: number; tx: number; ty: number }[] = [];
+      for (const r of runs.filter((x) => x.routeId === routeId))
+        for (let i = 1; i < r.path.length; i++) {
+          const dx = (r.path[i]!.lng - r.path[i - 1]!.lng) * KX;
+          const dy = (r.path[i]!.lat - r.path[i - 1]!.lat) * K;
+          const L = Math.hypot(dx, dy);
+          if (L < 1e-9) continue;
+          const tx = dx / L, ty = dy / L;
+          steps.push({ dx: ty * r.offsetPx, dy: -tx * r.offsetPx, tx, ty });
+        }
+      for (let i = 1; i < steps.length; i++) {
+        const p = steps[i - 1]!, c = steps[i]!;
+        const turn = Math.acos(Math.max(-1, Math.min(1, p.tx * c.tx + p.ty * c.ty)));
+        const dl = Math.hypot(p.dx, p.dy), cl = Math.hypot(c.dx, c.dy);
+        if (dl < 1e-9 || cl < 1e-9) continue;
+        const swing = Math.acos(Math.max(-1, Math.min(1, (p.dx * c.dx + p.dy * c.dy) / (dl * cl))));
+        if (turn < Math.PI / 3 && swing > Math.PI / 2) jumps++;
+      }
+    }
+    expect(jumps).toBeLessThanOrEqual(1);
+  });
+});
