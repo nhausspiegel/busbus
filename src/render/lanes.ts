@@ -113,6 +113,130 @@ function offsetFor(
   return (seg ? seg.forward === endKey(a) : true) ? lane : -lane;
 }
 
+/**
+ * Let each route hold the side it is already on.
+ *
+ * Ordering the routes on a segment by id never crosses two lines, but it is
+ * indifferent to what came before: a route's slot is decided by WHO ITS
+ * NEIGHBOURS ARE, not by where it already was. Purple paired with blue takes
+ * index 0; a block later, paired with green instead, the same purple takes
+ * index 1 and jumps to the other side of the road -- with the group the same
+ * size both times. Reported at Angell, and it is not the centring, it is the
+ * ordering.
+ *
+ * There is no formula for the right order; it is a preference each line has,
+ * settled against its neighbours. So each segment solves a small assignment:
+ * every route wishes for the side it holds on the segments either side of this
+ * one, and the ordering chosen is the one that grants those wishes most
+ * closely. Sorting by the wish is not enough -- a sort cannot satisfy two
+ * routes that want the same side, it just pushes the conflict next door, which
+ * measured WORSE than doing nothing. With at most a handful of routes on any
+ * segment the orderings can simply all be tried.
+ *
+ * Repeating that settles into an arrangement where a line running straight
+ * through a junction stays put and the lines joining it slot in around it.
+ * Centring is untouched: only the ORDER is being chosen.
+ */
+function permutations<T>(xs: T[]): T[][] {
+  if (xs.length <= 1) return [xs];
+  const out: T[][] = [];
+  for (let i = 0; i < xs.length; i++) {
+    const rest = [...xs.slice(0, i), ...xs.slice(i + 1)];
+    for (const p of permutations(rest)) out.push([xs[i]!, ...p]);
+  }
+  return out;
+}
+
+function relaxOrder(
+  shapes: Map<string, LatLng[]>, lanes: Map<string, SegmentLanes>, rounds = 8,
+): void {
+  const dirSign = (a: LatLng, seg: SegmentLanes) => (seg.forward === endKey(a) ? 1 : -1);
+  /** Each route's segments in travel order, with the node it enters by and how
+   *  straight it is running through -- 1 dead ahead, 0 at a right-angle turn.
+   *
+   *  This is what settles an argument. Two routes on one segment often both
+   *  want the same side, and one has to give; without a reason, the loser is
+   *  whichever sorts first, so a line running dead straight through a junction
+   *  gets shoved aside by one that just turned into it. Going straight is the
+   *  stronger claim, so it is weighted as one. */
+  const walk = new Map<string, { key: string; from: LatLng; straight: number }[]>();
+  const K = 111_320;
+  for (const [routeId, pts] of shapes) {
+    const KX = K * Math.cos((pts[0]!.lat * Math.PI) / 180);
+    const P = (p: LatLng) => ({ x: p.lng * KX, y: p.lat * K });
+    const w: { key: string; from: LatLng; straight: number }[] = [];
+    for (let i = 1; i < pts.length; i++) {
+      let straight = 1;
+      if (i > 1) {
+        const a = P(pts[i - 2]!), b = P(pts[i - 1]!), c = P(pts[i]!);
+        const ux = b.x - a.x, uy = b.y - a.y, vx = c.x - b.x, vy = c.y - b.y;
+        const lu = Math.hypot(ux, uy), lv = Math.hypot(vx, vy);
+        straight = lu < 1e-9 || lv < 1e-9
+          ? 1 : Math.max(0, (ux * vx + uy * vy) / (lu * lv));
+      }
+      w.push({ key: segKey(pts[i - 1]!, pts[i]!), from: pts[i - 1]!, straight });
+    }
+    walk.set(routeId, w);
+  }
+
+  for (let round = 0; round < rounds; round++) {
+    // The side each route currently sits on, in its OWN direction of travel --
+    // what a rider sees it keep, and the thing that must not jump.
+    const side = new Map<string, number>();
+    for (const [routeId, w] of walk)
+      for (const { key, from } of w) {
+        const seg = lanes.get(key);
+        if (!seg) continue;
+        const lane = seg.users.indexOf(routeId) - (seg.users.length - 1) / 2;
+        side.set(`${routeId}@${key}`, lane * dirSign(from, seg));
+      }
+
+    // What each route would like here: the side it holds on either neighbour.
+    const wish = new Map<string, { want: number[]; weight: number }>();
+    for (const [routeId, w] of walk)
+      w.forEach(({ key, straight }, i) => {
+        const want: number[] = [];
+        for (const n of [i - 1, i + 1]) {
+          const nb = w[n];
+          if (!nb) continue;
+          const v = side.get(`${routeId}@${nb.key}`);
+          if (v !== undefined) want.push(v);
+        }
+        // Straightness of the whole passage: a route that turns in here, or
+        // turns out again immediately, has the weaker claim either way.
+        const out = w[i + 1]?.straight ?? 1;
+        if (want.length) wish.set(`${routeId}@${key}`, { want, weight: straight * out });
+      });
+
+    let moved = 0;
+    for (const [key, seg] of lanes) {
+      if (seg.users.length < 2) continue;
+      const entry = new Map<string, LatLng>();
+      for (const [routeId, w] of walk)
+        for (const step of w) if (step.key === key) entry.set(routeId, step.from);
+
+      let best: string[] | null = null, bestCost = Infinity;
+      for (const order of permutations(seg.users)) {
+        let cost = 0;
+        order.forEach((routeId, idx) => {
+          const from = entry.get(routeId);
+          if (!from) return;
+          const w = wish.get(`${routeId}@${key}`);
+          if (!w) return;
+          const lane = idx - (order.length - 1) / 2;
+          const mine = lane * dirSign(from, seg);
+          for (const v of w.want) cost += Math.abs(mine - v) * w.weight;
+        });
+        // Ties go to the id order, so the result is deterministic and two
+        // routes with nothing to say never trade places between runs.
+        if (cost < bestCost - 1e-9) { bestCost = cost; best = order; }
+      }
+      if (best && best.join(",") !== seg.users.join(",")) { seg.users = best; moved++; }
+    }
+    if (moved === 0) break;                              // settled
+  }
+}
+
 /** One drawable run: consecutive segments on which a route holds one lane. */
 export interface LaneRun {
   routeId: string;
@@ -130,6 +254,7 @@ export interface LaneRun {
  */
 export function laneRuns(shapes: Map<string, LatLng[]>, gapPx: number): LaneRun[] {
   const lanes = laneIndex(shapes);
+  relaxOrder(shapes, lanes);
   const out: LaneRun[] = [];
 
   for (const [routeId, pts] of shapes) {
@@ -202,6 +327,7 @@ export function laneApprox(
   shapes: Map<string, LatLng[]>, gapPx: number, mpp: number,
 ): Map<string, LatLng[]> {
   const lanes = laneIndex(shapes);
+  relaxOrder(shapes, lanes);
   const K = 111_320;
   const out = new Map<string, LatLng[]>();
   for (const [routeId, pts] of shapes) {
