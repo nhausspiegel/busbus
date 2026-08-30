@@ -100,3 +100,26 @@ describe("lanes are pixels, not metres", () => {
     expect(new Set(a)).toEqual(new Set([-5, -2.5, 0, 2.5, 5]));
   });
 });
+
+describe("a lane change is never shorter than the junction that caused it", () => {
+  // The lane is decided per road segment, so where a crossing route shares a
+  // metre or two of the same OSM way at a corner, membership goes 2 -> 3 -> 2
+  // and a stub feature is emitted at its own offset. Every feature boundary is
+  // a join MapLibre cannot build -- it joins only within one feature -- which
+  // is the nub under round caps and the notch under butt caps.
+  //
+  // Before this was fixed, six runs measured 4.0-7.1m; the shortest real
+  // street block is 34.2m.
+  it("emits no run shorter than a road junction", () => {
+    const K = 111_320, KX = K * Math.cos((41.8265 * Math.PI) / 180);
+    const metres = (path: LatLng[]) => {
+      let m = 0;
+      for (let i = 1; i < path.length; i++)
+        m += Math.hypot((path[i]!.lng - path[i - 1]!.lng) * KX,
+                        (path[i]!.lat - path[i - 1]!.lat) * K);
+      return m;
+    };
+    const shortest = Math.min(...laneRuns(snapped, 5).map((r) => metres(r.path)));
+    expect(shortest).toBeGreaterThan(25);
+  });
+});
