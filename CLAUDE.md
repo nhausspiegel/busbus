@@ -52,6 +52,20 @@ The standing examples so far, kept short on purpose:
   `src/render/bundle.ts` and `test/squiggle.test.ts` for weeks after both were
   gone. Deleting a file means re-truing every doc that names it, in the same
   commit.
+- Shipping rendering the owner had no chance to intercept. The dev server is
+  hot-reloaded, so every edit is instantly on their screen; committing a
+  rendering rewrite while they were away meant they returned to a broken map
+  three hours old. Rendering experiments belong on a branch or a worktree, and
+  never land while they are gone.
+- Treating "no defect I can measure" as "it looks right". Three rendering
+  attempts in one day measured clean -- boundary count, fold count, gap in
+  pixels -- and all three were called awful on sight. Those numbers only detect
+  defects already hypothesised. They cannot answer whether it LOOKS correct,
+  and no number found so far can.
+- Letting an unrelated fix ride along with a rendering change. The z-order fix
+  and the hospital-loop fix had nothing to do with lane geometry, shared a
+  working tree with it, and were reverted twice as collateral. One fix, one
+  commit, verifiable alone.
 - Reporting what a screenshot shows. I have twice stated the opposite of what
   was on screen, including which side of a road a line sat on. Screenshots
   spot that something is wrong; they never decide what is right.

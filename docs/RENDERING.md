@@ -204,10 +204,25 @@ was real, and every one was measured against something other than the thing
 that had been complained about. **The boundary count is the number that tracks
 what the map looks like**, and nothing above moved it in the right direction.
 
-A fifth attempt -- one feature per route, geometry displaced per zoom, lane
-changes tapered over 18px -- would have taken the boundary count to zero by
-construction. It was abandoned mid-implementation because the map looked worse
-on screen while it was still half-wired (the stop and bus snapping had not been
-moved over, and two `TransitMap` tests were failing). **It is not a measured
-dead end** and remains the most promising direction; it just has to be finished
-before it can be judged.
+A fifth and sixth attempt -- one feature per route, the offset applied to the
+geometry and rebuilt per zoom -- were both rejected on sight. The sixth was
+finished rather than half-wired: stops and buses snapped to the same geometry
+that was drawn, every test passing, and measured clean on every number anyone
+had thought to take.
+
+- folds 20 -> 1 at the opening zoom (naive offsetting produces 20; the source
+  geometry has 0)
+- gap between coincident routes exactly 5.00px at z13, z14.2, z16 and z18
+- the side each route sits on matching this checkpoint, 436 samples to 29
+
+It still looked wrong. **So this is now a measured dead end for the second
+time, and the reason is none of the things listed above.** Before trying a
+seventh, find a number that separates "looks right" from "looks crooked" --
+none of boundary count, fold count, gap width or side agreement does.
+
+The one thing worth keeping from it: at the opening zoom the road's own
+vertices are ~1.3px apart while the offset is 5px, so ANY scheme that displaces
+vertices one at a time folds over itself. Proper offsetting needs outer corners
+reaching to the miter, inner corners pulled back to the crossing, AND excision
+of loops spanning several segments. That code is in the dropped commit
+`1c3ca9d` if it is ever wanted.
