@@ -732,6 +732,16 @@ export function TransitMap({
         const el = mk.getElement();
         const arrow = el.firstElementChild as HTMLElement | null;
         if (arrow) arrow.style.transform = `rotate(${b.bearing}deg)`;
+        // Re-apply the COLOUR, not just the position. This effect does not wait
+        // for `feed` -- deliberately, so a bus is never held back by the static
+        // zip -- so vehicles that arrive first are built with the fallback ink.
+        // Setting the colour only at creation left them grey for the rest of
+        // the session, and realtime beats the zip almost every load. It went
+        // unseen all weekend only because no bus was running to be grey.
+        const dot = el.children[1] as HTMLElement | undefined;
+        if (dot && dot.style.background !== color) dot.style.background = color;
+        const head = arrow?.querySelector("path");
+        if (head && head.getAttribute("fill") !== color) head.setAttribute("fill", color);
         el.setAttribute("aria-label",
           `Bus ${b.label} on ${feed?.routes.get(b.routeId)?.name ?? "route"}` +
           (b.totalCap ? `, ${b.paxLoad} of ${b.totalCap} seats taken` : "") + ". See route.");

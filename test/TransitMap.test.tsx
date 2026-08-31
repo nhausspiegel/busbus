@@ -223,6 +223,30 @@ describe("TransitMap", () => {
     expect(Math.abs(lat - 41.8228) + Math.abs(lng - -71.4002)).toBeGreaterThan(1e-6);
   });
 
+  it("colours a bus that arrived before the timetable did", () => {
+    // The bus effect deliberately does NOT wait for `feed` -- a vehicle should
+    // never be held back by the static zip -- so a bus that arrives first is
+    // built with the fallback ink. Realtime beats the zip on almost every load,
+    // and the colour used to be set only when the marker was CREATED, so those
+    // buses stayed grey for the rest of the session. It went unseen all weekend
+    // because no bus was running to be grey.
+    const { rerender } = render(
+      <TransitMap feed={null} buses={buses} me={null} destination={null} overlay={null}
+        focus={null} selection={null} activeRouteIds={new Set(["A", "B"])} />);
+    map.fire("load");
+    const dot = () => markers[0]!.opts.element.children[1] as HTMLElement;
+    expect(dot().style.background).not.toBe("#ff0000");   // no feed yet
+
+    rerender(
+      <TransitMap feed={feed} buses={buses} me={null} destination={null} overlay={null}
+        focus={null} selection={null} activeRouteIds={new Set(["A", "B"])} />);
+    // Same marker, recoloured -- not a second one.
+    expect(markers.length).toBe(1);
+    expect(dot().style.background).toBe("rgb(255, 0, 0)");
+    expect(markers[0]!.opts.element.querySelector("path")?.getAttribute("fill"))
+      .toBe("#ff0000");
+  });
+
   it("deselects when the map is tapped, so Back is not the only way out", () => {
     // Selecting a route and then having to find a small Back button to leave it
     // is the wrong way round: Apple Maps drops the selection when you tap the
