@@ -16,6 +16,22 @@ Write the rule, not the story: what the wrong instinct was, and what to do
 instead. One or two sentences. The bullets under Working style below were
 all earned this way, and each one exists because it was done wrong first.
 
+**Two rules generalise most of the rest. They come first.**
+
+- **A cheap proxy stood in for the expensive real thing, and then got trusted.**
+  Measuring instead of reading the code. A sample instead of the population. One
+  zoom instead of the range. A rule instead of the reason behind it. My metric
+  instead of the complaint. An agent's claim instead of checking it. "Passes the
+  check I wrote" instead of "plausible". A green suite instead of a test that
+  can fail. A constant from another projection instead of this one's. The proxy
+  is always cheaper, and cheapest exactly when being wrong costs most. Name the
+  proxy out loud before trusting it: say what the real thing is, and why the
+  substitute stands in for it.
+- **"Do not stop" means do not stop WORKING. It does not mean always produce a
+  change.** Six rendering attempts shipped in one day, each before the last was
+  understood, every one reverted. "I do not know yet, and here is what I would
+  need to find out" is a complete report. A diff is not evidence of progress.
+
 The standing examples so far, kept short on purpose:
 
 - Reaching for a remote API for data the project already has (see Working
@@ -69,6 +85,52 @@ The standing examples so far, kept short on purpose:
 - Reporting what a screenshot shows. I have twice stated the opposite of what
   was on screen, including which side of a road a line sat on. Screenshots
   spot that something is wrong; they never decide what is right.
+- Not asking the owner when they are right there. A whole network was measured
+  to work out which stop looked wrong and which way its marker should point;
+  they could say both in one line, and did. When they are at the keyboard, ask.
+- Reporting a derived number without sanity-checking it. Three routes on one
+  street must have bearings 0 or 180 apart; mine came out 20 and 97 apart and
+  were reported as fact, because the helper had grabbed the wrong segment of a
+  loop. A number that contradicts something structurally obvious is wrong.
+- Running experiments against the code instead of reading it. A day of probing
+  from the outside; the defect was plain in five lines once actually READ.
+  Measurement says something is broken, reading says why.
+- Reporting a count taken from a sample. Four stations were measured by name and
+  "three are broken" was reported as the total; it was nine of twelve. If a
+  sentence has a number in it, the number covers the whole population.
+- Measuring a zoom-dependent quantity at one zoom. The stop check ran at z16,
+  where the worst case looks perfect; it is 67 degrees off at the zoom the app
+  opens at. One sample of a parameter is not a measurement of it.
+- Treating existing code as a specification. `laneIndex` had been wrong since it
+  was written and six sessions built on top of it rather than reading it.
+  "Reuse before writing" is about helpers, not a reason to keep bad
+  infrastructure.
+- Adding a lot of code. `3fa88f8` deleted the bundler, 546 lines to 82, and
+  every deleted line propped up a guess that should not have been made. A big
+  net addition means the problem was framed wrong.
+- Treating a note in these docs as law, or as licence. "Do not offset in
+  geometry" was obeyed without reading why, then ignored entirely once told the
+  docs are not gospel. Both wrong: it was right, for a reason nobody had
+  checked. Ask what a note is EVIDENCE OF, then whether that still applies.
+- Trusting a green suite. The one test guarding "every bead sits on its line"
+  reads a property the beads have never carried, so it skips every iteration and
+  asserts 0 < 6 at three zooms. Any loop that can `continue` on a lookup miss
+  must assert it examined something.
+- Taking a subagent's finding as a result. One report held a critical truth and
+  a confident falsehood, both with quoted code. Verify any claim about a
+  MECHANISM by measuring it -- and check first for the error you are yourself
+  prone to, because that is what the false one was.
+- Calling data plausible because it passed the check I wrote. The guard was
+  `seconds <= 0`, so a two-second bus leg passed and got pushed. Ask what value
+  would be ABSURD, not whether it survived the one filter already there.
+- Copying a unit constant from another system's conventions. `metresPerPixel`
+  used the 256px-tile constant in an app that renders with 512px tiles: off by
+  exactly 2, uniformly, so it never looked like a zoom bug and survived a whole
+  rewrite. Invisible to review and to unit tests, obvious to one measurement
+  against the live map.
+- Designing a fix that already exists. `laneSnap` does the correct thing, has
+  zero callers, and `docs/RENDERING.md` describes it as in use. Grep first; a
+  doc saying code is live is not evidence anything calls it.
 - Explaining a report away. "It may just not be visible at that zoom" is not an
   answer to "it doesn't work". The owner is the only one who can see the
   window, so their observation is the starting point, not a claim to triage.
