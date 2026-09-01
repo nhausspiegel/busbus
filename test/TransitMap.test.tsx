@@ -109,7 +109,7 @@ vi.mock("maplibre-gl", () => ({
 }));
 vi.mock("maplibre-gl/dist/maplibre-gl.css", () => ({}));
 
-const { TransitMap } = await import("../src/ui/TransitMap");
+const { TransitMap, metresPerPixel } = await import("../src/ui/TransitMap");
 
 /** Two routes down the same street, traced in opposite directions -- the case
  *  the bundler exists for, and the one that used to send both to the same side. */
@@ -217,10 +217,34 @@ describe("TransitMap", () => {
     // A shares this street with B, so A's lane is half a gap off the centre.
     // At the fake map's zoom that is a real distance on the ground, and the
     // bus must be out there with the stroke rather than back on the centreline.
-    const mpp = (156_543.03392 * Math.cos((41.8265 * Math.PI) / 180)) / 2 ** 14.2;
+    // 512px tiles -- see metresPerPixel. This test hardcoded the 256px figure,
+    // the same one the source had wrong, so it moved in lockstep with the bug
+    // and passed throughout.
+    const mpp = (78_271.51696 * Math.cos((41.8265 * Math.PI) / 180)) / 2 ** 14.2;
     expect(toDrawn("A", lng, lat)).toBeCloseTo(2.5 * mpp, 0);
     // ...and genuinely moved, so this cannot pass by the bus already being there.
     expect(Math.abs(lat - 41.8228) + Math.abs(lng - -71.4002)).toBeGreaterThan(1e-6);
+  });
+
+  it("measures a pixel against THIS renderer's tile size, not the internet's", () => {
+    // The constant is the equator divided by the width of the world at zoom 0,
+    // and that width depends on tile size: MapLibre uses 512px, so it is
+    // 40075016.686 / 512. The 256px figure -- 156543.03392, which is what
+    // Google, Leaflet and most search results mean by "metres per pixel" --
+    // was used here, and is exactly twice too large.
+    //
+    // Asserted against the DEFINITION rather than against a copy of the number,
+    // because the two tests that did hardcode the number just moved with the
+    // bug and stayed green for its whole life. Confirmed on the live map: at
+    // zoom 13.1468, 100m of ground spanned 15.55px, so a pixel is 6.4309m.
+    const EQUATOR_M = 40_075_016.686;
+    const MAPLIBRE_TILE_PX = 512;
+    expect(metresPerPixel(0, 0) * MAPLIBRE_TILE_PX).toBeCloseTo(EQUATOR_M, 1);
+
+    // ...and it still halves per zoom level, and shrinks with latitude.
+    expect(metresPerPixel(0, 5)).toBeCloseTo(metresPerPixel(0, 4) / 2, 9);
+    expect(metresPerPixel(41.8265, 14)).toBeCloseTo(
+      metresPerPixel(0, 14) * Math.cos((41.8265 * Math.PI) / 180), 9);
   });
 
   it("colours a bus that arrived before the timetable did", () => {

@@ -29,7 +29,7 @@ const snapped = parseSnapped(
  *  MapLibre applies the lane offset itself, so this is the same displacement
  *  the GPU will use -- see laneApprox. The bundler this used to call is gone. */
 function drawAt(zoom: number): Map<string, LatLng[]> {
-  const mpp = (156_543.03392 * Math.cos((41.8265 * Math.PI) / 180)) / 2 ** zoom;
+  const mpp = (78_271.51696 * Math.cos((41.8265 * Math.PI) / 180)) / 2 ** zoom;
   return laneApprox(new Map([...snapped].filter(([id]) => ACTIVE.has(id))), 5, mpp);
 }
 

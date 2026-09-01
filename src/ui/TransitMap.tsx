@@ -93,9 +93,24 @@ const LANE_GAP_PX = 5;
 // existed to damp lane flapping caused by guessing "same street" per vertex;
 // with the road known, a lane changes only where a route joins or leaves.
 
-/** Ground metres one screen pixel covers at this latitude and zoom. */
-function metresPerPixel(lat: number, zoom: number): number {
-  return (156_543.03392 * Math.cos((lat * Math.PI) / 180)) / 2 ** zoom;
+/** Ground metres one screen pixel covers at this latitude and zoom.
+ *
+ *  The constant is the equator's circumference divided by the width of the
+ *  world at zoom 0, IN THIS RENDERER. MapLibre uses 512px tiles, so that is
+ *  40075016.686 / 512. The 256px-tile figure -- 156543.03392, which is what
+ *  Google, Leaflet and most of the internet mean by "metres per pixel" -- was
+ *  used here, and is exactly twice too large.
+ *
+ *  It matters because `laneApprox` exists to reproduce in METRES what the GPU
+ *  does in PIXELS: every stop bead and every bus was displaced twice as far as
+ *  the line it was snapped to. Measured before the fix, a bead sat a mean 2.2px
+ *  and up to 8.3px off its own drawn line. Uniformly, at every zoom -- which is
+ *  why it never looked like a zoom bug and survived a rewrite of the bundler.
+ *
+ *  Verified against the running map, not from memory: at zoom 13.1468, 100m of
+ *  ground measured 15.55px, so a pixel is 6.4309m; this returns 6.4309. */
+export function metresPerPixel(lat: number, zoom: number): number {
+  return (78_271.51696 * Math.cos((lat * Math.PI) / 180)) / 2 ** zoom;
 }
 
 
