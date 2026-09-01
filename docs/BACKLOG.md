@@ -7,7 +7,7 @@ compaction: everything needed to act is here or named by file.
 with, and the approaches already ruled out, which is what stops the next
 session repeating them.
 
-Last trued against the code on **2026-08-30**.
+Last trued against the code on **2026-08-31**.
 
 For how route lines are drawn, read `docs/RENDERING.md` first.
 
@@ -82,12 +82,16 @@ second leg of a transfer but never the first. Left alone deliberately —
 transfers are secondary, the direct path covers the Express, and fixing it means
 duplicating the observed-leg walk into another code path.
 
-### 4. `snap-to-streets.ts` hardcodes the active route ids
+### 4. The active-route list is still hardcoded, in two places
 
-`const ACTIVE` in the script lists the five route ids. A route Passio adds
-keeps its raw traced shape and draws without lane offsets -- degraded, not
-broken -- until someone re-runs the script. Worth deriving from the feed the
-next time the script is touched; not worth a special trip.
+`parseActiveRoutes()` (`src/data/routePaths.ts:143-157`) derives the running
+routes from `routes` minus `excludedRoutesID`, and was written specifically to
+abolish the hardcoded list. The list is still written down twice:
+`scripts/snap-to-streets.ts:37` and `src/ui/App.tsx:32`.
+
+When Brown turns the Commencement routes on, they draw from the raw Passio
+trace with no snapped geometry -- reintroducing the metres-based separation the
+lane subsystem exists to remove, in frame, beside routes that do not have it.
 
 ### 5. Route rendering polish
 
@@ -102,7 +106,133 @@ longer features is the only lever, and see item 1: it is the open defect.
 The owner found it useless but may want it back. `NearbyBoard.tsx` and its tests
 are untouched; `src/ui/App.tsx` carries the element to restore in a comment.
 
-### 7. Documentation upkeep
+### 7. `test/network.test.ts` asserts nothing
+
+It reads `b.properties["routeId"]`, and `stationFeatures` never sets one -- a
+bead carries name, id, routes, interchange, color (`src/render/network.ts:58-75`).
+So `drawn.get("")` is undefined, the loop `continue`s on every iteration, and
+what it asserts at three zooms is `0 < 6`.
+
+Fix: add `routeId` to the bead properties. The test then starts failing, and
+making it pass is the actual work. **This is the test that was supposed to
+guard stop placement.**
+
+### 8. Leg samples are polls, not trips
+
+`MIN_LEG_SAMPLES = 5` (`src/data/legTimes.ts:24`) is documented as the guard
+against one slow afternoon being the whole answer, but `recordLegs` has no
+per-trip and no per-date dedupe. Five samples can be five polls of one bus over
+ten minutes.
+
+The shipped `public/service-history.json` shows it: a `2` -- two seconds for a
+stop-to-stop leg -- at the end of four different legs simultaneously, plus a 604
+and a 1375. `legSeconds` takes a median, so these are absorbed and no rider is
+handed a wrong number today. It is a data-honesty defect, in the file whose
+entire claim is that its durations were measured.
+
+Fix: dedupe per trip, and reject absurd values rather than only `<= 0`.
+
+### 9. `buildBoard` supersession is keyed on a `seq` the same file proves incomparable
+
+Live `seq` is GTFS-RT's own numbering (`src/data/realtime.ts:27`); static `seq`
+comes from `stop_times.txt` (`src/data/gtfs.ts:98`). The comment at
+`src/data/departures.ts:39-47` measures the two agreeing on about one stop in
+ten. So a live prediction rarely supersedes its scheduled twin, and a rider can
+be shown both times for one bus.
+
+`test/departures.test.ts` builds both sides from one helper, so it manufactures
+the agreement it asserts.
+
+### 10. `serviceHistory.local()` manufactures Sunday
+
+`Math.max(0, dows.indexOf(get("weekday")))` (`src/data/serviceHistory.ts:56-63`)
+turns an unrecognised weekday into 0, and `Number("") % 24` into NaN. The app
+can print "on 3 of the 8 Sundays watched" on a Tuesday -- in the one file whose
+thesis is never claiming more than was observed.
+
+### 11. `serviceHistory` day counting hides a dead recorder and dilutes new routes
+
+`updated` only advances when the record changes, so a recorder that stopped
+looks exactly like a service that did not move. And `days` is a global
+denominator, so a route watched for two weeks reads as "seen on 2 of the 40
+Fridays".
+
+### 12. Post-midnight departures are an hour off on the two DST days
+
+`dayStart - DAY_SECONDS` (`src/data/departures.ts:22`) assumes 86400 seconds.
+It is wrong at 2am on the two changeover days -- in the hours that file's own
+comment calls exactly the hours the shuttle is the only way home.
+
+### 13. `parallel()` compares unprojected bearings
+
+`parallel()` (`scripts/snap-to-streets.ts:53-65`) takes bearings from raw
+lat/lng while `dist` and `toSeg` project through `xy()`. At latitude 41.83 the
+distortion reaches 8.3 degrees, so `PARALLEL_DEG = 40` is really a 32-48 degree
+window depending on heading.
+
+### 14. Unbridgeable way transitions are counted and shipped anyway
+
+`writeFileSync` (`scripts/snap-to-streets.ts:280`) is unconditional, so
+"reported" means a digit in a build log. `docs/RENDERING.md:57` claims they are
+"never silently skipped": true -- they are teleported over instead.
+
+### 15. The snapper's build input is a test fixture
+
+`scripts/snap-to-streets.ts:113` reads `test/fixtures/route-paths.json`, while
+the app fetches the same payload live. They drift apart silently and nothing
+compares them.
+
+### 16. `pressHandled` is consumed by the wrong handler -- the long-press bug is live
+
+MapLibre keeps all `click` listeners in one array, in registration order. The
+map-level handler (`TransitMap.tsx:455`) is registered at init; `routes-hit`
+(`TransitMap.tsx:380`) later, inside `drawRoutes`. So the click that ends a long
+press reaches the map handler first, which clears the flag and returns, and
+`routes-hit` then reads false and fires. **The bug the comment says was fixed is
+in the build.**
+
+`test/TransitMap.test.tsx:37-38` asserts the opposite dispatch order, so it
+passes.
+
+Fix: clear the flag on the next `mousedown`/`touchstart`, not on the click.
+
+### 17. `isStyleLoaded()` gates two one-shot effects
+
+`TransitMap.tsx:517` (routes) and `:798` (overlay). `isStyleLoaded()` is false
+during any pan, zoom or tile fetch, and neither effect has a dep that can fire
+again -- so if `feed` resolves mid-fetch the routes never draw, and the walking
+legs arrive during the 650ms `fitBounds`.
+
+`FakeMap.isStyleLoaded()` returns true unconditionally, so no test can see it.
+
+### 18. Four `catch { /* the next render rebuilds */ }` blocks cannot rebuild
+
+Effects do not re-run on render, and `ready` never increments after first load:
+there is no `styledata` listener and no `setStyle` call anywhere in `src/`. The
+comment describes a recovery that does not exist.
+
+### 19. The lane geometry is rebuilt and re-uploaded on every zoom step
+
+`laneRuns` is recomputed on every zoom step and produces a byte-identical
+FeatureCollection, which is pushed through `setData`, re-uploading every GPU
+buffer. `laneIndex` runs twice per redraw. Only `laneApprox` and
+`stationFeatures` need `mpp` at all.
+
+### 20. The selected stop's tween restarts every 10 seconds
+
+`selection` is a fresh object literal on every parent render
+(`src/ui/App.tsx:378`) and the app re-renders every 10s on the bus poll, so the
+grow tween is torn down and started again. With a stop card open, the dot
+visibly shrinks and re-grows every 10 seconds.
+
+### 21. Dead code
+
+- `laneSnap` (`src/render/lanes.ts:131-157`, 27 lines) -- zero callers.
+- `isWalkOnly` (`src/routing/plan.ts:66`) -- zero callers.
+- `walkTimesAreEstimated()` (`src/routing/walk.ts:232`) -- implemented, and
+  documented as something the UI should surface. Never called.
+
+### 22. Documentation upkeep
 
 This file and `HANDOFF.md` drift fast, because the work moves faster than the
 prose. Re-true both whenever a "Still to do" item ships, and delete rather than
@@ -252,3 +382,13 @@ is deleted. `scripts/snap-to-streets.ts` does the job with ONE Overpass call.)
 It lies about seasonal suspension. The list that does work is `routes` minus
 `excludedRoutesID` from `getStops=2` — measured identical to the five ids that
 had been hardcoded.
+
+### OSM way ids as the lane frame
+
+The snapper knows which OSM way each node came from and discards it. Carrying it
+through looks like the elegant fix for the lane frame, because a way has its own
+node order and would give an orientation continuous along a street.
+
+Measured: way-based framing produces **42** frame sign-flips against the current
+lowest-id-route scheme's **30**. Worse -- OSM way node-order is arbitrary, and
+consecutive ways along one street often oppose. Do not retry.
