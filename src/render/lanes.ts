@@ -187,3 +187,72 @@ export function laneApprox(
   }
   return out;
 }
+
+/**
+ * Every bead of one station, as ONE object.
+ *
+ * A station is a place, not a per-route coincidence. Placing each bead on its
+ * own route's line looks right while the routes share a street and falls apart
+ * the moment they do not: at a corner -- Fones Alley, Pembroke Campus -- the
+ * beads land on two different streets and the bar between them runs diagonally
+ * across the junction, which is what "the stations are not unified" means.
+ *
+ * So the station picks ONE reference segment, the nearest to it among the
+ * routes it serves, projects onto that once, and lays its lines out along that
+ * segment's normal. The result is collinear, perpendicular to the street, and
+ * spaced exactly `gapPx` per lane -- by construction, at every zoom, with
+ * nothing measured or searched for afterwards.
+ *
+ * The cost is honest and small: a route that meets the station from the
+ * crossing street has its bead a few metres off its own line. A station is one
+ * place; drawing it as one is worth more than each dot being on its own line at
+ * the two junctions where those disagree.
+ */
+export function stationLanes(
+  shapes: Map<string, LatLng[]>, lanes: Map<string, SegmentLanes>,
+  routeIds: string[], at: LatLng, gapPx: number, mpp: number,
+): Map<string, LatLng> {
+  const out = new Map<string, LatLng>();
+  if (routeIds.length === 0) return out;
+  const K = 111_320, KX = K * Math.cos((at.lat * Math.PI) / 180);
+  const P = (p: LatLng) => ({ x: p.lng * KX, y: p.lat * K });
+  const t0 = P(at);
+
+  // The reference segment: nearest to the station across every route it serves.
+  let best = Infinity, ref: { a: LatLng; b: LatLng; x: number; y: number } | null = null;
+  for (const routeId of routeIds) {
+    const pts = shapes.get(routeId);
+    if (!pts || pts.length < 2) continue;
+    for (let i = 1; i < pts.length; i++) {
+      const a = P(pts[i - 1]!), b = P(pts[i]!);
+      const vx = b.x - a.x, vy = b.y - a.y, L2 = vx * vx + vy * vy;
+      const t = L2 === 0 ? 0 : Math.max(0, Math.min(1, ((t0.x - a.x) * vx + (t0.y - a.y) * vy) / L2));
+      const qx = a.x + t * vx, qy = a.y + t * vy;
+      const d = Math.hypot(t0.x - qx, t0.y - qy);
+      if (d < best) { best = d; ref = { a: pts[i - 1]!, b: pts[i]!, x: qx, y: qy }; }
+    }
+  }
+  if (!ref) { for (const r of routeIds) out.set(r, at); return out; }
+
+  const A = P(ref.a), B = P(ref.b);
+  const L = Math.hypot(B.x - A.x, B.y - A.y) || 1;
+  const nx = (B.y - A.y) / L, ny = -(B.x - A.x) / L;
+
+  // Ordered the way a segment orders its users, so where the station's routes
+  // DO share the reference street the beads land on their own lines.
+  const seg = lanes.get(segKey(ref.a, ref.b));
+  const order = [...routeIds].sort((p, q) => {
+    const i = seg ? seg.users.indexOf(p) : -1, j = seg ? seg.users.indexOf(q) : -1;
+    if (i >= 0 && j >= 0) return i - j;
+    if (i >= 0) return -1;
+    if (j >= 0) return 1;
+    return p < q ? -1 : 1;
+  });
+  const flip = seg && seg.forward !== endKey(ref.a) ? -1 : 1;
+
+  order.forEach((routeId, i) => {
+    const off = (i - (order.length - 1) / 2) * gapPx * mpp * flip;
+    out.set(routeId, { lat: (ref!.y + ny * off) / K, lng: (ref!.x + nx * off) / KX });
+  });
+  return out;
+}

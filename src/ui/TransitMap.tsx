@@ -10,7 +10,7 @@ import { stopPaint, stopBasePaint, tickPaint, routeLinePaint,
          DIM, type MapState } from "../render/symbols";
 import { pointAlongShape, snapToShape } from "../routing/shape";
 import { stations } from "../routing/routeDetail";
-import { laneRuns, laneApprox } from "../render/lanes";
+import { laneRuns, laneApprox, laneIndex, laneSnap } from "../render/lanes";
 
 // MapLibre's worker is a separate ES module that imports a sibling. Rollup
 // cannot see it (the path is built from a runtime string) and ?url would copy
@@ -220,6 +220,23 @@ export function TransitMap({
   /** The routes as actually drawn at the current zoom, shared with the bus
    *  markers so a vehicle rides the line the rider can see. */
   const drawnRef = useRef<Map<string, LatLng[]>>(new Map());
+  /**
+   * Where a route's line is drawn at a point, for the things that sit ON it.
+   *
+   * Projects onto the shared centreline ONCE and then applies the lane offset,
+   * rather than searching the displaced line per route. Because coincident
+   * routes share the centreline byte for byte, every bead of a station lands at
+   * the same along-track position and differs only by its lane -- which is what
+   * makes an interchange bar perpendicular to the road and exactly one gap per
+   * lane long, at every zoom, without anything having to measure it.
+   */
+  const placeAt = (zoom: number) => {
+    const shapes = shapesRef.current;
+    const lanes = laneIndex(shapes);
+    const mpp = metresPerPixel(CAMPUS.lat, zoom);
+    return (routeId: string, at: LatLng) =>
+      laneSnap(shapes, lanes, routeId, at, LANE_GAP_PX, mpp);
+  };
   /** The current itinerary, so the per-zoom redraw can rebuild its ride line
    *  from the same geometry as everything else. */
   /** How far the selected stop has grown, 0 to 1. */
@@ -302,7 +319,7 @@ export function TransitMap({
     const stopSrc = m.getSource("stops") as maplibregl.GeoJSONSource | undefined;
     const tickSrc = m.getSource("station-ticks") as maplibregl.GeoJSONSource | undefined;
     if (stopSrc && feed) {
-      const { beads, ticks } = stationFeatures(feed, activeRouteIds, drawnRef.current);
+      const { beads, ticks } = stationFeatures(feed, activeRouteIds, placeAt(zoomRef.current));
       stopSrc.setData({ type: "FeatureCollection", features: beads });
       tickSrc?.setData({ type: "FeatureCollection", features: ticks });
     }
@@ -549,7 +566,7 @@ export function TransitMap({
         // dots where there is really one interchange. Coloured by the line it
         // serves, neutral and larger when it serves several -- the convention
         // the Underground and the NYC subway map both use.
-        const { beads, ticks } = stationFeatures(feed, activeRouteIds, drawnRef.current);
+        const { beads, ticks } = stationFeatures(feed, activeRouteIds, placeAt(zoomRef.current));
         m.addSource("stops", { type: "geojson",
           data: { type: "FeatureCollection", features: beads } });
         m.addSource("station-ticks", { type: "geojson",
@@ -879,7 +896,7 @@ export function TransitMap({
     // A stop belongs to its routes, so selecting one keeps those at full
     // strength: the rider wants to see where it can take them.
     const stopRoutesLit = stopFocus
-      ? (stationFeatures(feed, activeRouteIds, drawnRef.current).beads.find((f) => f.properties?.["id"] === stopFocus)
+      ? (stationFeatures(feed, activeRouteIds, placeAt(zoomRef.current)).beads.find((f) => f.properties?.["id"] === stopFocus)
           ?.properties?.["routes"] as string | undefined) ?? ""
       : "";
 

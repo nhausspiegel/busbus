@@ -84,11 +84,30 @@ describe("stations", () => {
     expect(stations(feed, active).some((s) => s.stopIds.includes("dead"))).toBe(false);
   });
 
-  it("takes the plainest name of the group", () => {
+  it("drops the direction suffix but never a name", () => {
     // "Barbour Hall" reads better on a map than "Barbour Hall (CW)", and the
     // direction is meaningless once the two halves are one marker.
     const got = stations(feed, active);
     expect(got.find((s) => s.stopIds.includes("cw"))!.name).toBe("Barbour Hall");
+  });
+
+  it("joins genuinely different names instead of keeping the shortest", () => {
+    // This used to keep the SHORTEST name in the group, which is string length
+    // standing in for meaning. Where the names denote DIFFERENT places it
+    // silently deleted one: on the real feed "Pembroke Campus" (15 chars) and
+    // "Cushing & Thayer" (16) are two stops 11m apart, so the junction was
+    // labelled "Pembroke Campus" and Cushing & Thayer vanished from the app.
+    const two = {
+      ...feed,
+      stops: new Map([
+        ["cw", at("cw", "Pembroke Campus", 41.8260, -71.4000)],
+        ["ccw", at("ccw", "Cushing & Thayer", 41.82609, -71.40004)],
+      ]),
+    } as unknown as StaticFeed;
+    const got = stations(two, active);
+    expect(got).toHaveLength(1);
+    expect(got[0]!.stopIds).toEqual(["ccw", "cw"]);
+    expect(got[0]!.name).toBe("Cushing & Thayer / Pembroke Campus");
   });
 });
 

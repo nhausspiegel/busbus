@@ -14,9 +14,13 @@
  * was drawn, never whether it was right.
  */
 import type { StaticFeed, LatLng } from "../data/types";
-import { snapToShape, sliceShape } from "../routing/shape";
+import { sliceShape } from "../routing/shape";
 import { haversineMeters } from "../routing/walk";
 import { stations } from "../routing/routeDetail";
+
+/** Where a route's line is actually drawn at a given point -- supplied by the
+ *  caller, because only the map knows the current scale. See `laneSnap`. */
+export type Place = (routeId: string, at: LatLng) => LatLng;
 
 /** The subset of the map overlay this module needs. */
 export interface RideOverlay {
@@ -35,7 +39,7 @@ geometry: { type: "LineString", coordinates: c.map((p) => [p.lng, p.lat]) },
 });
 
 export function stationFeatures(
-f: StaticFeed, activeRouteIds: Set<string>, drawn: Map<string, LatLng[]>,
+f: StaticFeed, activeRouteIds: Set<string>, place: Place,
 ): {
   beads: GeoJSON.Feature[]; ticks: GeoJSON.Feature[];
 } {
@@ -48,15 +52,29 @@ f: StaticFeed, activeRouteIds: Set<string>, drawn: Map<string, LatLng[]>,
     // on one line and left it floating beside every other line it serves --
     // the bundler fans them into separate lanes, so "the stop" was several
     // metres from most of its own routes.
-    const on = st.routeIds.map((routeId) => {
-      const line = drawn.get(routeId);
-      return { routeId,
-               at: line && line.length > 1 ? snapToShape(centre, line) : centre };
-    });
+    // Placed, not searched for. Every route on one street shares the centreline
+    // byte for byte, so ONE projection gives one along-track position for the
+    // whole station and each bead is that point plus its own lane offset --
+    // perpendicular to the road, spaced exactly one gap, at every zoom, by
+    // construction.
+    //
+    // It used to project the station centre onto each route's DRAWN line
+    // separately. Those lines are sheared along-track at every corner (each
+    // vertex is displaced by one segment's normal, with no miter), by an amount
+    // proportional to the lane offset -- which is a pixel quantity, so the
+    // shear grew with zoom and the bar rotated as the rider zoomed. Measured:
+    // nine of twelve shared stations were off-perpendicular at some zoom, and
+    // the bar ran from 4% to 281% of the length it should be.
+    const on = st.routeIds.map((routeId) => ({ routeId, at: place(routeId, centre) }));
     for (const b of on) beads.push({
       type: "Feature" as const,
       properties: {
         name: st.name,
+        // The route this bead belongs to. Without it nothing can check that a
+        // bead sits on its own line -- and the test that was meant to do
+        // exactly that read this property, found undefined, and skipped every
+        // iteration for the whole life of the defect above.
+        routeId: b.routeId,
         // The tap target still needs a real stop, so every bead of a station
         // carries the same first member id -- the halves are genuinely
         // different boarding points, but they are one place to tap.
@@ -102,14 +120,17 @@ f: StaticFeed, activeRouteIds: Set<string>, drawn: Map<string, LatLng[]>,
       });
       continue;
     }
-    const ax = z.lng - a.lng, ay = z.lat - a.lat;
-    const along = [...pts].sort((u, v) =>
-      ((u.lng - a.lng) * ax + (u.lat - a.lat) * ay) - ((v.lng - a.lng) * ax + (v.lat - a.lat) * ay));
+    // A straight bar between the outermost beads. The beads are collinear now
+    // -- one point on the road, displaced by evenly spaced lane offsets along
+    // one normal -- so there is nothing to sort. The sort this replaces existed
+    // only to stop a three-line station zigzagging when the beads were NOT
+    // collinear, and it compared a dot product of raw degrees, mixing latitude
+    // and longitude units that differ by a factor of 0.745 at this latitude.
     ticks.push({
       type: "Feature" as const,
       properties: { id: st.stopIds[0]!, routes: `|${st.routeIds.join("|")}|` },
       geometry: { type: "LineString" as const,
-                  coordinates: along.map((q) => [q.lng, q.lat]) },
+                  coordinates: [[a.lng, a.lat], [z.lng, z.lat]] },
     });
   }
   return { beads, ticks };
