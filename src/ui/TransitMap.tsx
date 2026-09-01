@@ -11,6 +11,7 @@ import { stopPaint, stopBasePaint, tickPaint, routeLinePaint,
 import { pointAlongShape, snapToShape } from "../routing/shape";
 import { stations } from "../routing/routeDetail";
 import { laneRuns, laneApprox, laneIndex, laneSnap } from "../render/lanes";
+import { laneLinks } from "../render/links";
 
 // MapLibre's worker is a separate ES module that imports a sibling. Rollup
 // cannot see it (the path is built from a runtime string) and ?url would copy
@@ -328,20 +329,36 @@ export function TransitMap({
       rideSrc.setData({ type: "FeatureCollection",
                         features: rideFeatures(feed, overlayRef.current, drawnRef.current) });
 
-    // One feature per RUN of constant lane. A route changes lane only where
-    // another joins or leaves it, so a run is a stretch carrying the same set
-    // of routes; runs overlap by a node so they meet on screen.
+    // One feature per RUN of constant lane, PLUS a short curve across every
+    // junction between them.
+    //
+    // `line-offset` is per-FEATURE, so a route whose lane changes has to be cut
+    // up, and MapLibre only joins WITHIN a feature -- every cut is a join it
+    // cannot make. Measured: 47 boundaries, all visible, and 17 of them visible
+    // from the CORNER alone, where the two features' normals differ and their
+    // ends part by up to 8px even at an identical offset. No cap style reaches
+    // that; round caps make a nub and butt caps a notch, which is why swapping
+    // them twice only changed the artefact.
+    //
+    // So the runs are pulled back from each junction and the connection is
+    // drawn, which is what LOOM does. The straight parts still get their offset
+    // from the GPU, unchanged; only these curves are geometry, and a curve
+    // between two ports a few pixels apart cannot fold. See src/render/links.ts.
+    const { runs: trimmed, links } = laneLinks(laneRuns(shapes, LANE_GAP_PX), mpp);
+    const paint = (routeId: string, path: LatLng[], laneOffset: number) => ({
+      type: "Feature" as const,
+      properties: { routeId, color: colorRef.current.get(routeId) ?? "#888", laneOffset },
+      geometry: { type: "LineString" as const,
+                  coordinates: path.map((q) => [q.lng, q.lat]) },
+    });
     const data: GeoJSON.FeatureCollection = {
       type: "FeatureCollection",
-      features: laneRuns(shapes, LANE_GAP_PX).map((run) => ({
-        type: "Feature",
-        properties: {
-          routeId: run.routeId,
-          color: colorRef.current.get(run.routeId) ?? "#888",
-          laneOffset: run.offsetPx,
-        },
-        geometry: { type: "LineString", coordinates: run.path.map((q) => [q.lng, q.lat]) },
-      })),
+      features: [
+        ...trimmed.map((r) => paint(r.routeId, r.path, r.offsetPx)),
+        // The curve carries its displacement in its own coordinates, so the GPU
+        // must not add it again.
+        ...links.map((l) => paint(l.routeId, l.path, 0)),
+      ],
     };
 
     const src = m.getSource("routes") as maplibregl.GeoJSONSource | undefined;
