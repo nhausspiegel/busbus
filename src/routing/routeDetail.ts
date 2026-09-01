@@ -40,6 +40,22 @@ const STATION_M = 25;
  * only 33 sit on a route that has trips, so the rest are dots no bus will ever
  * call at.
  */
+/**
+ * A stop's name with the direction furniture removed.
+ *
+ * Passio splits one physical stop into a pair per direction and marks which is
+ * which in the NAME: "Athletic Center" / "Athletic Center (SB)", "Machado
+ * /Rochambeau CW" / "... CCW", "Medical School (to RI Hospital)". The suffix
+ * says nothing once both halves are drawn as one marker.
+ */
+function plainName(n: string): string {
+  return n
+    .replace(/\s*\((?:to|from)\b[^)]*\)\s*$/i, "")
+    .replace(/\s*\((?:NB|SB|EB|WB|CW|CCW)\)\s*$/i, "")
+    .replace(/\s+CC?W\s*$/i, "")
+    .trim();
+}
+
 export function stations(
   feed: StaticFeed, active: Set<string>, radiusM = STATION_M,
 ): Station[] {
@@ -79,10 +95,18 @@ export function stations(
     for (const g of group) for (const r of g.routes) routes.add(r);
     out.push({
       stopIds: group.map((g) => g.s.id).sort(),
-      // The plainest name in the group. A direction suffix is meaningless once
-      // the halves are drawn as one marker, and the shortest name is reliably
-      // the one without it.
-      name: group.map((g) => g.s.name).sort((a, b) => a.length - b.length)[0]!,
+      // EVERY distinct name in the group, joined -- never just one of them.
+      //
+      // This used to keep the SHORTEST name, on the reasoning that a direction
+      // suffix makes a name longer so the short one is the plain one. That is
+      // string length standing in for meaning, and it is only right when the
+      // names denote the same place. Where they do not it silently deletes a
+      // stop's identity: "Pembroke Campus" (15 chars) and "Cushing & Thayer"
+      // (16) are two stops 11m apart, and the junction was labelled "Pembroke
+      // Campus" with Cushing & Thayer gone from the app entirely.
+      //
+      // Two names that survive a merge are both true, so both are shown.
+      name: [...new Set(group.map((g) => plainName(g.s.name)))].sort().join(" / "),
       lat: group.reduce((t, g) => t + g.s.lat, 0) / group.length,
       lng: group.reduce((t, g) => t + g.s.lng, 0) / group.length,
       routeIds: [...routes].sort(),
