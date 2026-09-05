@@ -73,6 +73,20 @@ describe("every route is snapped to the roads it drives", () => {
       expect(there[Math.floor(there.length * 0.9)]!).toBeLessThan(12);
       expect(back[Math.floor(back.length * 0.9)]!).toBeLessThan(12);
     });
+
+    it(`${routeId} leaves no stretch of its trace uncovered`, () => {
+      // A p90 CANNOT see a hole. The Connector's hospital turnaround was
+      // deleted outright -- 15 consecutive trace points up to 48.6m from the
+      // drawn line -- while every assertion above passed, because 15 points out
+      // of 163 is the top 9%. Length missed it too: a 135m ring is 1.7% of a
+      // 7.9km route, and 0.984x sits well inside the 0.9-1.1 band.
+      //
+      // The WORST point is the only one of these that fails on a single hole,
+      // so the trace must be known non-empty first: Math.max() of nothing is
+      // -Infinity, and the check would then pass having examined nothing.
+      expect(trace.length).toBeGreaterThan(1);
+      expect(Math.max(...trace.map((p) => toLine(p, path)))).toBeLessThan(15);
+    });
   }
 });
 

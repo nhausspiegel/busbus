@@ -71,6 +71,21 @@ function toSeg(p: LatLng, a: LatLng, b: LatLng): number {
   return Math.hypot(P.x - (A.x + t * vx), P.y - (A.y + t * vy));
 }
 
+/** Which way round a ring is driven. Not a guess: the trace visits the ring's
+ *  nodes in an order, so the direction whose node order agrees with the trace's
+ *  own order is the one driven. Voting on the SIGN of each step, rather than
+ *  summing them, costs the wrap-around exactly one contrary vote out of n-1. */
+function ringDir(w: Way, shape: LatLng[]): 1 | -1 {
+  const at = w.pts.slice(0, -1).map((q) => {
+    let bi = 0, bd = Infinity;
+    shape.forEach((p, i) => { const m = dist(xy(p), xy(q)); if (m < bd) { bd = m; bi = i; } });
+    return bi;
+  });
+  let vote = 0;
+  for (let k = 1; k < at.length; k++) vote += Math.sign(at[k]! - at[k - 1]!);
+  return vote >= 0 ? 1 : -1;
+}
+
 async function roads(bbox: string): Promise<Way[]> {
   const cache = `.cache/overpass-${bbox.replace(/[,.\-]/g, "_")}.json`;
   if (!existsSync(cache)) {
@@ -239,8 +254,21 @@ async function main() {
 
       const from = w.nodes.indexOf(entry), to = w.nodes.indexOf(exit);
       if (from < 0 || to < 0) continue;
-      const stepDir = to >= from ? 1 : -1;
-      for (let k = from; k !== to + stepDir; k += stepDir) push(w.nodes[k]!);
+      // A closed way entered and left at the SAME node is driven all the way
+      // round, and index arithmetic cannot say so: `indexOf` returns 0 for both
+      // ends of a ring, so from === to === 0 walked one node and deleted the
+      // loop. The Connector's hospital turnaround -- way 274668429, 135m,
+      // 20 nodes -- was drawn as nothing, leaving 15 trace points up to 48.6m
+      // from the line. Walk the whole ring instead.
+      const ring = w.nodes.length > 2 && w.nodes[0] === w.nodes[w.nodes.length - 1];
+      if (ring && entry === exit) {
+        const n = w.nodes.length - 1;
+        const d = ringDir(w, route.shape);
+        for (let k = 0; k <= n; k++) push(w.nodes[(((from + d * k) % n) + n) % n]!);
+      } else {
+        const stepDir = to >= from ? 1 : -1;
+        for (let k = from; k !== to + stepDir; k += stepDir) push(w.nodes[k]!);
+      }
 
       // A bridge belonging to the NEXT way is walked before entering it.
       const via = repaired[i + 1]?.via;
