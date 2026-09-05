@@ -65,8 +65,8 @@ async function main() {
   // so a sample every fifteen minutes only moves the record on the first run
   // of each hour. Writing anyway would mean a commit every run for no new
   // information, so the file is left alone unless the RECORD moved.
-  const same = JSON.stringify([history.days, history.seen, history.legs])
-            === JSON.stringify([next.days, next.seen, next.legs]);
+  const same = JSON.stringify([history.days, history.seen, history.legs, history.legTrips])
+            === JSON.stringify([next.days, next.seen, next.legs, next.legTrips]);
   if (same) {
     console.log(`${now.toISOString()}  ${label} -- already recorded, file unchanged`);
     return;

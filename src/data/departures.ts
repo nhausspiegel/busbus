@@ -7,7 +7,16 @@ export function serviceDayStart(now: Date): number {
   return Math.floor(d.getTime() / 1000);
 }
 
-const DAY_SECONDS = 86_400;
+/** The service day before `dayStart`, as a calendar date rather than a
+ *  subtraction. Subtracting 86400 is right for 363 days a year and an hour
+ *  wrong on the other two: the day DST ends is 25 hours long and the day it
+ *  begins is 23, so the previous local midnight is not a fixed distance away.
+ *  That error lands on the 00:45 bus, in exactly the hours this app is the
+ *  only way home. */
+function previousServiceDayStart(dayStart: number): number {
+  const d = new Date(dayStart * 1000);
+  return Math.floor(new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1).getTime() / 1000);
+}
 
 /** Absolute departures from the timetable.
  *
@@ -19,7 +28,7 @@ const DAY_SECONDS = 86_400;
  *  filter to `time >= now`, which discards the stale half. */
 export function scheduledDepartures(feed: StaticFeed, dayStart: number): Departure[] {
   const out: Departure[] = [];
-  for (const base of [dayStart - DAY_SECONDS, dayStart]) {
+  for (const base of [previousServiceDayStart(dayStart), dayStart]) {
     for (const trip of feed.trips.values()) {
       for (const s of trip.stops) {
         out.push({
@@ -53,15 +62,40 @@ export function groupLiveTrips(live: Departure[]): Map<string, Departure[]> {
 }
 
 /** Merge live predictions over the timetable, grouped by stop.
- *  A live entry supersedes the scheduled entry for the same (tripId, stopId). */
+ *  A live entry supersedes the scheduled entry for the call it is about. */
 export function buildBoard(live: Departure[], scheduled: Departure[]): DepartureBoard {
-  // Include seq: shuttle routes are loops, so one trip visits a stop twice
-  // (trip 899418 serves stop 8380 at seq 1 and again at seq 15). Keying on
-  // trip+stop alone meant one live prediction for the first visit silently
-  // deleted the second one too, and a rider waiting for it was told nothing
-  // was coming.
-  const key = (d: Departure) => `${d.tripId}|${d.stopId}|${d.seq}`;
-  const superseded = new Set(live.map(key));
+  // Which scheduled entry a live one supersedes cannot be decided on seq: live
+  // seq is GTFS-RT's own numbering and static seq is stop_times.txt, and they
+  // line up for roughly one stop in ten -- RT trip 899435 reports seq 6-15 for
+  // a trip whose static rows run seq 1-4. Keyed on it, the scheduled twin was
+  // almost never superseded and the rider saw two times for one bus.
+  //
+  // What both feeds share is the clock: a prediction sits minutes off its
+  // call's scheduled time, not an hour. So a live entry claims the nearest
+  // scheduled entry for its trip and stop. That keeps the reason seq was
+  // reached for -- trip 899418 serves stop 8380 at seq 1 and again at seq 15,
+  // 45 minutes apart, and each prediction is far nearer its own lap, so the
+  // other visit survives instead of being deleted with it.
+  //
+  // Within the static feed seq IS a sound identity, and it is what marks the
+  // two copies of one call that scheduledDepartures emits for the current and
+  // previous service day. So the live entry picks the call and the call's own
+  // key retires every copy of it.
+  const call = (d: Departure) => `${d.tripId}|${d.stopId}|${d.seq}`;
+  const calls = new Map<string, Departure[]>();
+  for (const d of scheduled) {
+    const k = `${d.tripId}|${d.stopId}`;
+    calls.set(k, [...(calls.get(k) ?? []), d]);
+  }
+  const superseded = new Set<string>();
+  for (const d of live) {
+    let best: Departure | undefined;
+    for (const c of calls.get(`${d.tripId}|${d.stopId}`) ?? []) {
+      if (superseded.has(call(c))) continue;
+      if (!best || Math.abs(c.time - d.time) < Math.abs(best.time - d.time)) best = c;
+    }
+    if (best) superseded.add(call(best));
+  }
   // Passio publishes some trips twice under different trip_ids: 218795 and
   // 218820 are byte-identical, same route and service_id and shape and all 12
   // stop times. That is one bus, so the rider must be shown one departure --
@@ -74,7 +108,7 @@ export function buildBoard(live: Departure[], scheduled: Departure[]): Departure
   const shown = new Set<string>();
   const board: DepartureBoard = new Map();
   for (const d of [...live, ...scheduled]) {
-    if (!d.live && superseded.has(key(d))) continue;
+    if (!d.live && superseded.has(call(d))) continue;
     const same = `${d.stopId}|${d.routeId}|${d.time}`;
     if (shown.has(same)) continue;
     shown.add(same);

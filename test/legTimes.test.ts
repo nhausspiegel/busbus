@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { emptyHistory } from "../src/data/serviceHistory";
-import { recordLegs, legSeconds, LEG_SAMPLES, MIN_LEG_SAMPLES } from "../src/data/legTimes";
+import { recordLegs, legSeconds, LEG_SAMPLES, MIN_LEG_SAMPLES, MAX_LEG_SECONDS } from "../src/data/legTimes";
 import type { Departure } from "../src/data/types";
 
 /**
@@ -16,8 +16,8 @@ import type { Departure } from "../src/data/types";
  * Watching is the honest way to get them: realtime publishes absolute times
  * per stop, so the gap between two of them on one trip IS a measured leg.
  */
-const dep = (stopId: string, seq: number, time: number): Departure =>
-  ({ stopId, tripId: "T1", routeId: "R1", seq, time, live: true });
+const dep = (stopId: string, seq: number, time: number, tripId = "T1"): Departure =>
+  ({ stopId, tripId, routeId: "R1", seq, time, live: true });
 
 describe("recordLegs", () => {
   it("measures the gap between stops realtime reported on one trip", () => {
@@ -43,10 +43,44 @@ describe("recordLegs", () => {
     expect(h.legs).toEqual({});
   });
 
+  it("counts one trip once however many times it is polled", () => {
+    // MIN_LEG_SAMPLES is documented as stopping "one slow afternoon being the
+    // whole answer", but samples are POLLS. The recorder runs every fifteen
+    // minutes and a trip is out the best part of an hour, so five samples
+    // could be five readings of one bus -- and public/service-history.json
+    // shows it: a 105 and a 106 sitting next to each other on the same leg.
+    let h = emptyHistory("2026-08-29");
+    for (let i = 0; i < 6; i++)
+      h = recordLegs(h, [dep("A", 1, 1000 + i), dep("B", 2, 1240 + i * 3)]);
+    expect(h.legs?.["R1|A|B"]).toEqual([240]);
+    expect(legSeconds(h, "R1", "A", "B")).toBeNull();
+  });
+
+  it("still counts a second bus, and the same bus tomorrow", () => {
+    // The guard must not swallow real observations: another vehicle on the
+    // leg now, and this trip id when it runs again, are both new evidence.
+    let h = emptyHistory("2026-08-29");
+    h = recordLegs(h, [dep("A", 1, 1000, "T1"), dep("B", 2, 1240, "T1")]);
+    h = recordLegs(h, [dep("A", 1, 2000, "T2"), dep("B", 2, 2260, "T2")]);
+    h = recordLegs(h, [dep("A", 1, 87_400, "T1"), dep("B", 2, 87_680, "T1")]);
+    expect(h.legs?.["R1|A|B"]).toEqual([240, 260, 280]);
+  });
+
+  it("throws out a leg no bus drove", () => {
+    // 2037 of the 2039 adjacent legs the shipped timetable schedules are 300s
+    // or less. The 1375 recorded between 7860 and 8381 sits beside readings of
+    // 103, 107 and 120 on the same leg: realtime pairing a stale prediction
+    // with a fresh one, not a slow bus.
+    const h = recordLegs(emptyHistory("2026-08-29"),
+      [dep("A", 1, 0), dep("B", 2, 1375), dep("C", 3, 1375 + MAX_LEG_SECONDS + 1)]);
+    expect(h.legs).toEqual({});
+  });
+
   it("keeps only the most recent samples, so the record follows reality", () => {
     let h = emptyHistory("2026-08-29");
+    // A different bus each time: one bus can only contribute one sample.
     for (let i = 0; i < LEG_SAMPLES + 5; i++)
-      h = recordLegs(h, [dep("A", 1, 0), dep("B", 2, 100 + i)]);
+      h = recordLegs(h, [dep("A", 1, 0, `T${i}`), dep("B", 2, 100 + i, `T${i}`)]);
     expect(h.legs?.["R1|A|B"]).toHaveLength(LEG_SAMPLES);
     // The oldest are the ones dropped.
     expect(h.legs?.["R1|A|B"]?.[0]).toBe(105);
@@ -54,9 +88,12 @@ describe("recordLegs", () => {
 });
 
 describe("legSeconds", () => {
+  /** One sample per trip, so each reading needs its own bus. */
   const withSamples = (samples: number[]) => {
     let h = emptyHistory("2026-08-29");
-    for (const s of samples) h = recordLegs(h, [dep("A", 1, 0), dep("B", 2, s)]);
+    samples.forEach((s, i) => {
+      h = recordLegs(h, [dep("A", 1, 0, `T${i}`), dep("B", 2, s, `T${i}`)]);
+    });
     return h;
   };
 
@@ -66,7 +103,9 @@ describe("legSeconds", () => {
   });
 
   it("takes the median, so one bus stuck at a light does not set the time", () => {
-    const h = withSamples([180, 190, 200, 210, 4000]);
+    // 800s, not 4000: a leg over MAX_LEG_SECONDS is now refused outright, and
+    // the point here is that a genuine outlier still does not set the time.
+    const h = withSamples([180, 190, 200, 210, 800]);
     expect(legSeconds(h, "R1", "A", "B")).toBe(200);
   });
 

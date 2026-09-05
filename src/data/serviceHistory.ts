@@ -41,6 +41,9 @@ export interface ServiceHistory {
    *  here rather than in their own file so the recorder writes once and CI
    *  commits once. See legTimes.ts. */
   legs?: Record<string, number[]>;
+  /** Which trip instance contributed each sample in `legs`, same key, same
+   *  order, so one bus polled six times cannot fill a leg by itself. */
+  legTrips?: Record<string, string[]>;
 }
 
 export function emptyHistory(since: string): ServiceHistory {
@@ -55,12 +58,22 @@ function local(at: Date): { date: string; dow: number; hour: number } {
   }).formatToParts(at);
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
   const dows = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  return {
-    date: `${get("year")}-${get("month")}-${get("day")}`,
-    dow: Math.max(0, dows.indexOf(get("weekday"))),
-    // Intl renders midnight as "24" under hour12:false in some engines.
-    hour: Number(get("hour")) % 24,
-  };
+  const weekday = get("weekday"), rawHour = get("hour");
+  const dow = dows.indexOf(weekday);
+  // A weekday this table does not know, or an hour Intl did not give us, is
+  // not a reason to invent one -- in the one file whose whole thesis is never
+  // claiming more than was observed. `Math.max(0, indexOf)` filed the sample
+  // under Sunday and `Number("")` under midnight, so the app could print "on 3
+  // of the 8 Sundays watched" on a Tuesday and never say anything was wrong.
+  // Same standard as the recorder's loader: not a reason to throw the record
+  // away, a reason to stop and be looked at.
+  if (dow < 0 || !/^\d{1,2}$/.test(rawHour)) {
+    throw new Error("Intl gave a local time this code cannot read: " +
+      `weekday=${JSON.stringify(weekday)} hour=${JSON.stringify(rawHour)}`);
+  }
+  // Intl renders midnight as "24" under hour12:false in some engines.
+  const hour = Number(rawHour) % 24;
+  return { date: `${get("year")}-${get("month")}-${get("day")}`, dow, hour };
 }
 
 export function bucketOf(at: Date): Bucket {

@@ -1,8 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { parseStaticFeed } from "../src/data/gtfs";
 import { serviceDayStart, scheduledDepartures, buildBoard } from "../src/data/departures";
-import type { Departure } from "../src/data/types";
+import type { Departure, StaticFeed } from "../src/data/types";
 
 const feed = parseStaticFeed(new Uint8Array(readFileSync("test/fixtures/gtfs.zip")));
 
@@ -52,11 +52,16 @@ describe("buildBoard", () => {
     expect(board.get("A")!.map((d) => d.time)).toEqual([100, 300]);
   });
 
-  it("lets a live prediction replace the scheduled entry for the same trip+stop", () => {
+  it("lets a live prediction replace the scheduled entry for the same call", () => {
     // The bus is running 4 minutes late. Showing both would offer the user a
     // departure that will not happen.
-    const scheduled = dep({ stopId: "A", tripId: "T1", time: 1000, live: false });
-    const live = dep({ stopId: "A", tripId: "T1", time: 1240, live: true });
+    //
+    // The two seqs deliberately disagree: live seq is GTFS-RT's own numbering
+    // and scheduled seq is stop_times.txt, and on this feed they match for
+    // about one stop in ten. Building both sides from one number manufactured
+    // the agreement the assertion was supposed to be testing for.
+    const scheduled = dep({ stopId: "A", tripId: "T1", seq: 1, time: 1000, live: false });
+    const live = dep({ stopId: "A", tripId: "T1", seq: 7, time: 1240, live: true });
     const board = buildBoard([live], [scheduled]);
     expect(board.get("A")).toHaveLength(1);
     expect(board.get("A")![0]!.time).toBe(1240);
@@ -74,6 +79,70 @@ describe("buildBoard", () => {
 
   it("returns an empty board when nothing is running", () => {
     expect(buildBoard([], []).size).toBe(0);
+  });
+
+  it("supersedes every scheduled call a live trip covers, seqs or no seqs", () => {
+    // Measured on this feed: RT trip 899435 reports seq 6-15 for a trip whose
+    // static rows run seq 1-4. Keyed on seq, none of these four scheduled
+    // calls was superseded and the rider was offered both times for each.
+    const scheduled = [1, 2, 3, 4].map((seq) =>
+      dep({ stopId: `S${seq}`, tripId: "T1", seq, time: 1000 + seq * 120 }));
+    const live = scheduled.map((s, i) => ({ ...s, seq: 6 + i, time: s.time + 180, live: true }));
+    let rows = 0;
+    for (const list of buildBoard(live, scheduled).values()) {
+      rows += list.length;
+      for (const d of list) expect(d.live).toBe(true);
+    }
+    expect(rows).toBe(4);
+  });
+
+  it("supersedes the lap the prediction is for, not the other one", () => {
+    // Why seq was reached for in the first place: trip 899418 serves stop 8380
+    // at seq 1 and again at seq 15, and one prediction must not delete both.
+    // The clock separates them where the two numberings cannot -- 899418's
+    // laps are 45 minutes apart and a late bus is minutes off, not an hour.
+    const first = dep({ stopId: "8380", tripId: "899418", seq: 1, time: 1000 });
+    const second = dep({ stopId: "8380", tripId: "899418", seq: 15, time: 3700 });
+    const live = dep({ stopId: "8380", tripId: "899418", seq: 9, time: 3820, live: true });
+    const at = buildBoard([live], [first, second]).get("8380")!;
+    expect(at.map((d) => d.time)).toEqual([1000, 3820]);
+    expect(at.map((d) => d.live)).toEqual([false, true]);
+  });
+});
+
+describe("the previous service day across a daylight saving change", () => {
+  // GTFS files post-midnight service on the PREVIOUS day as 24:xx, so the
+  // board has to start from that day's own midnight. Subtracting 86400 finds
+  // it on 363 days a year and misses by an hour on the other two: the day DST
+  // ends is 25 hours long and the day it starts is 23. The departure it puts
+  // in the wrong hour is the 00:45 one -- exactly the hours this file's own
+  // comment calls the only way home.
+  const was = process.env["TZ"];
+  beforeAll(() => { process.env["TZ"] = "America/New_York"; });
+  afterAll(() => {
+    if (was === undefined) delete process.env["TZ"]; else process.env["TZ"] = was;
+  });
+
+  const oneTrip: StaticFeed = {
+    routes: new Map(), stops: new Map(), feedEndDate: "20271231",
+    trips: new Map([["T", { id: "T", routeId: "R", stops: [{ stopId: "S", seq: 1, time: 0 }] }]]),
+  };
+
+  it("starts each service day at its own midnight, not 86400 seconds back", () => {
+    // 2026: DST begins Sun 8 March (a 23-hour day) and ends Sun 1 November
+    // (25 hours). A rider looking at the board just after midnight on the 9th
+    // and the 2nd is the case that breaks.
+    let checked = 0;
+    for (const now of [new Date(2026, 2, 9, 0, 15), new Date(2026, 10, 2, 0, 15)]) {
+      const bases = scheduledDepartures(oneTrip, serviceDayStart(now));
+      expect(bases).toHaveLength(2);
+      for (const b of bases) {
+        const d = new Date(b.time * 1000);
+        expect([d.getHours(), d.getMinutes(), d.getSeconds()]).toEqual([0, 0, 0]);
+        checked++;
+      }
+    }
+    expect(checked).toBe(4);
   });
 });
 
