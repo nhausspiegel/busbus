@@ -10,8 +10,9 @@ import { stopPaint, stopBasePaint, tickPaint, routeLinePaint,
          DIM, type MapState } from "../render/symbols";
 import { pointAlongShape, snapToShape } from "../routing/shape";
 import { stations } from "../routing/routeDetail";
-import { laneRuns, laneApprox, laneIndex, laneSnap } from "../render/lanes";
-import { laneLinks } from "../render/links";
+import { laneRuns, laneApprox, laneIndex, stationLanes } from "../render/lanes";
+import { laneLinks, TUNING } from "../render/links";
+import { RenderTuner } from "./RenderTuner";
 
 // MapLibre's worker is a separate ES module that imports a sibling. Rollup
 // cannot see it (the path is built from a runtime string) and ?url would copy
@@ -86,7 +87,7 @@ const GLIDE_MS = 10_000;
  *  left to inherit -- which is what used to make this grow with zoom, from
  *  3.7px at zoom 13 to 13.5px at zoom 18. MapLibre applies it via line-offset,
  *  in pixels, on the GPU. */
-const LANE_GAP_PX = 5;
+
 
 // CORNER_RADIUS_PX and LANE_HOLD_PX are gone. Rounding is `line-join: round`,
 // done by the GPU at the true stroke width, so there is no fillet to clamp --
@@ -235,8 +236,12 @@ export function TransitMap({
     const shapes = shapesRef.current;
     const lanes = laneIndex(shapes);
     const mpp = metresPerPixel(CAMPUS.lat, zoom);
-    return (routeId: string, at: LatLng) =>
-      laneSnap(shapes, lanes, routeId, at, LANE_GAP_PX, mpp);
+    // A whole station at once, not one bead at a time. Placing each bead by
+    // projecting onto its OWN route put the beads of a corner station on two
+    // different streets, so the bar between them ran diagonally across the
+    // junction instead of across the road.
+    return (routeIds: string[], at: LatLng) =>
+      stationLanes(shapes, lanes, routeIds, at, TUNING.laneGapPx, mpp);
   };
   /** The current itinerary, so the per-zoom redraw can rebuild its ride line
    *  from the same geometry as everything else. */
@@ -268,6 +273,8 @@ export function TransitMap({
   // diff is not applicable, which drops every layer we added. Incrementing on
   // each styledata lets the drawing effects re-run and rebuild them.
   const [ready, setReady] = useState(0);
+  /** Bumped by the render tuner so a slider redraws the map. */
+  const [tuneRev, setTuneRev] = useState(0);
   const [zoom, setZoom] = useState(14.2);
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
@@ -314,7 +321,7 @@ export function TransitMap({
     // Only the snapping copy depends on scale: a stop has to sit on the line a
     // rider SEES, which is the centreline displaced.
     const mpp = metresPerPixel(CAMPUS.lat, zoom);
-    drawnRef.current = laneApprox(shapes, LANE_GAP_PX, mpp);
+    drawnRef.current = laneApprox(shapes, TUNING.laneGapPx, mpp);
     // Same geometry, same moment: the stops are placed from `drawn` right here
     // rather than once at startup, so they cannot drift off the line.
     const stopSrc = m.getSource("stops") as maplibregl.GeoJSONSource | undefined;
@@ -344,7 +351,7 @@ export function TransitMap({
     // drawn, which is what LOOM does. The straight parts still get their offset
     // from the GPU, unchanged; only these curves are geometry, and a curve
     // between two ports a few pixels apart cannot fold. See src/render/links.ts.
-    const { runs: trimmed, links } = laneLinks(laneRuns(shapes, LANE_GAP_PX), mpp);
+    const { runs: trimmed, links } = laneLinks(laneRuns(shapes, TUNING.laneGapPx), mpp);
     const paint = (routeId: string, path: LatLng[], laneOffset: number) => ({
       type: "Feature" as const,
       properties: { routeId, color: colorRef.current.get(routeId) ?? "#888", laneOffset },
@@ -657,7 +664,7 @@ export function TransitMap({
     if (!m || !ready || !m.getSource("routes") || shapesRef.current.size === 0) return;
     try { drawRoutes(m, zoom); } catch { /* style churn; the next render redraws */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zoom, ready]);
+  }, [zoom, ready, tuneRev]);
 
   // live buses. Markers are DOM elements the map merely positions, so this
   // needs no style at all -- and gating it on isStyleLoaded() left every bus
@@ -1038,5 +1045,10 @@ export function TransitMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection?.kind === "route" ? selection.id : null, ready]);
 
-  return <div ref={div} style={{ position: "absolute", inset: 0 }} />;
+  return (
+    <div style={{ position: "absolute", inset: 0 }}>
+      <div ref={div} style={{ position: "absolute", inset: 0 }} />
+      <RenderTuner onChange={() => setTuneRev((n) => n + 1)} />
+    </div>
+  );
 }

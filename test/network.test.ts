@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { parseStaticFeed } from "../src/data/gtfs";
-import { laneApprox, laneIndex, laneSnap } from "../src/render/lanes";
+import { laneApprox, laneIndex, stationLanes } from "../src/render/lanes";
 import { parseSnapped } from "../src/data/snappedShapes";
 import { stationFeatures, rideFeatures } from "../src/render/network";
 import { haversineMeters } from "../src/routing/walk";
+import { stations } from "../src/routing/routeDetail";
 import type { LatLng } from "../src/data/types";
 
 /**
@@ -56,42 +57,148 @@ const offLine = (p: LatLng, line: LatLng[]) => {
 const mppAt = (zoom: number) =>
   (78_271.51696 * Math.cos((41.8265 * Math.PI) / 180)) / 2 ** zoom;
 
-/** The placement the map uses: project onto the shared centreline once, then
- *  apply the lane offset. Deliberately a DIFFERENT code path from `drawAt`,
- *  which displaces every vertex -- so checking one against the other is a real
- *  cross-check rather than a function compared with itself. */
+/** The placement the map uses: project the whole station onto ONE segment and
+ *  lay its routes along that segment's normal. Deliberately a DIFFERENT code
+ *  path from `drawAt`, which displaces every vertex -- so checking one against
+ *  the other is a real cross-check rather than a function compared with
+ *  itself. */
 function placeAt(zoom: number) {
   const shapes = new Map([...snapped].filter(([id]) => ACTIVE.has(id)));
   const lanes = laneIndex(shapes);
   const mpp = mppAt(zoom);
-  return (routeId: string, at: LatLng) =>
-    laneSnap(shapes, lanes, routeId, at, 5, mpp);
+  return (routeIds: string[], at: LatLng) =>
+    stationLanes(shapes, lanes, routeIds, at, 5, mpp);
 }
 
-describe("every bead sits on the line it belongs to", () => {
-  // A station used to be snapped onto the FIRST of its routes only, so at an
-  // interchange the dot sat on one line and floated metres from the others.
-  for (const zoom of [13, 15, 17]) {
+/**
+ * The street a station stands on, and the routes running along it.
+ *
+ * Derived here from the snapped centrelines rather than imported, because an
+ * expectation computed with a helper from the module under test agrees with
+ * that module however wrong both are -- a previous test did exactly that and
+ * passed with the offset's sign flipped.
+ */
+function street(routeIds: string[], at: LatLng) {
+  const KX = 111_320 * Math.cos((at.lat * Math.PI) / 180), K = 111_320;
+  const px = at.lng * KX, py = at.lat * K;
+  let best = Infinity, a = { lat: 0, lng: 0 }, b = { lat: 0, lng: 0 };
+  for (const id of routeIds) {
+    const pts = snapped.get(id) ?? [];
+    for (let i = 1; i < pts.length; i++) {
+      const ax = pts[i - 1]!.lng * KX, ay = pts[i - 1]!.lat * K;
+      const vx = pts[i]!.lng * KX - ax, vy = pts[i]!.lat * K - ay;
+      const l2 = vx * vx + vy * vy;
+      const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / l2));
+      const d = Math.hypot(px - (ax + t * vx), py - (ay + t * vy));
+      if (d < best) { best = d; a = pts[i - 1]!; b = pts[i]!; }
+    }
+  }
+  // Shared nodes are byte-identical floats, so a route runs along this stretch
+  // exactly when those two points are adjacent in its own shape.
+  const same = (p: LatLng, q: LatLng) => p.lat === q.lat && p.lng === q.lng;
+  const users = [...ACTIVE].filter((id) => (snapped.get(id) ?? []).some((p, i) =>
+    i > 0 && ((same(p, a) && same(snapped.get(id)![i - 1]!, b))
+           || (same(p, b) && same(snapped.get(id)![i - 1]!, a)))));
+  return { a, b, users };
+}
+
+/**
+ * An interchange is an oblong ACROSS the street, at every zoom.
+ *
+ * Perpendicular to the road, exactly one lane gap per line long, with its
+ * beads on it and on their own lines. All four used to be false at some zoom
+ * and true at others -- the beads were placed against each route separately,
+ * so at a corner they landed on two different streets and the bar ran
+ * diagonally across the junction; measured 17.9 degrees off and from 4% to
+ * 281% of the length it should be. Every expectation below is derived from the
+ * lane gap and the metres-per-pixel formula, not from the renderer.
+ */
+describe("an interchange is one oblong across the street", () => {
+  const GAP = 5;
+  const M = (p: LatLng, kx: number) => ({ x: p.lng * kx, y: p.lat * 111_320 });
+
+  for (const zoom of [13, 14.2, 15, 16, 17, 18]) {
     it(`at zoom ${zoom}`, () => {
+      const mpp = mppAt(zoom);
       const drawn = drawAt(zoom);
-      const { beads } = stationFeatures(feed, ACTIVE, placeAt(zoom));
-      expect(beads.length).toBeGreaterThan(20);
-      let worst = 0, checked = 0;
+      const { beads, ticks } = stationFeatures(feed, ACTIVE, placeAt(zoom));
+      const tick = new Map(ticks.map((t) => [String(t.properties?.["id"]), t]));
+      const group = new Map<string, { routeId: string; p: LatLng }[]>();
       for (const b of beads) {
-        const line = drawn.get(String(b.properties?.["routeId"] ?? ""));
-        if (!line || b.geometry.type !== "Point") continue;
-        const [lng, lat] = b.geometry.coordinates as [number, number];
-        worst = Math.max(worst, offLine({ lat, lng }, line));
+        const [lng, lat] = (b.geometry as GeoJSON.Point).coordinates as [number, number];
+        const id = String(b.properties?.["id"]);
+        group.set(id, [...(group.get(id) ?? []),
+                       { routeId: String(b.properties?.["routeId"]), p: { lat, lng } }]);
+      }
+
+      let checked = 0, crossStreet = 0, onOwnLine = 0;
+      let worstAngle = 0, worstLen = 0, worstSpacing = 0, worstBend = 0, worstOff = 0;
+      for (const st of stations(feed, ACTIVE)) {
+        const id = st.stopIds[0]!;
+        const on = group.get(id);
+        expect(on, `beads for ${st.name}`).toBeTruthy();
+        expect(on!.length).toBe(st.routeIds.length);
+        const kx = 111_320 * Math.cos((st.lat * Math.PI) / 180);
+        const s = street(st.routeIds, { lat: st.lat, lng: st.lng });
+
+        // Each bead on the line the rider sees under it -- a lone stop too,
+        // which is where centring the beads on the ROAD rather than on the
+        // lanes their routes hold used to put the dot half a gap off its own
+        // line. A route that reaches the station from the CROSSING street
+        // holds no lane on the reference segment, so it takes a slot past the
+        // end of the block and is off its own line by design: that cost is
+        // counted, not waived.
+        for (const b of on!) {
+          if (!s.users.includes(b.routeId)) { crossStreet++; continue; }
+          worstOff = Math.max(worstOff, offLine(b.p, drawn.get(b.routeId)!) / mpp);
+          onOwnLine++;
+        }
+        if (st.routeIds.length < 2) continue;
+
+        const bar = tick.get(id);
+        expect(bar, `bar for ${st.name}`).toBeTruthy();
+        const co = (bar!.geometry as GeoJSON.LineString).coordinates as [number, number][];
+        const ends = co.map(([lng, lat]) => ({ lat, lng }));
+        const A = M(ends[0]!, kx), B = M(ends[1]!, kx);
+        const U = M(s.a, kx), V = M(s.b, kx);
+        const bx = B.x - A.x, by = B.y - A.y, len = Math.hypot(bx, by);
+        const ux = V.x - U.x, uy = V.y - U.y;
+        // Perpendicular to the street. |cos| so an antiparallel bar is the same
+        // bar; acos of it lands in [0, 90] and 90 is square to the road.
+        const deg = (Math.acos(Math.min(1, Math.abs(bx * ux + by * uy)
+          / (len * Math.hypot(ux, uy)))) * 180) / Math.PI;
+        worstAngle = Math.max(worstAngle, Math.abs(90 - deg));
+
+        // (n-1) gaps long, in metres, from the pixel size at this zoom alone.
+        const want = (st.routeIds.length - 1) * GAP * mpp;
+        worstLen = Math.max(worstLen, Math.abs(len - want) / want);
+
+        // The beads lie ON the bar, one gap apart along it.
+        const along = on!.map((b) => {
+          const P = M(b.p, kx);
+          return ((P.x - A.x) * bx + (P.y - A.y) * by) / len;
+        }).sort((x, y) => x - y);
+        for (const b of on!) worstBend = Math.max(worstBend, offLine(b.p, ends) / mpp);
+        for (let i = 1; i < along.length; i++)
+          worstSpacing = Math.max(worstSpacing,
+            Math.abs((along[i]! - along[i - 1]!) - GAP * mpp) / (GAP * mpp));
+
         checked++;
       }
-      // This loop skipped EVERY iteration for the whole life of the stop defect,
-      // because beads carried no `routeId` and the lookup missed. A loop that
-      // can `continue` on a miss has to say how many times it did not.
-      expect(checked).toBe(beads.length);
-      // Compared against a different displacement (`laneApprox` moves every
-      // vertex by its own segment's normal, with no miter), so the residue is
-      // that shear at corners, not placement error. Measured worst: 1.0m.
-      expect(worst).toBeLessThan(3);
+      // Every bead accounted for, so no `continue` above can quietly empty the
+      // loop -- which is exactly how the previous version of this check passed
+      // for the whole life of the defect it was written for.
+      expect(onOwnLine + crossStreet).toBe(beads.length);
+      expect(checked).toBe(12);
+      expect(worstAngle).toBeLessThanOrEqual(0.5);
+      expect(worstLen).toBeLessThan(0.01);
+      expect(worstSpacing).toBeLessThan(0.01);
+      expect(worstBend).toBeLessThan(0.01);
+      expect(worstOff).toBeLessThan(1);
+      // Exactly one route in the whole network meets its station from the
+      // crossing street (3469 at Cushing & Thayer). Pinned so the cost cannot
+      // grow unnoticed.
+      expect(crossStreet).toBe(1);
     });
   }
 });

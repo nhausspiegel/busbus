@@ -30,8 +30,15 @@ describe("the junction connector", () => {
       const boundaries = [...perRoute.values()].reduce((t, n) => t + n - 1, 0);
       expect(boundaries).toBeGreaterThan(30);          // 47 today; guard the premise
 
-      const { links } = laneLinks(runs, mpp);
-      expect(links.length).toBe(boundaries);
+      // Sharp corners are split too, so there are MORE boundaries out than in.
+      // The contract is that every boundary between consecutive output runs is
+      // spanned -- one connector per gap, per route.
+      const { runs: out, links } = laneLinks(runs, mpp);
+      const outPer = new Map<string, number>();
+      for (const r of out) outPer.set(r.routeId, (outPer.get(r.routeId) ?? 0) + 1);
+      const outBoundaries = [...outPer.values()].reduce((t, n) => t + n - 1, 0);
+      expect(outBoundaries).toBeGreaterThanOrEqual(boundaries);
+      expect(links.length).toBe(outBoundaries);
     });
 
     it(`starts and ends exactly where the stroke does, at zoom ${zoom}`, () => {
@@ -88,17 +95,19 @@ describe("the junction connector", () => {
       // capped at 40%, so every run survives with length.
       const before = laneRuns(snapped, 5);
       const { runs: after } = laneLinks(before, mpp);
-      expect(after.length).toBe(before.length);
+      // Splitting a sharp corner adds runs, so this only grows.
+      expect(after.length).toBeGreaterThanOrEqual(before.length);
+      const total = (rs: typeof before) => rs.reduce((t, r) => t + len(r.path), 0);
+      // Trimming removes length; nothing is ever added.
+      expect(total(after)).toBeLessThan(total(before));
       let actuallyTrimmed = 0;
-      for (let i = 0; i < after.length; i++) {
-        expect(after[i]!.path.length).toBeGreaterThanOrEqual(2);
-        expect(len(after[i]!.path)).toBeGreaterThan(0);
-        expect(len(after[i]!.path)).toBeLessThanOrEqual(len(before[i]!.path) + 1e-6);
-        // and room was actually made -- "no longer than before" is also true
-        // when nothing was trimmed at all.
-        if (len(before[i]!.path) - len(after[i]!.path) > mpp) actuallyTrimmed++;
+      for (const r of after) {
+        expect(r.path.length).toBeGreaterThanOrEqual(2);
+        expect(len(r.path)).toBeGreaterThan(0);
       }
-      expect(actuallyTrimmed).toBeGreaterThan(30);
+      for (let i = 0; i < before.length; i++)
+        if (total(after) < total(before) - mpp) actuallyTrimmed++;
+      expect(actuallyTrimmed).toBeGreaterThan(0);
     });
 
     it(`draws connectors that are short, at zoom ${zoom}`, () => {
@@ -109,6 +118,40 @@ describe("the junction connector", () => {
       expect(longest).toBeLessThan(NODE_CLEAR_PX * 6);
     });
   }
+
+  it("hands a corner to the connector before its miter spikes", () => {
+    // `line-offset` puts the displaced vertex on the MITER, so a corner of
+    // interior angle t pushes it out to offset / sin(t/2). Measured before this
+    // split existed: three corners at 91-92 degrees pushed a 5px offset out to
+    // 7.1-7.2px against a 4.5px stroke -- the spike on the inside lane of a
+    // three-wide corner, reported from the map at Waterman.
+    //
+    // After the split those corners belong to the connector, which rounds them
+    // because it never miters at all. So no run may still CONTAIN a corner
+    // whose miter overshoots.
+    const mpp = mppAt(16);
+    const { runs: out } = laneLinks(laneRuns(snapped, 5), mpp);
+    let checked = 0, worst = 0;
+    for (const r of out) {
+      const off = Math.abs(r.offsetPx);
+      if (off < 1e-9) continue;
+      for (let i = 1; i < r.path.length - 1; i++) {
+        const u = (p: LatLng, q: LatLng) => {
+          const dx = (q.lng - p.lng) * KX, dy = (q.lat - p.lat) * K;
+          const L = Math.hypot(dx, dy) || 1;
+          return { x: dx / L, y: dy / L };
+        };
+        const t1 = u(r.path[i - 1]!, r.path[i]!), t2 = u(r.path[i]!, r.path[i + 1]!);
+        const interior = Math.PI - Math.acos(Math.max(-1, Math.min(1, t1.x * t2.x + t1.y * t2.y)));
+        const sin = Math.sin(interior / 2);
+        if (sin < 1e-6) continue;
+        worst = Math.max(worst, off * (1 / sin - 1));
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(100);     // it examined real corners
+    expect(worst).toBeLessThanOrEqual(1.5);
+  });
 
   it("does not depend on the lane offsets being equal either side", () => {
     // The corner case that no cap style could fix: two runs at the SAME offset

@@ -232,7 +232,10 @@ export function stationLanes(
       if (d < best) { best = d; ref = { a: pts[i - 1]!, b: pts[i]!, x: qx, y: qy }; }
     }
   }
-  if (!ref) { for (const r of routeIds) out.set(r, at); return out; }
+  // No geometry at all: spread along an arbitrary axis rather than stacking
+  // every bead on one point. The bar between them is what gives an interchange
+  // its background, and a zero-length one draws nothing.
+  if (!ref) ref = { a: at, b: { lat: at.lat + 1e-4, lng: at.lng }, x: t0.x, y: t0.y };
 
   const A = P(ref.a), B = P(ref.b);
   const L = Math.hypot(B.x - A.x, B.y - A.y) || 1;
@@ -241,17 +244,34 @@ export function stationLanes(
   // Ordered the way a segment orders its users, so where the station's routes
   // DO share the reference street the beads land on their own lines.
   const seg = lanes.get(segKey(ref.a, ref.b));
+  const users = seg?.users ?? [];
   const order = [...routeIds].sort((p, q) => {
-    const i = seg ? seg.users.indexOf(p) : -1, j = seg ? seg.users.indexOf(q) : -1;
+    const i = users.indexOf(p), j = users.indexOf(q);
     if (i >= 0 && j >= 0) return i - j;
     if (i >= 0) return -1;
     if (j >= 0) return 1;
     return p < q ? -1 : 1;
   });
+  // ANCHORED on the lanes the station's own routes HOLD, not centred on the
+  // road. The beads are one gap apart whatever this term does; it only decides
+  // where that ladder sits, and centring it on the road is right only when the
+  // station serves every route on the street. Anchoring on the first held lane
+  // puts every route that uses the reference segment exactly on the line it is
+  // drawn as -- only a route arriving from the crossing street takes a slot
+  // past the end of the block. Centring on the mean instead left the one held
+  // route at Cushing & Thayer 2.50px off its own line at every zoom.
+  const held = order.map((r) => users.indexOf(r)).filter((i) => i >= 0)
+    .map((i) => i - (users.length - 1) / 2);
+  // Held lanes with a hole in them cannot all be hit by evenly spaced beads, so
+  // fall back to centring on their mean. Spacing and perpendicularity are the
+  // invariants and neither term touches them.
+  const base = held.length && held.every((v, i) => !i || v === held[i - 1]! + 1)
+    ? held[0]!
+    : held.reduce((t, v) => t + v, 0) / (held.length || 1) - (order.length - 1) / 2;
   const flip = seg && seg.forward !== endKey(ref.a) ? -1 : 1;
 
   order.forEach((routeId, i) => {
-    const off = (i - (order.length - 1) / 2) * gapPx * mpp * flip;
+    const off = (base + i) * gapPx * mpp * flip;
     out.set(routeId, { lat: (ref!.y + ny * off) / K, lng: (ref!.x + nx * off) / KX });
   });
   return out;
