@@ -225,12 +225,17 @@ buffer. `laneIndex` runs twice per redraw. Only `laneApprox` and
 grow tween is torn down and started again. With a stop card open, the dot
 visibly shrinks and re-grows every 10 seconds.
 
-### 21. Dead code
+### 21. Walking times are estimates and nothing says so
 
-- `laneSnap` (`src/render/lanes.ts:131-157`, 27 lines) -- zero callers.
-- `isWalkOnly` (`src/routing/plan.ts:66`) -- zero callers.
-- `walkTimesAreEstimated()` (`src/routing/walk.ts:232`) -- implemented, and
-  documented as something the UI should surface. Never called.
+`walk.ts` falls back to a straight-line estimate when both routers are down,
+and the rider is shown that number exactly like a routed one. A
+`walkTimesAreEstimated()` flag existed for this and had zero callers, so it was
+the appearance of the honesty rather than the thing; it is deleted, and the
+note now sits where the estimate is produced. Surfacing it is a `src/ui`
+change: the itinerary needs to say the walk is estimated when it is.
+
+(The other two entries here are resolved. `laneSnap` is live -- it is what
+places a station's beads on their lanes. `isWalkOnly` was deleted.)
 
 ### 22. Documentation upkeep
 
