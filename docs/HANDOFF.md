@@ -96,6 +96,7 @@ src/routing/
 
 src/render/
   lanes.ts        >>> lane assignment + pixel offsets — SEE docs/RENDERING.md
+  links.ts        >>> junction + sharp-corner connectors; TUNING knobs (?tune)
   symbols.ts      paint expressions (route width/colour, line-offset)
   network.ts      basemap road network drawing
 
@@ -104,7 +105,7 @@ scripts/snap-to-streets.ts  build step: routes -> real OSM road nodes
 
 src/ui/
   App.tsx         all state; mode precedence via mode.ts
-  TransitMap.tsx  MapLibre; LANE_GAP_PX lives here
+  TransitMap.tsx  MapLibre; metresPerPixel lives here (TUNING is in links.ts)
   mapStyle.ts     hand-written vector basemap style (light + dark)
   Sheet.tsx       3-detent draggable bottom sheet
   SearchBar / Itineraries / NearbyBoard / RouteDetail / StopCard /
@@ -198,7 +199,9 @@ correct, independent of route drawing, and were reverted anyway.
 3. **I entangled good fixes with bad ones.** The z-order fix and the hospital
    loop had nothing to do with lane geometry, but they sat in the same working
    tree and the same commit sequence, so "revert the rendering" took them out
-   twice. Both are still unfixed as a result.
+   twice. The hospital loop was fixed a third time on 2026-09-01, alone and in
+   its own commit -- see the ring trap in `docs/RENDERING.md`. The z-order fix
+   was not part of that; check it separately rather than assuming it came back.
 
 4. **I argued past a documented trap instead of testing it.** `RENDERING.md`
    said not to offset in geometry. I decided the reason did not apply to me and
@@ -280,23 +283,24 @@ These are all verified against live responses. Do not re-derive.
 
 See `docs/BACKLOG.md` for the full list with its evidence. The short version:
 
-1. **Every run boundary is visible** -- 47 of them, 25 overspilling a corner
-   and 21 wider than the stroke. This is the ceiling on how good the map can
-   look, and no cap style touches it. `docs/BACKLOG.md` item 1, and
-   `docs/RENDERING.md` for why. Five attempted fixes were reverted on
-   2026-08-30; read the table at the end of `docs/RENDERING.md` before trying
-   a sixth.
-2. Geographic vs octilinear rendering is a fork only the owner can settle.
-3. The Express's stop-to-stop times need real observations before the planner
+1. Geographic vs octilinear rendering is a fork only the owner can settle.
+2. The Express's stop-to-stop times need real observations before the planner
    can route through the seven stops its GTFS trip omits.
-4. `scripts/snap-to-streets.ts` hardcodes the five active route ids in `ACTIVE`.
+3. `scripts/snap-to-streets.ts` hardcodes the five active route ids in `ACTIVE`.
    A route Passio adds keeps its raw trace and draws without lanes -- degraded,
    not broken -- until the script is re-run.
+4. One consecutive node pair of 1,229 is not a road-graph link: 3302 skips 26.8m
+   of College Street between 417235219 and 417235217, which share a way but are
+   not adjacent in it. Pre-existing, and small enough that neither the length
+   ratio nor the worst-point test sees it.
 
 Resolved since this was last written: the loop boarding bug (`RideLeg` carries
 `boardSeq` and `rideStops` joins on it), turn-by-turn walking directions, the
-iOS `apple-touch-icon.png`, the `numStops` label, and the whole route-rendering
-rebuild described in `docs/RENDERING.md`.
+iOS `apple-touch-icon.png`, the `numStops` label, the whole route-rendering
+rebuild described in `docs/RENDERING.md`, **every run boundary being visible**
+(`src/render/links.ts` draws the junctions rather than hoping two features
+meet), the 512px-tile `metresPerPixel` constant, and the Connector's hospital
+turnaround (a closed OSM ring walked by index collapsed to one node).
 
 ## 7. How to work on it
 
