@@ -104,6 +104,52 @@ describe("daylight saving", () => {
   });
 });
 
+describe("a local time this code cannot read", () => {
+  /**
+   * `Math.max(0, dows.indexOf(...))` turned a weekday this table does not know
+   * into Sunday, and `Number("") % 24` into NaN. Every sample of a whole day
+   * would have been filed under "0-NaN" and the app could print "on 3 of the 8
+   * Sundays watched" on a Tuesday -- in the one file whose entire thesis is
+   * never claiming more than was observed. The recorder's loader sets the
+   * standard: a shape we cannot read is not a reason to throw the record away,
+   * it is a reason to stop and be looked at.
+   */
+  const realParts = Intl.DateTimeFormat.prototype.formatToParts;
+
+  /** Bend what Intl says, and count that the stub actually fired -- a stub
+   *  that never ran would make the assertion inside it vacuous. */
+  const withParts = (
+    mangle: (parts: Intl.DateTimeFormatPart[]) => Intl.DateTimeFormatPart[],
+    body: () => void,
+  ) => {
+    let fired = 0;
+    Intl.DateTimeFormat.prototype.formatToParts = function (
+      this: Intl.DateTimeFormat, d?: Date | number,
+    ) {
+      fired++;
+      return mangle(realParts.call(this, d));
+    };
+    try { body(); } finally { Intl.DateTimeFormat.prototype.formatToParts = realParts; }
+    expect(fired).toBeGreaterThan(0);
+  };
+
+  it("refuses a weekday it does not recognise instead of calling it Sunday", () => {
+    withParts(
+      (parts) => parts.map((p) => (p.type === "weekday" ? { ...p, value: "vendredi" } : p)),
+      () => expect(() => bucketOf(FRI_14)).toThrow(/weekday/),
+    );
+  });
+
+  it("refuses a missing hour instead of quietly calling it midnight", () => {
+    // Number("") is 0, so a dropped hour part was not even loud enough to be
+    // NaN -- every sample of that day would have been filed at 00:00.
+    withParts(
+      (parts) => parts.filter((p) => p.type !== "hour"),
+      () => expect(() => bucketOf(FRI_14)).toThrow(/hour/),
+    );
+  });
+});
+
 describe("bestObserved", () => {
   /** A rider standing at a stop asks "will one come?". The record can answer
    *  it for the route that serves them best, which is more use than an
