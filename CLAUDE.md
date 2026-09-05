@@ -134,6 +134,12 @@ The standing examples so far, kept short on purpose:
 - Explaining a report away. "It may just not be visible at that zoom" is not an
   answer to "it doesn't work". The owner is the only one who can see the
   window, so their observation is the starting point, not a claim to triage.
+- Discarding data because it is longer. A station merged the stop ids Passio
+  splits by direction and named itself by keeping the SHORTEST name, on the
+  reasoning that a direction suffix makes a name longer. That is string length
+  standing in for meaning: "Pembroke Campus" (15) and "Cushing & Thayer" (16)
+  are two different stops 11m apart, so one of them vanished from the app.
+  Strip the suffix you actually mean to strip, and keep every name that survives.
 
 ---
 
