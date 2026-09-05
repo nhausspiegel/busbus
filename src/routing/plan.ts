@@ -62,11 +62,6 @@ export function rankAndTrim(all: Itinerary[], maxResults: number, arriveBy?: num
     .slice(0, maxResults);
 }
 
-/** An itinerary with no rides: the rider just walks. */
-export function isWalkOnly(it: Itinerary): boolean {
-  return it.rides.length === 0;
-}
-
 /** Rank single-shuttle itineraries by arrival time at the destination.
  *
  *  Earliest ARRIVAL, not shortest ride: a slower bus leaving now routinely

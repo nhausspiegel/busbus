@@ -174,7 +174,6 @@ export async function walkMatrixMulti(
       `${OSRM_FOOT}/table/v1/driving/${coords}?sources=${srcIdx}&destinations=${dstIdx}`,
     ) as { durations?: (number | null)[][] };
     const rows = data?.durations ?? [];
-    estimated = false;
     return sources.map((_, i) =>
       targets.map((__, j) => {
         const t = rows[i]?.[j];
@@ -190,7 +189,6 @@ export async function walkMatrixMulti(
       costing: "pedestrian",
     }) as { sources_to_targets?: { time?: number }[][] };
     const rows = data?.sources_to_targets ?? [];
-    estimated = false;
     return sources.map((_, i) =>
       targets.map((__, j) => {
         const t = rows[i]?.[j]?.time;
@@ -200,7 +198,6 @@ export async function walkMatrixMulti(
     // Both routers are unreachable at once. Rank the trips on an estimate
     // rather than showing the rider nothing -- this only affects which
     // itinerary sorts first, and no line is ever drawn from it.
-    estimated = true;
     return sources.map((a) => targets.map((b) => estimateSeconds(a, b)));
   }
 }
@@ -217,19 +214,17 @@ export async function walkMatrixMulti(
  * plainly more useful so long as it says so.
  *
  * Straight-line distance times a detour factor, over a walking speed. It is
- * NOT a routed path and no line is ever drawn from it -- callers ask
- * `walkTimesAreEstimated()` and say so. College Hill is steep enough that this
- * misreports uphill walks, which is exactly why Valhalla is preferred whenever
- * it is reachable.
+ * NOT a routed path and no line is ever drawn from it. College Hill is steep
+ * enough that this misreports uphill walks, which is exactly why Valhalla is
+ * preferred whenever it is reachable.
+ *
+ * Nothing tells the rider the number is an estimate. A `walkTimesAreEstimated()`
+ * flag lived here for months with zero callers, which is the appearance of that
+ * honesty rather than the thing; saying so is a change in src/ui.
  */
 const WALK_M_PER_S = 1.35;
 /** Street grids and buildings, so real walking is longer than the crow flies. */
 const DETOUR = 1.35;
-let estimated = false;
-
-/** Whether the most recent walking times came from the estimate rather than
- *  from Valhalla. Reset the moment a real answer arrives. */
-export function walkTimesAreEstimated(): boolean { return estimated; }
 
 function estimateSeconds(a: LatLng, b: LatLng): number {
   return Math.round((haversineMeters(a, b) * DETOUR) / WALK_M_PER_S);
