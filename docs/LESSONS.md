@@ -93,6 +93,16 @@ New instance? Add it here under its pattern. Only a NEW root pattern goes in
   Twice in one session a green or red probe was measuring the wrong element.
   Assert on the element, not on text that several elements can produce.
 
+- Not checking that a revert reverted. Twice in one session I "confirmed a test
+  can fail" by editing the fix out and re-running -- and once the edit silently
+  matched nothing, so the suite passed and I read that as the test being
+  worthless. The check that a check works is itself a check. Print what
+  changed, or count the call sites, before trusting the result.
+- Rewinding a clock and reading it as a defect. The rAF helper takes an
+  ABSOLUTE timestamp, so ticking 0 after ticking 120 sends the tween back to
+  the start; my assertion failed and I spent a fix hunting the wrong cause.
+  When a test fails, first ask what the test did, not only what the code did.
+
 ## 2. "Do not stop" means do not stop WORKING -- a diff is not evidence of progress
 
 - Shipping a run of "fixes" each measured against something other than the
