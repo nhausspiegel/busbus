@@ -372,6 +372,35 @@ slower coverage, or move the recorder somewhere with a real scheduler. Do not
 "fix" it by lowering MIN_DAYS; that trades honesty for speed, which is the one
 trade this file exists to refuse.
 
+### 29. Measured leg times may be systematically SHORT — they measure predictions, not buses
+
+`legTimes` derives a leg from the gap between two PREDICTED times on one live
+trip. That is a measurement of Passio's predictions, not of a bus. If its
+predictions are internally compressed -- and bunching is normal in realtime
+feeds -- every derived duration inherits the compression.
+
+Measured 2026-09-06, the Daytime Express, Hillel House -> South Street Landing:
+
+```
+measured legs sum   194s  -> 30.8 km/h average over ~1.66km with 3 stops
+GTFS timetable      600s  -> 10.0 km/h
+```
+
+Neither is obviously right. The timetable is a round ten minutes with BLANK
+intermediate times, so it is a placeholder rather than an observation. But
+30.8 km/h including three stops is optimistic for a campus shuttle, and the
+error would bias arrival estimates EARLY -- telling a rider they arrive sooner
+than they will, which is the direction that makes someone miss a connection.
+
+This only affects routes that fall through to observed legs -- the Express.
+The Connector has 38 timetable trips covering 14 stops and rides on those.
+
+Settle it with ground truth, which nothing in the repo currently has: ride the
+Express and time it, or record a prediction and compare against the arrival
+that followed. Until then no number here should be trusted to better than the
+factor of three above. Do NOT "fix" it by scaling the measurement to match the
+timetable; that is fitting observation to a placeholder.
+
 ## Done, and the rule each one established
 
 **Routefinding requires a real location.** The origin fell back to the middle of
