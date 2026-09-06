@@ -20,25 +20,43 @@ class FakeMap {
   sources = new Map<string, { data: unknown; setData: (d: unknown) => void }>();
   layers = new Set<string>();
 
-  // Layer-scoped handlers are kept apart from map-level ones, because
-  // MapLibre only calls m.on("click", "some-layer", fn) when the click
-  // actually lands on that layer. Lumping both under "click" made every layer
-  // handler fire on every map click, which is the opposite of the dispatch
-  // this component's long-press guard has to cope with.
+  /** Clicks in ONE list, in registration order, exactly as MapLibre keeps
+   *  them. Layer-scoped and map-level handlers share it; a layer's handler is
+   *  simply skipped when the click did not land on that layer.
+   *
+   *  Keeping them in separate buckets, and letting a test choose which bucket
+   *  to fire first, is what let the long-press guard pass while broken: the
+   *  map-level handler is registered at init and `routes-hit` later inside
+   *  drawRoutes, so in a real map the map-level one runs FIRST. */
+  clickOrder: { layer: string | null; fn: (e?: unknown) => void }[] = [];
+
   on(ev: string, a: unknown, b?: unknown) {
     const layer = typeof a === "string" ? a : null;
     const fn = (typeof a === "function" ? a : b) as (e?: unknown) => void;
     const key = layer ? `${ev}:${layer}` : ev;
     this.handlers.set(key, [...(this.handlers.get(key) ?? []), fn]);
+    if (ev === "click") this.clickOrder.push({ layer, fn });
   }
   once(ev: string, fn: (e?: unknown) => void) { this.on(ev, fn); }
   fire(ev: string, e?: unknown) {
     act(() => { for (const fn of this.handlers.get(ev) ?? []) fn(e); });
   }
-  /** A click that landed on `layer`. MapLibre runs these before the
-   *  map-level handler for the same click. */
   fireLayer(ev: string, layer: string, e?: unknown) {
     act(() => { for (const fn of this.handlers.get(`${ev}:${layer}`) ?? []) fn(e); });
+  }
+
+  /** One click, dispatched the way MapLibre dispatches it: every listener in
+   *  registration order, layer listeners skipped unless the click hit them.
+   *  `hit` also drives queryRenderedFeatures, so the component's own "what was
+   *  under the finger" check sees the same world the dispatch does. */
+  hit: string[] = [];
+  fireClick(e: unknown, hit: string[] = []) {
+    this.hit = hit;
+    act(() => {
+      for (const { layer, fn } of this.clickOrder)
+        if (layer === null || hit.includes(layer)) fn(e);
+    });
+    this.hit = [];
   }
 
   isStyleLoaded() { return true; }
@@ -62,7 +80,10 @@ class FakeMap {
   setFilter() {}
   setStyle() {}
   addControl() {}
-  queryRenderedFeatures() { return []; }
+  queryRenderedFeatures(_p?: unknown, opts?: { layers?: string[] }) {
+    const want = opts?.layers ?? [];
+    return want.some((l) => this.hit.includes(l)) ? [{ properties: {} }] : [];
+  }
   getCanvas() { return { style: {} }; }
   fitBounds() {}
   resize() {}
@@ -308,7 +329,11 @@ describe("TransitMap", () => {
       map.fire("click", at);
       expect(onDeselect).not.toHaveBeenCalled();       // and survives the release
 
-      // A plain tap afterwards must still deselect.
+      // A plain tap afterwards must still deselect. A tap is a whole gesture,
+      // not a bare click: the press flag is spent by the next mousedown, which
+      // is the only sequence a browser can actually produce.
+      map.fire("mousedown", at);
+      map.fire("mouseup", at);
       map.fire("click", at);
       expect(onDeselect).toHaveBeenCalledTimes(1);
     } finally {
@@ -338,13 +363,18 @@ describe("TransitMap", () => {
       act(() => { vi.advanceTimersByTime(600); });
       expect(onMapClick).toHaveBeenCalledTimes(1);
       map.fire("mouseup", at);
-      // The layer handler runs before the map-level one, on the same click.
-      map.fireLayer("click", "routes-hit", { ...at, features: [{ properties: { routeId: "A" } }] });
-      map.fire("click", at);
+      // ONE click, dispatched as MapLibre dispatches it. The map-level handler
+      // is registered at init and routes-hit later inside drawRoutes, so the
+      // map-level one runs FIRST -- and if it clears the flag, routes-hit then
+      // reads false and fires. That is the whole bug.
+      map.fireClick({ ...at, features: [{ properties: { routeId: "A" } }] }, ["routes-hit"]);
       expect(onRouteClick).not.toHaveBeenCalled();
 
-      // A plain tap on the line afterwards must still select it.
-      map.fireLayer("click", "routes-hit", { ...at, features: [{ properties: { routeId: "A" } }] });
+      // A plain tap on the line afterwards must still select it -- the guard
+      // has to be spent by the next press, not left latched on.
+      map.fire("mousedown", at);
+      map.fire("mouseup", at);
+      map.fireClick({ ...at, features: [{ properties: { routeId: "A" } }] }, ["routes-hit"]);
       expect(onRouteClick).toHaveBeenCalledWith("A");
     } finally {
       vi.useRealTimers();

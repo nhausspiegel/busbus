@@ -502,7 +502,13 @@ export function TransitMap({
 
     // Read the handler from a ref so changing it never tears down the map.
     m.on("click", (e) => {
-      if (pressHandled.current) { pressHandled.current = false; return; }
+      // Read, do NOT clear. MapLibre keeps every click listener in one array
+      // in registration order; this one is registered at init and routes-hit
+      // later inside drawRoutes, so this runs FIRST. Clearing here left the
+      // flag false by the time routes-hit read it, and a long press over a
+      // line dropped its pin AND opened the route page. The flag is spent by
+      // the next press instead, below.
+      if (pressHandled.current) return;
       // Ask what was actually hit rather than relying on preventDefault:
       // MapLibre dispatches the layer handler and this one independently, so
       // a tap on a stop was opening the stop card AND dropping a pin.
@@ -515,10 +521,12 @@ export function TransitMap({
     });
 
     m.on("mousedown", (e) => {
+      pressHandled.current = false;          // a new gesture; the last one is spent
       pressStart = { x: e.point.x, y: e.point.y };
       beginPress({ lat: e.lngLat.lat, lng: e.lngLat.lng });
     });
     m.on("touchstart", (e) => {
+      pressHandled.current = false;          // a new gesture; the last one is spent
       if (e.points.length !== 1) return;      // pinch, not a press
       pressStart = { x: e.point.x, y: e.point.y };
       beginPress({ lat: e.lngLat.lat, lng: e.lngLat.lng });
