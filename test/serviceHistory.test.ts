@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { emptyHistory, recordSample, bucketOf, observed, describeService, bestObserved,
-         describeAbsence } from "../src/data/serviceHistory";
+         describeAbsence, migrateBuckets } from "../src/data/serviceHistory";
 
 /**
  * The only honest way this app can say when service runs.
@@ -13,7 +13,7 @@ import { emptyHistory, recordSample, bucketOf, observed, describeService, bestOb
  *
  * Counted in DAYS, not samples. A recorder running every ten minutes puts six
  * samples in an hour, so "seen in 30 of 36 samples" says almost nothing a
- * rider can use, while "seen on 5 of the last 6 Fridays at this hour" is a
+ * rider can use, while "seen on 5 of the last 6 weekdays at this hour" is a
  * claim they can act on.
  */
 const FRI_14 = new Date("2026-08-28T18:20:00Z");   // Friday 2:20pm in Providence
@@ -22,8 +22,8 @@ describe("bucketOf", () => {
   it("buckets by weekday and hour in the rider's own timezone", () => {
     // UTC would smear the evening across two weekday buckets and put the
     // Evening routes on the wrong day for anyone reading them.
-    expect(bucketOf(FRI_14)).toBe("5-14");
-    expect(bucketOf(new Date("2026-08-29T01:30:00Z"))).toBe("5-21");  // still Friday locally
+    expect(bucketOf(FRI_14)).toBe("wd-14");
+    expect(bucketOf(new Date("2026-08-29T01:30:00Z"))).toBe("wd-21");  // still Friday locally
   });
 });
 
@@ -58,7 +58,9 @@ describe("recordSample", () => {
 
   it("says nothing about an hour it has never sampled", () => {
     const h = recordSample(emptyHistory("2026-08-28"), ["3302"], FRI_14);
-    expect(observed(h, "3302", new Date("2026-08-25T18:20:00Z"))).toEqual({ seen: 0, days: 0 });
+    // A different HOUR, not a different weekday: Tuesday 2pm and Friday 2pm
+    // now share a bucket by design, so the old probe no longer isolates one.
+    expect(observed(h, "3302", new Date("2026-08-28T12:20:00Z"))).toEqual({ seen: 0, days: 0 });
   });
 });
 
@@ -83,7 +85,7 @@ describe("describeService", () => {
   it("states the record and nothing more", () => {
     const s = describeService(build(3, 4), "3302", FRI_14)!;
     expect(s).toContain("3 of the 4");
-    expect(s).toContain("Fridays");
+    expect(s).toContain("weekdays");
     // No prediction, no "should", no schedule.
     expect(s).not.toMatch(/will|expect|scheduled|usually runs/i);
   });
@@ -100,8 +102,8 @@ describe("daylight saving", () => {
     // whatever the offset is doing. The cost is that the record thins out for
     // a week around the change, which is the right way round: better a thin
     // record than one that says 2pm and means 3pm.
-    expect(bucketOf(new Date("2023-11-07T22:13:20Z"))).toBe("2-17");
-    expect(bucketOf(new Date("2023-10-31T22:13:20Z"))).toBe("2-18");
+      expect(bucketOf(new Date("2023-11-07T22:13:20Z"))).toBe("wd-17");
+      expect(bucketOf(new Date("2023-10-31T22:13:20Z"))).toBe("wd-18");
   });
 });
 
@@ -231,5 +233,75 @@ describe("describeAbsence", () => {
       h = recordSample(h, [], new Date(`${d}T02:20:00Z`));
     const said = describeAbsence(h, ["3302"], SAT_22) ?? "";
     expect(said).not.toMatch(/will|won't|expect|scheduled|due|tonight|tomorrow/i);
+  });
+});
+
+/**
+ * Why the bucket is a day TYPE and not a weekday.
+ *
+ * Keyed on the weekday, a bucket can only gain one day per WEEK, so the
+ * three-day floor took three weeks to clear and the app said nothing about
+ * service for most of a month. Grouping Mon-Fri makes a weekday bucket gain
+ * five days a week and clears the same floor in under one -- with MORE
+ * evidence behind the sentence, not less.
+ *
+ * The assumption is that weekday service is uniform, which is how GTFS itself
+ * models it (calendar.txt carries a flag per weekday precisely because they
+ * usually agree). Saturday and Sunday stay separate, because they usually do
+ * not.
+ */
+describe("day-type buckets", () => {
+  const at = (iso: string) => new Date(iso);
+  const MON = at("2026-08-31T17:20:00Z");   // Monday 1:20pm local
+  const TUE = at("2026-09-01T17:20:00Z");
+  const WED = at("2026-09-02T17:20:00Z");
+  const SAT = at("2026-09-05T17:20:00Z");
+  const SUN = at("2026-09-06T17:20:00Z");
+
+  it("puts every weekday in one bucket, and each weekend day in its own", () => {
+    expect(bucketOf(MON)).toBe(bucketOf(TUE));
+    expect(bucketOf(TUE)).toBe(bucketOf(WED));
+    expect(bucketOf(SAT)).not.toBe(bucketOf(MON));
+    expect(bucketOf(SUN)).not.toBe(bucketOf(SAT));
+  });
+
+  it("reaches a usable record in days rather than weeks", () => {
+    let h = emptyHistory("2026-08-31");
+    for (const d of [MON, TUE, WED]) h = recordSample(h, ["3302"], d);
+    // Three consecutive weekdays, not three weeks.
+    expect(observed(h, "3302", WED)).toEqual({ seen: 3, days: 3 });
+    expect(describeService(h, "3302", WED)).toMatch(/3 of the 3 weekdays/);
+  });
+
+  it("does not let a weekday sighting speak for a Sunday", () => {
+    let h = emptyHistory("2026-08-31");
+    for (const d of [MON, TUE, WED]) h = recordSample(h, ["3302"], d);
+    expect(observed(h, "3302", SUN)).toEqual({ seen: 0, days: 0 });
+    expect(describeService(h, "3302", SUN)).toBeNull();
+  });
+});
+
+describe("migrateBuckets", () => {
+  it("folds a weekday-keyed record into day types without losing a day", () => {
+    // Distinct weekdays are distinct DATES, so the counts add exactly.
+    const old = {
+      since: "2026-08-01", updated: "2026-09-06T00:00:00Z",
+      days: { "1-13": { n: 2, last: "2026-09-01" },
+              "3-13": { n: 1, last: "2026-09-02" },
+              "6-13": { n: 4, last: "2026-09-05" } },
+      seen: { "3302": { "1-13": { n: 2, last: "2026-09-01" },
+                        "3-13": { n: 1, last: "2026-09-02" } } },
+    } as never;
+    const next = migrateBuckets(old);
+    expect(next.days["wd-13"]).toEqual({ n: 3, last: "2026-09-02" });
+    expect(next.days["sa-13"]).toEqual({ n: 4, last: "2026-09-05" });
+    expect(next.seen["3302"]!["wd-13"]).toEqual({ n: 3, last: "2026-09-02" });
+    expect(next.days["1-13"]).toBeUndefined();
+  });
+
+  it("leaves an already-migrated record alone", () => {
+    const cur = { since: "x", updated: "y",
+                  days: { "wd-13": { n: 5, last: "2026-09-04" } }, seen: {} } as never;
+    expect(migrateBuckets(cur).days).toEqual({ "wd-13": { n: 5, last: "2026-09-04" } });
   });
 });

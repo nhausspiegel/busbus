@@ -16,7 +16,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fetchVehicles } from "../src/data/vehicles";
 import { fetchLiveDepartures } from "../src/data/realtime";
 import { groupLiveTrips } from "../src/data/departures";
-import { emptyHistory, recordSample, type ServiceHistory } from "../src/data/serviceHistory";
+import { emptyHistory, recordSample, migrateBuckets, type ServiceHistory } from "../src/data/serviceHistory";
 import { recordLegs } from "../src/data/legTimes";
 
 const FILE = "public/service-history.json";
@@ -28,7 +28,7 @@ function load(today: string): ServiceHistory {
     // A file that does not have the shape we expect is not a reason to throw
     // away the record; it is a reason to stop and be looked at.
     if (!parsed?.days || !parsed?.seen) throw new Error("unrecognised history file");
-    return parsed;
+      return migrateBuckets(parsed);
   } catch (e) {
     throw new Error(`${FILE} exists but could not be read: ${(e as Error).message}`);
   }

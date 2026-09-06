@@ -19,8 +19,26 @@
  *  and file the Evening routes under the wrong day. */
 const ZONE = "America/New_York";
 
-/** One weekday-and-hour slot, as `<0-6>-<00-23>`. */
+/** One day-TYPE-and-hour slot, as `wd|sa|su` + `-<00-23>`.
+ *
+ *  Keyed on the weekday this was `<0-6>-<hh>`, and a bucket could then only
+ *  gain one day per WEEK -- so the three-day floor below took three weeks to
+ *  clear and the app said nothing about service for most of a month. Grouping
+ *  Mon-Fri makes a weekday bucket gain five days a week and clears the same
+ *  floor in under one, with MORE evidence behind the sentence rather than less.
+ *
+ *  The assumption is that weekday service is uniform. That is how GTFS itself
+ *  models it -- calendar.txt carries a flag per weekday precisely because they
+ *  usually agree -- and Saturday and Sunday stay separate, because they usually
+ *  do not. If Brown ever runs a Wednesday-only route this will read it as
+ *  "seen on 3 of the 15 weekdays", which is true but blunt; that is the trade,
+ *  and it is worth it against saying nothing at all for three weeks. */
 export type Bucket = string;
+
+/** `wd`, `sa` or `su` for a weekday index. */
+function dayType(dow: number): string {
+  return dow === 0 ? "su" : dow === 6 ? "sa" : "wd";
+}
 
 interface Tally {
   /** Distinct local dates counted into this bucket. */
@@ -78,7 +96,36 @@ function local(at: Date): { date: string; dow: number; hour: number } {
 
 export function bucketOf(at: Date): Bucket {
   const { dow, hour } = local(at);
-  return `${dow}-${String(hour).padStart(2, "0")}`;
+  return `${dayType(dow)}-${String(hour).padStart(2, "0")}`;
+}
+
+/**
+ * Fold a weekday-keyed record into day types.
+ *
+ * Called on load by both readers, so an existing record keeps every day it
+ * ever counted instead of starting from zero. The counts ADD exactly: a date
+ * has exactly one weekday, so no date can appear in two of the buckets being
+ * merged, and `n` is a count of distinct dates.
+ */
+export function migrateBuckets(history: ServiceHistory): ServiceHistory {
+  const isOld = (k: string) => /^[0-6]-\d{2}$/.test(k);
+  const fold = (rec: Record<Bucket, Tally>): Record<Bucket, Tally> => {
+    if (!Object.keys(rec).some(isOld)) return rec;
+    const out: Record<Bucket, Tally> = {};
+    for (const [k, t] of Object.entries(rec)) {
+      const key = isOld(k)
+        ? `${dayType(Number(k.split("-")[0]))}-${k.split("-")[1]}`
+        : k;
+      const prev = out[key];
+      out[key] = prev
+        ? { n: prev.n + t.n, last: prev.last > t.last ? prev.last : t.last }
+        : { ...t };
+    }
+    return out;
+  };
+  const seen: Record<string, Record<Bucket, Tally>> = {};
+  for (const [routeId, rec] of Object.entries(history.seen)) seen[routeId] = fold(rec);
+  return { ...history, days: fold(history.days), seen };
 }
 
 /** Count one date into a tally, but only once per date. */
@@ -128,8 +175,8 @@ export function observed(
  *  as a schedule -- the exact mistake this exists to avoid. */
 const MIN_DAYS = 3;
 
-const WEEKDAYS = ["Sundays", "Mondays", "Tuesdays", "Wednesdays",
-                  "Thursdays", "Fridays", "Saturdays"];
+/** How to name a day-type bucket in a sentence. */
+const DAY_LABEL: Record<string, string> = { wd: "weekdays", sa: "Saturdays", su: "Sundays" };
 
 /**
  * What was actually seen, in a sentence, or null when too little is known.
@@ -143,8 +190,8 @@ export function describeService(
 ): string | null {
   const { seen, days } = observed(history, routeId, at);
   if (days < MIN_DAYS) return null;
-  const dow = Number(bucketOf(at).split("-")[0]);
-  return `Seen running around this time on ${seen} of the ${days} ${WEEKDAYS[dow]} watched so far.`;
+  const label = DAY_LABEL[bucketOf(at).split("-")[0]!] ?? "days";
+  return `Seen running around this time on ${seen} of the ${days} ${label} watched so far.`;
 }
 
 /**
@@ -162,7 +209,7 @@ export function describeService(
 export function describeAbsence(
   history: ServiceHistory, routeIds: string[], at: Date,
 ): string | null {
-  const dow = Number(bucketOf(at).split("-")[0]);
+  const label = DAY_LABEL[bucketOf(at).split("-")[0]!] ?? "days";
   let watched = 0;
   for (const routeId of routeIds) {
     const { seen, days } = observed(history, routeId, at);
@@ -171,7 +218,7 @@ export function describeAbsence(
   }
   if (watched < MIN_DAYS) return null;
   return `No shuttle has been seen running around this time on any of the `
-       + `${watched} ${WEEKDAYS[dow]} watched so far.`;
+       + `${watched} ${label} watched so far.`;
 }
 
 /** The record the site publishes, or null when there is not one to read.

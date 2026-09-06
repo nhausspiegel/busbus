@@ -358,6 +358,20 @@ Refresh with `scripts/refresh-fixtures.sh`, then re-true whatever asserts
 against it. Not done blind: refreshing changes what several tests see, and that
 diff wants reading rather than accepting.
 
+### 28. GitHub skips most of the recorder's scheduled runs
+
+`record-service.yml` is `cron: "*/15 * * * *"` -- 96 runs a day, so every
+hour-of-day slot should be hit every day. Measured 2026-09-06 over the first 8
+days: only 57 of 168 weekday-hour slots were EVER sampled. GitHub drops
+scheduled workflow runs under load and makes no promise about them.
+
+This is now the binding constraint on how fast the observed-service record
+becomes usable -- more than MIN_DAYS or the bucket width, both of which have
+been addressed. Nothing here is a code defect. Options if it matters: accept
+slower coverage, or move the recorder somewhere with a real scheduler. Do not
+"fix" it by lowering MIN_DAYS; that trades honesty for speed, which is the one
+trade this file exists to refuse.
+
 ## Done, and the rule each one established
 
 **Routefinding requires a real location.** The origin fell back to the middle of
