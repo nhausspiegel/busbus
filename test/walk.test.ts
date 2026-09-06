@@ -329,7 +329,7 @@ describe("walkMatrixMulti says when it fell back to an estimate", () => {
   it("reports measured when a router answers", async () => {
     globalThis.fetch = (async () => ({
       ok: true, status: 200,
-      json: async () => ({ durations: [[123]] }),
+      json: async () => ({ sources_to_targets: [[{ time: 123 }]] }),
     })) as never;
     const got = await walkMatrixMulti([A], [B]);
     expect(got.estimated).toBe(false);
@@ -342,5 +342,92 @@ describe("walkMatrixMulti says when it fell back to an estimate", () => {
     expect(got.estimated).toBe(true);
     // Still answers, so trips can be ranked rather than the rider shown nothing.
     expect(got.rows[0]![0]).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Which router is asked FIRST for a matrix, and why it matters.
+ *
+ * Measured 2026-09-06 against both live instances, same 2-source matrix:
+ *
+ *     targets        4       8      16      22
+ *     OSRM table   8788ms  8809ms  8801ms  8816ms   (3 repeats: 8800/8798/8807)
+ *     Valhalla      588ms   146ms   137ms   232ms   (3 repeats:  179/149/148)
+ *
+ * OSRM's time is FLAT in the number of targets, so it is a server-side throttle
+ * on the table service rather than the size of the question. It is not failing
+ * -- it answers 200 -- so no fallback rule catches it, and route calculation
+ * took the better part of ten seconds because the app asked the slow one first
+ * and the fast one only on error.
+ */
+describe("the walk matrix asks the fast router first", () => {
+  const original = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = original; resetValhalla(); });
+
+  const A = { lat: 41.826, lng: -71.400 };
+  const B = { lat: 41.830, lng: -71.405 };
+
+  const record = () => {
+    const hits: string[] = [];
+    globalThis.fetch = (async (u: unknown) => {
+      hits.push(String((u as { url?: string })?.url ?? u));
+      return { ok: true, status: 200,
+               json: async () => ({ sources_to_targets: [[{ time: 111 }]] }) };
+    }) as never;
+    return hits;
+  };
+
+  it("goes to Valhalla before OSRM", async () => {
+    const hits = record();
+    const got = await walkMatrixMulti([A], [B]);
+    expect(hits[0]).toMatch(/valhalla/i);
+    expect(got.rows[0]![0]).toBe(111);
+    expect(got.estimated).toBe(false);
+  });
+
+  it("does not touch OSRM at all when Valhalla answers", async () => {
+    const hits = record();
+    await walkMatrixMulti([A], [B]);
+    expect(hits.some((h) => /routed-foot|osrm/i.test(h))).toBe(false);
+  });
+
+  it("still falls back to OSRM when Valhalla fails", async () => {
+    // The two-router rule stands: one host going down must not take directions
+    // with it. That is why Valhalla is not simply swapped in as the only one.
+    const hits: string[] = [];
+    globalThis.fetch = (async (u: unknown) => {
+      const url = String((u as { url?: string })?.url ?? u);
+      hits.push(url);
+      if (/valhalla/i.test(url)) throw new TypeError("Failed to fetch");
+      return { ok: true, status: 200, json: async () => ({ durations: [[222]] }) };
+    }) as never;
+    const got = await walkMatrixMulti([A], [B]);
+    expect(hits[0]).toMatch(/valhalla/i);
+    expect(hits.some((h) => /routed-foot/i.test(h))).toBe(true);
+    expect(got.rows[0]![0]).toBe(222);
+    expect(got.estimated).toBe(false);
+  });
+});
+
+describe("a router that answers 200 with nothing usable", () => {
+  const original = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = original; resetValhalla(); });
+
+  it("falls through to the other router instead of answering with nulls", async () => {
+    // The failure that started all this was a router SUCCEEDING uselessly, not
+    // failing. An empty 200 used to produce a matrix of nulls, which leaves the
+    // planner with no walking times and hands the rider a walk with no
+    // explanation -- indistinguishable, from the outside, from "no bus".
+    const hits: string[] = [];
+    globalThis.fetch = (async (u: unknown) => {
+      const url = String((u as { url?: string })?.url ?? u);
+      hits.push(url);
+      if (/valhalla/i.test(url)) return { ok: true, status: 200, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ durations: [[321]] }) };
+    }) as never;
+    const got = await walkMatrixMulti([{ lat: 41.826, lng: -71.4 }], [{ lat: 41.83, lng: -71.405 }]);
+    expect(hits.some((h) => /routed-foot/i.test(h))).toBe(true);
+    expect(got.rows[0]![0]).toBe(321);
+    expect(got.estimated).toBe(false);
   });
 });

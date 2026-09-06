@@ -156,11 +156,27 @@ export function nearestStops(from: LatLng, stops: Stop[], k: number): Stop[] {
 
 /** Walking seconds for every source/target pair, in a single request.
  *
- *  Valhalla here is FOSSGIS's community instance. Firing three parallel
- *  requests per search got them throttled, and a throttled response carries no
- *  CORS headers, so the browser reports it as a CORS failure rather than a rate
- *  limit -- which is a genuinely confusing way to learn you are being rude.
- *  One request answers the whole search. */
+ *  VALHALLA FIRST for the matrix, OSRM second. Measured 2026-09-06 against both
+ *  live instances with the same 2-source matrix:
+ *
+ *      targets        4       8      16      22
+ *      OSRM table   8788ms  8809ms  8801ms  8816ms
+ *      Valhalla      588ms   146ms   137ms   232ms
+ *
+ *  OSRM's time is FLAT in the number of targets, so that is a throttle on its
+ *  table service, not the size of the question -- trimming candidate stops buys
+ *  nothing, which was the obvious guess and was measured before being dropped.
+ *  Critically it does not FAIL, it answers 200 slowly, so the existing fallback
+ *  never fired and route calculation took the better part of ten seconds.
+ *
+ *  This is the order for the MATRIX only. `walkRoute` below still asks OSRM
+ *  first, where it answers a single path in ~375ms. Both routers stay in play
+ *  either way: valhalla1.openstreetmap.de once accepted connections and never
+ *  replied for 20s, and this app is not allowed to rest on one host.
+ *
+ *  Firing three parallel requests per search got FOSSGIS to throttle us, and a
+ *  throttled response carries no CORS headers, so the browser reports it as a
+ *  CORS failure rather than a rate limit. One request answers the whole search. */
 export interface WalkMatrix {
   rows: (number | null)[][];
   /** True when BOTH routers were unreachable and these came from a
@@ -179,37 +195,44 @@ export async function walkMatrixMulti(
   const srcIdx = sources.map((_, i) => i).join(";");
   const dstIdx = targets.map((_, i) => sources.length + i).join(";");
   try {
-    const data = await ask(
-      `${OSRM_FOOT}/table/v1/driving/${coords}?sources=${srcIdx}&destinations=${dstIdx}`,
-    ) as { durations?: (number | null)[][] };
-    const rows = data?.durations ?? [];
-    return { estimated: false, rows: sources.map((_, i) =>
-      targets.map((__, j) => {
-        const t = rows[i]?.[j];
-        return typeof t === "number" ? t : null;
-      })) };
-  } catch {
-    // Fall through to the other router rather than giving up on the question.
-  }
-  try {
     const data = await ask(`${VALHALLA}/sources_to_targets`, {
       sources: sources.map((p) => ({ lat: p.lat, lon: p.lng })),
       targets: targets.map((p) => ({ lat: p.lat, lon: p.lng })),
       costing: "pedestrian",
     }) as { sources_to_targets?: { time?: number }[][] };
     const rows = data?.sources_to_targets ?? [];
-    return { estimated: false, rows: sources.map((_, i) =>
+    const out = sources.map((_, i) =>
       targets.map((__, j) => {
         const t = rows[i]?.[j]?.time;
         return typeof t === "number" ? t : null;
-      })) };
+      }));
+    // A 200 carrying no usable numbers is not an answer. Returning nulls here
+    // would leave the planner with no walking times and hand the rider a walk,
+    // silently -- the same "succeeds uselessly" failure that let a slow OSRM go
+    // unnoticed for weeks. Fall through to the other router instead.
+    if (out.some((row) => row.some((t) => t !== null))) return { estimated: false, rows: out };
   } catch {
-    // Both routers are unreachable at once. Rank the trips on an estimate
-    // rather than showing the rider nothing -- this only affects which
-    // itinerary sorts first, and no line is ever drawn from it.
-    return { estimated: true,
-             rows: sources.map((a) => targets.map((b) => estimateSeconds(a, b))) };
+    // Fall through to the other router rather than giving up on the question.
   }
+  try {
+    const data = await ask(
+      `${OSRM_FOOT}/table/v1/driving/${coords}?sources=${srcIdx}&destinations=${dstIdx}`,
+    ) as { durations?: (number | null)[][] };
+    const rows = data?.durations ?? [];
+    const out = sources.map((_, i) =>
+      targets.map((__, j) => {
+        const t = rows[i]?.[j];
+        return typeof t === "number" ? t : null;
+      }));
+    if (out.some((row) => row.some((t) => t !== null))) return { estimated: false, rows: out };
+  } catch {
+    // fall through to the estimate below
+  }
+  // Neither router gave a usable answer -- unreachable, or a 200 with nothing
+  // in it. Rank the trips on an estimate rather than showing the rider nothing;
+  // the itinerary carries `walkEstimated` so the list says so.
+  return { estimated: true,
+           rows: sources.map((a) => targets.map((b) => estimateSeconds(a, b))) };
 }
 
 
