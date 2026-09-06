@@ -949,6 +949,16 @@ export function TransitMap({
       if (m.getLayer("routes-case"))
         m.setPaintProperty("routes-case", "line-opacity", selection ? 0.3 : 0.9);
       apply("stops", stopPaint(st));
+      // stopPaint carries a base circle-radius and the tween writes an animated
+      // one, so both owned the property and whichever effect ran last won. This
+      // effect re-runs on every bus poll, so a poll landing inside the 240ms
+      // tween stamped the base size over it and the dot snapped. Re-assert the
+      // tween's current value here and selectedRadius is the single owner, as
+      // the note above it has always claimed.
+      if (m.getLayer("stops"))
+        m.setPaintProperty("stops", "circle-radius",
+          selectedRadius(stopTarget ?? lastFocus.current, growRef.current,
+                         rideEnds(overlayRef.current, stationRep)));
       apply("stops-base", stopBasePaint(st));
       apply("station-tick", tickPaint(st, false));
       apply("station-tick-case", tickPaint(st, true));
@@ -988,10 +998,17 @@ export function TransitMap({
   // marker attempt fought MapLibre for the element's `transform` -- the same
   // failure that once laid the bus markers out in document flow. A tween that
   // writes the radius every frame is a thing that can be watched happening.
+  // Keyed on the stop ID, not on `selection`. App builds that object fresh on
+  // every render and the whole app re-renders every ten seconds on the bus
+  // poll, so keyed on the object this tore the tween down and started it again
+  // from zero -- with a stop card open the dot visibly shrank and re-grew every
+  // ten seconds. Fixed here rather than by memoising in App, so no caller can
+  // reintroduce it by passing a literal.
+  const stopTarget = selection?.kind === "stop" ? selection.id : null;
   useEffect(() => {
     const m = map.current;
     if (!m || !ready) return;
-    const target = selection?.kind === "stop" ? selection.id : null;
+    const target = stopTarget;
     // Nothing selected and nothing to shrink back: do not ask for frames at
     // all. An animation loop that runs when there is nothing to animate is
     // just a battery drain with a timer attached.
@@ -1021,7 +1038,7 @@ export function TransitMap({
     raf = requestAnimationFrame(step);
     if (target) lastFocus.current = target;
     return () => cancelAnimationFrame(raf);
-  }, [selection, ready]);
+  }, [stopTarget, ready]);
 
   // Frame a selected route the same way. Picking a route used to leave the
   // camera wherever it was, so most of the line sat behind the sheet and the

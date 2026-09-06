@@ -644,6 +644,31 @@ describe("selecting a stop grows the dot instead of jumping", () => {
     expect(middle).toBeLessThan(last);
   });
 
+  it("keeps tweening when the parent re-renders with an equal selection", () => {
+    // App builds `selection` as a fresh object literal and the whole app
+    // re-renders every ten seconds on the bus poll. Keyed on the OBJECT, the
+    // effect tore the tween down and started it again from zero, so with a
+    // stop card open the dot visibly shrank and re-grew every ten seconds.
+    const r = render(<TransitMap {...props} selection={null} />);
+    map.fire("load");
+    act(() => { r.rerender(<TransitMap {...props} selection={{ kind: "stop", id: "s1" }} />); });
+    tick(0);
+    tick(120);                                  // half of SELECT_MS
+    const midway = selectedAt16();
+    expect(midway).toBeGreaterThan(4.5);        // genuinely mid-tween
+
+    // A NEW object carrying the SAME value -- exactly what the poll produces.
+    act(() => { r.rerender(<TransitMap {...props} selection={{ kind: "stop", id: "s1" }} />); });
+    // tick() takes an ABSOLUTE timestamp, so the clock has to keep moving --
+    // ticking 0 again would rewind it and fail for a reason that is not the bug.
+    tick(130);
+    // The dot must never travel backwards. A restarted tween measures from
+    // this frame, so k returns to 0 and the dot snaps back to 4.5.
+    expect(selectedAt16()).toBeGreaterThanOrEqual(midway);
+    settle(240);
+    expect(selectedAt16()).toBeCloseTo(6.5, 1);
+  });
+
   it("shrinks back when the selection is cleared", () => {
     const r = render(<TransitMap {...props} selection={{ kind: "stop", id: "s1" }} />);
     map.fire("load");
