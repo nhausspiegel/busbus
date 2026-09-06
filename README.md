@@ -434,7 +434,7 @@ The app answers one question: **given where I am and where I'm going, which shut
 
 ```bash
 npm install
-npx tsx scripts/plan-demo.ts                          # John Hay -> South St Landing
+npx tsx scripts/plan-demo.ts                          # Address J <-> Trader Joe's
 npx tsx scripts/plan-demo.ts 41.8315,-71.4020 41.8243,-71.4005   # any two points
 ```
 
@@ -504,7 +504,7 @@ distance estimate so trips can still be ranked — no line is ever drawn from it
 npm test
 ```
 
-339 tests, no network — everything runs against frozen fixtures in `test/fixtures/`. To re-freeze after Passio changes its data:
+384 tests, no network — everything runs against frozen fixtures in `test/fixtures/`. To re-freeze after Passio changes its data:
 
 ```bash
 ./scripts/refresh-fixtures.sh

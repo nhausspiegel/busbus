@@ -112,7 +112,7 @@ src/ui/
   DebugMap.tsx    raw-data view at ?debug=1
 ```
 
-**344 tests**, `npm test`, all offline. jsdom component tests exist
+**384 tests**, `npm test`, all offline. jsdom component tests exist
 (`test/Sheet.test.tsx`, `test/Itineraries.test.tsx`) — note the
 `/** @vitest-environment jsdom */` docblock and that the sheet is a fixed side
 panel above 820px, so those tests pin a 390px viewport.
@@ -302,7 +302,7 @@ rebuild described in `docs/RENDERING.md`.
 
 ```bash
 npm run dev                       # http://localhost:5173
-npm test                          # 344 tests, offline
+npm test                          # 384 tests, offline
 npx tsc -b --noEmit
 npx tsx scripts/plan-demo.ts      # Address J <-> Trader Joe's, both ways
 ./.venv/bin/python busbus.py      # is Passio itself healthy?
