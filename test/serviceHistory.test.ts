@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { emptyHistory, recordSample, bucketOf, observed, describeService, bestObserved } from "../src/data/serviceHistory";
+import { emptyHistory, recordSample, bucketOf, observed, describeService, bestObserved,
+         describeAbsence } from "../src/data/serviceHistory";
 
 /**
  * The only honest way this app can say when service runs.
@@ -178,5 +179,57 @@ describe("bestObserved", () => {
 
   it("reports a route never seen, which is the useful answer too", () => {
     expect(bestObserved(build(), ["Z"], FRI_14)).toEqual({ routeId: "Z", seen: 0, days: 4 });
+  });
+});
+
+/** The inverse claim, and the harder one to make honestly.
+ *
+ *  A rider handed a walk deserves to know WHY. The record can say it: if
+ *  nothing has ever been seen at this hour across enough days, that is an
+ *  observation, in days, in the past tense -- the same standard as every other
+ *  sentence this file produces. What it must never do is turn silence into a
+ *  claim: too few days watched, or any sighting at all, and it says nothing.
+ */
+describe("describeAbsence", () => {
+  const SAT_22 = new Date("2026-09-06T02:20:00Z");   // Saturday 10:20pm locally
+
+  it("says nothing until enough days have been watched", () => {
+    let h = emptyHistory("2026-08-29");
+    h = recordSample(h, [], new Date("2026-08-30T02:20:00Z"));
+    h = recordSample(h, [], SAT_22);
+    expect(describeAbsence(h, ["3302"], SAT_22)).toBeNull();   // two Saturdays is not a record
+  });
+
+  it("reports the hours nothing was ever seen, once there is a record", () => {
+    let h = emptyHistory("2026-08-01");
+    for (const d of ["2026-08-09", "2026-08-16", "2026-08-23", "2026-09-06"])
+      h = recordSample(h, [], new Date(`${d}T02:20:00Z`));     // watched, nothing running
+    const said = describeAbsence(h, ["3302"], SAT_22);
+    expect(said).toMatch(/Saturdays/);
+    expect(said).toMatch(/\b4\b/);
+    expect(said).toMatch(/seen/i);
+  });
+
+  it("says nothing when the route HAS been seen at this hour", () => {
+    let h = emptyHistory("2026-08-01");
+    for (const d of ["2026-08-09", "2026-08-16", "2026-08-23"])
+      h = recordSample(h, ["3302"], new Date(`${d}T02:20:00Z`));
+    expect(describeAbsence(h, ["3302"], SAT_22)).toBeNull();
+  });
+
+  it("says nothing when ANY of the routes has been seen", () => {
+    // One running shuttle is enough to make "nothing runs now" false.
+    let h = emptyHistory("2026-08-01");
+    for (const d of ["2026-08-09", "2026-08-16", "2026-08-23"])
+      h = recordSample(h, ["62487"], new Date(`${d}T02:20:00Z`));
+    expect(describeAbsence(h, ["3302", "62487"], SAT_22)).toBeNull();
+  });
+
+  it("never claims anything about the future", () => {
+    let h = emptyHistory("2026-08-01");
+    for (const d of ["2026-08-09", "2026-08-16", "2026-08-23"])
+      h = recordSample(h, [], new Date(`${d}T02:20:00Z`));
+    const said = describeAbsence(h, ["3302"], SAT_22) ?? "";
+    expect(said).not.toMatch(/will|won't|expect|scheduled|due|tonight|tomorrow/i);
   });
 });

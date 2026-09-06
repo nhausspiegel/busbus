@@ -11,7 +11,7 @@ import { StopCard } from "./StopCard";
 import { AlertBanner } from "./AlertBanner";
 import { fetchAlerts, type Alert } from "../data/alerts";
 import { fetchStaticFeed } from "../data/gtfs";
-import { fetchServiceHistory, type ServiceHistory } from "../data/serviceHistory";
+import { fetchServiceHistory, describeAbsence, type ServiceHistory } from "../data/serviceHistory";
 import { legSeconds } from "../data/legTimes";
 import { fetchLiveDepartures } from "../data/realtime";
 import { fetchVehicles, type Bus } from "../data/vehicles";
@@ -597,6 +597,24 @@ export default function App() {
                 {board.size === 0
                   ? "No shuttle anywhere is reporting a position right now, so there is nothing to plan a ride with."
                   : "No reporting shuttle gets you there, and it is too far to walk."}
+              </p>
+            )}
+            {/* And WHY, when the record can say so. A rider handed a walk was
+                told only that nothing is reporting, which reads as a fault in
+                the app rather than the hour. This is the one explanation the
+                non-negotiable permits: not that nothing WILL run, but that
+                across enough watched days nothing ever HAS at this time.
+                Silent below three days, and silent the moment any of these
+                routes has been seen -- one running shuttle makes it false. */}
+            {!pickingWhen && !planning && history
+              && (itineraries?.length === 0
+                  || (itineraries !== null && itineraries.length > 0
+                      && itineraries.every((i) => i.rides.length === 0)))
+              && describeAbsence(history, [...(feed?.activeRouteIds ?? ACTIVE)],
+                                 new Date(planNow * 1000)) && (
+              <p style={{ color: "var(--muted)", fontSize: 13, margin: "10px 0 0" }}>
+                {describeAbsence(history, [...(feed?.activeRouteIds ?? ACTIVE)],
+                                 new Date(planNow * 1000))}
               </p>
             )}
             {!pickingWhen && itineraries && itineraries.length > 0 && (

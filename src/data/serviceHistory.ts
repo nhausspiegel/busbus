@@ -147,6 +147,33 @@ export function describeService(
   return `Seen running around this time on ${seen} of the ${days} ${WEEKDAYS[dow]} watched so far.`;
 }
 
+/**
+ * Why there is no bus, when the record can actually say.
+ *
+ * A rider handed a walk is owed the reason, and this is the only one the app
+ * is allowed to give: not that nothing WILL run, but that across enough days
+ * of watching, nothing ever HAS at this hour. Same standard as every other
+ * sentence here -- observed, counted in days, past tense.
+ *
+ * Silent in the two cases where it would be overclaiming: too few days
+ * watched, and any sighting at all on any of the routes offered. One running
+ * shuttle makes "nothing runs now" false.
+ */
+export function describeAbsence(
+  history: ServiceHistory, routeIds: string[], at: Date,
+): string | null {
+  const dow = Number(bucketOf(at).split("-")[0]);
+  let watched = 0;
+  for (const routeId of routeIds) {
+    const { seen, days } = observed(history, routeId, at);
+    if (seen > 0) return null;
+    if (days > watched) watched = days;
+  }
+  if (watched < MIN_DAYS) return null;
+  return `No shuttle has been seen running around this time on any of the `
+       + `${watched} ${WEEKDAYS[dow]} watched so far.`;
+}
+
 /** The record the site publishes, or null when there is not one to read.
  *  Never throws: a missing record just means the app says nothing about when
  *  service has run, which is where it started. */
