@@ -27,6 +27,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { parseStaticFeed } from "../src/data/gtfs";
 import { parseRoutePaths, fillMissingShapes } from "../src/data/routePaths";
 import type { LatLng } from "../src/data/types";
+import { FALLBACK_ACTIVE_ROUTES } from "../src/data/routePaths";
 
 /** Drivable ways only. A bus is never on a footway, and letting paths in is how
  *  a route gets snapped onto a pedestrian cut-through beside the road. */
@@ -34,7 +35,7 @@ const DRIVABLE = "motorway|trunk|primary|secondary|tertiary|unclassified|"
   + "residential|living_street|service|busway|"
   + "motorway_link|trunk_link|primary_link|secondary_link|tertiary_link";
 
-const ACTIVE = new Set(["3302", "3469", "3470", "22427", "62487"]);
+const ACTIVE = FALLBACK_ACTIVE_ROUTES;
 
 /** Trace resampling. Only sets how often the road is sampled; it does not enter
  *  the output geometry, which is the road's own nodes. */

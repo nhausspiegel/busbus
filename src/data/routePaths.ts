@@ -154,6 +154,17 @@ export function withRouteStops(feed: StaticFeed, served: Map<string, string[]>):
  * An empty set means "could not tell", not "nothing is running": the caller
  * keeps its own fallback, because blanking the map is the worse failure.
  */
+/**
+ * The routes to draw when Passio's exclusion list could not be fetched.
+ *
+ * A FALLBACK, never the answer -- parseActiveRoutes() below is. It exists
+ * because blanking the map is the worse failure. Written down HERE, once,
+ * because it was written down twice (App and the snapper) with no way for the
+ * two copies to disagree loudly, which is how a hardcoded list survives the
+ * function that was written to abolish it.
+ */
+export const FALLBACK_ACTIVE_ROUTES = new Set(["3302", "3469", "3470", "22427", "62487"]);
+
 export function parseActiveRoutes(payload: unknown): Set<string> {
   const p = payload as { routes?: Record<string, unknown>; excludedRoutesID?: unknown[] };
   const all = Object.keys(p?.routes ?? {});

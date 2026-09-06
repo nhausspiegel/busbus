@@ -11,6 +11,7 @@ import { StopCard } from "./StopCard";
 import { AlertBanner } from "./AlertBanner";
 import { fetchAlerts, type Alert } from "../data/alerts";
 import { fetchStaticFeed } from "../data/gtfs";
+import { FALLBACK_ACTIVE_ROUTES } from "../data/routePaths";
 import { fetchServiceHistory, describeAbsence, type ServiceHistory } from "../data/serviceHistory";
 import { legSeconds } from "../data/legTimes";
 import { fetchLiveDepartures } from "../data/realtime";
@@ -26,10 +27,9 @@ import type { StaticFeed, DepartureBoard, Departure, LatLng, Itinerary } from ".
 
 /** Routes Passio lists as not archived. GTFS ships every route Brown ever
  *  configured, including two with no trips at all. */
-/** Fallback only. The live answer comes from Passio's own exclusion list via
- *  feed.activeRouteIds; this is what to draw when that could not be fetched,
- *  since blanking the map is the worse failure. */
-const ACTIVE = new Set(["3302", "3469", "3470", "22427", "62487"]);
+/** Fallback only; the live answer is feed.activeRouteIds. Defined in
+ *  routePaths.ts beside the function that derives the real list. */
+const ACTIVE = FALLBACK_ACTIVE_ROUTES;
 const VEHICLE_POLL_MS = 10_000;
 const BOARD_POLL_MS = 30_000;
 

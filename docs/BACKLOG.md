@@ -339,6 +339,21 @@ Minor, pre-existing, spotted while verifying the search rebuild. With a
 destination set the sheet shows "To Faunce Arch" in the search bar and
 "TO FAUNCE ARCH" as an eyebrow directly beneath it.
 
+### 27. `test/fixtures/route-paths.json` is a stale capture
+
+It carries 4 routes; the live `getStops=2` payload has 8 (measured 2026-09-06:
+excludedRoutesID `[-1, 72922, 72923, 72924]`, leaving 22427, 3302, 3469, 3470,
+62487 -- which is exactly `FALLBACK_ACTIVE_ROUTES`, so the fallback is right).
+
+Consequences: any test comparing derived state against the real network is
+measuring a subset, and a measurement taken FROM this fixture will understate
+things. It already misled one -- counting the Express's stops from it gives 9
+against a fixture that does not carry two of the active routes at all.
+
+Refresh with `scripts/refresh-fixtures.sh`, then re-true whatever asserts
+against it. Not done blind: refreshing changes what several tests see, and that
+diff wants reading rather than accepting.
+
 ## Done, and the rule each one established
 
 **Routefinding requires a real location.** The origin fell back to the middle of

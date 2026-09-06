@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { parseStaticFeed } from "../src/data/gtfs";
 import { parseRoutePaths, fillMissingShapes, parseRouteStops, withRouteStops, parseActiveRoutes } from "../src/data/routePaths";
 import { stations, stopRoutes, routeStops } from "../src/routing/routeDetail";
+import { FALLBACK_ACTIVE_ROUTES } from "../src/data/routePaths";
 import { haversineMeters } from "../src/routing/walk";
 
 /**
@@ -166,5 +167,20 @@ describe("which routes are running at all", () => {
     // this must be distinguishable from "nothing is running".
     expect(parseActiveRoutes(null).size).toBe(0);
     expect(parseActiveRoutes({}).size).toBe(0);
+  });
+});
+
+describe("the fallback active-route list", () => {
+  it("is the five routes, written down once", () => {
+    // A guard against an accidental edit, and nothing more. It deliberately
+    // does NOT compare against parseActiveRoutes(payload): the fixture is a
+    // stale capture carrying 4 routes where the live payload has 8, so that
+    // comparison fails for a reason that is not the fallback being wrong.
+    //
+    // Verified against the LIVE payload 2026-09-06: 8 routes, excludedRoutesID
+    // [-1, 72922, 72923, 72924], leaving exactly these five. Re-check by hand
+    // when the map looks wrong, or refresh the fixture (backlog 27).
+    expect([...FALLBACK_ACTIVE_ROUTES].sort())
+      .toEqual(["22427", "3302", "3469", "3470", "62487"]);
   });
 });
