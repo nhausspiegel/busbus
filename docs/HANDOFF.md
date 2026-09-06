@@ -60,6 +60,14 @@ Standing instructions given across the session:
 
 ## 3. What exists
 
+**Branches (2026-09-06).** `main` is trunk and is what Pages serves.
+`render-tuning-wip` is one parked commit of UNVERIFIED rendering -- lane tuner,
+sharp-corner splitting, station bead placement -- rebased onto main, tsc clean,
+413 tests. Look at it before merging it. `render-node`, `node-render` and
+`push-verify` were deleted 2026-09-06: the first was identical to main, the
+other two fully contained in it.
+
+
 Objectives 1 and 2 (routefinding, transfers) are **done and correct**.
 Objective 3 (Apple-Maps-quality UI) is **mostly built but the map rendering is
 not right**.

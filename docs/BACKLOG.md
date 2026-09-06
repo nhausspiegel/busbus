@@ -7,7 +7,15 @@ compaction: everything needed to act is here or named by file.
 with, and the approaches already ruled out, which is what stops the next
 session repeating them.
 
-Last trued against the code on **2026-08-31**.
+Last trued against the code on **2026-09-06**.
+
+**Branches, as of that date.** `main` is trunk and is what GitHub Pages serves;
+it is current. `render-tuning-wip` carries one commit -- the lane tuner,
+sharp-corner splitting and station bead placement -- rebased onto main
+2026-09-06, tsc clean, 413 tests passing. It is UNVERIFIED RENDERING and is
+parked deliberately: check it out to look at it, do not merge it blind.
+`render-node`, `node-render` and `push-verify` are deleted; the first was
+identical to main and the other two were fully contained in it.
 
 For how route lines are drawn, read `docs/RENDERING.md` first.
 
@@ -77,10 +85,10 @@ from Hillel House to Dyer & Hay is covered. Route 62487 has 13 usable of 27. The
 Stadium Loop still has none.
 
 Caveat before trusting a duration from this: `e4e7da1` made sampling per-trip so
-fifteen-minute polls stop inflating counts, and it is on `render-node`, NOT
-deployed. The live record has no `legTrips` key, so those twenties are poll
-counts. The floor is being cleared by a metric this project has already called
-dishonest. Deploy that first.
+fifteen-minute polls stop inflating counts, is now DEPLOYED (2026-09-06).
+Samples recorded before that are still poll counts -- the twenties in the live
+record are not twenty separate buses -- and they age out of the rolling
+20-sample window as real ones arrive.
 
 Known asymmetry while that lands: `transfers.ts` builds the FIRST leg from
 `trip1.stops` directly, so a route whose GTFS trip omits its stops can be the
@@ -88,16 +96,12 @@ second leg of a transfer but never the first. Left alone deliberately —
 transfers are secondary, the direct path covers the Express, and fixing it means
 duplicating the observed-leg walk into another code path.
 
-### 4. The active-route list is still hardcoded, in two places
+### 4. DONE — the fallback route list is written down once
 
-`parseActiveRoutes()` (`src/data/routePaths.ts:143-157`) derives the running
-routes from `routes` minus `excludedRoutesID`, and was written specifically to
-abolish the hardcoded list. The list is still written down twice:
-`scripts/snap-to-streets.ts:37` and `src/ui/App.tsx:32`.
+Lives in `routePaths.ts` beside `parseActiveRoutes`, imported by App and the
+snapper. Verified against the LIVE payload 2026-09-06: 8 routes,
+excludedRoutesID `[-1, 72922, 72923, 72924]`, leaving exactly the five.
 
-When Brown turns the Commencement routes on, they draw from the raw Passio
-trace with no snapped geometry -- reintroducing the metres-based separation the
-lane subsystem exists to remove, in frame, beside routes that do not have it.
 
 ### 5. Route rendering polish
 
@@ -123,51 +127,42 @@ Fix: add `routeId` to the bead properties. The test then starts failing, and
 making it pass is the actual work. **This is the test that was supposed to
 guard stop placement.**
 
-### 8. Leg samples are polls, not trips
+### 8. DONE — leg samples are deduped per trip
 
-`MIN_LEG_SAMPLES = 5` (`src/data/legTimes.ts:24`) is documented as the guard
-against one slow afternoon being the whole answer, but `recordLegs` has no
-per-trip and no per-date dedupe. Five samples can be five polls of one bus over
-ten minutes.
+`recordLegs` keys on a trip stamp and rejects anything over MAX_LEG_SECONDS.
+Shipped in `e4e7da1` and now deployed. NOTE: samples recorded BEFORE that
+deployment are still poll counts -- the twenties in the live record are not
+twenty separate buses. They age out of the rolling 20-sample window.
 
-The shipped `public/service-history.json` shows it: a `2` -- two seconds for a
-stop-to-stop leg -- at the end of four different legs simultaneously, plus a 604
-and a 1375. `legSeconds` takes a median, so these are absorbed and no rider is
-handed a wrong number today. It is a data-honesty defect, in the file whose
-entire claim is that its durations were measured.
 
-Fix: dedupe per trip, and reject absurd values rather than only `<= 0`.
+### 9. DONE — buildBoard supersession is keyed on trip and stop
 
-### 9. `buildBoard` supersession is keyed on a `seq` the same file proves incomparable
+`const call = (d) => \`${d.tripId}|${d.stopId}|${d.seq}\`` with the match made on
+`tripId|stopId`, so live no longer has to agree with static on a seq the two
+feeds number differently. Shipped in `e4e7da1`.
 
-Live `seq` is GTFS-RT's own numbering (`src/data/realtime.ts:27`); static `seq`
-comes from `stop_times.txt` (`src/data/gtfs.ts:98`). The comment at
-`src/data/departures.ts:39-47` measures the two agreeing on about one stop in
-ten. So a live prediction rarely supersedes its scheduled twin, and a rider can
-be shown both times for one bus.
 
-`test/departures.test.ts` builds both sides from one helper, so it manufactures
-the agreement it asserts.
+### 10. DONE — serviceHistory.local() throws rather than inventing Sunday
 
-### 10. `serviceHistory.local()` manufactures Sunday
+An unreadable weekday or hour now raises instead of filing the sample under
+Sunday at midnight. Shipped in `e4e7da1`.
 
-`Math.max(0, dows.indexOf(get("weekday")))` (`src/data/serviceHistory.ts:56-63`)
-turns an unrecognised weekday into 0, and `Number("") % 24` into NaN. The app
-can print "on 3 of the 8 Sundays watched" on a Tuesday -- in the one file whose
-thesis is never claiming more than was observed.
 
-### 11. `serviceHistory` day counting hides a dead recorder and dilutes new routes
+### 11. DONE — day counting is per bucket, not global
 
-`updated` only advances when the record changes, so a recorder that stopped
-looks exactly like a service that did not move. And `days` is a global
-denominator, so a route watched for two weeks reads as "seen on 2 of the 40
-Fridays".
+`observed()` reads `history.days[bucket]`, so a route watched for two weeks is
+measured against the Fridays actually watched. Shipped in `e4e7da1`.
 
-### 12. Post-midnight departures are an hour off on the two DST days
+Still true and NOT fixed: `updated` only advances when the record changes, so a
+dead recorder looks like unmoved service. Low stakes -- and this session found
+the recorder alive and healthy by checking origin/main directly.
 
-`dayStart - DAY_SECONDS` (`src/data/departures.ts:22`) assumes 86400 seconds.
-It is wrong at 2am on the two changeover days -- in the hours that file's own
-comment calls exactly the hours the shuttle is the only way home.
+
+### 12. DONE — post-midnight departures use the real previous local midnight
+
+No longer `dayStart - 86400`, so the two DST changeover days are right.
+Shipped in `e4e7da1`.
+
 
 ### 13. `parallel()` compares unprojected bearings
 
@@ -188,19 +183,13 @@ window depending on heading.
 the app fetches the same payload live. They drift apart silently and nothing
 compares them.
 
-### 16. `pressHandled` is consumed by the wrong handler -- the long-press bug is live
+### 16. DONE — the long-press guard is spent by the next press
 
-MapLibre keeps all `click` listeners in one array, in registration order. The
-map-level handler (`TransitMap.tsx:455`) is registered at init; `routes-hit`
-(`TransitMap.tsx:380`) later, inside `drawRoutes`. So the click that ends a long
-press reaches the map handler first, which clears the flag and returns, and
-`routes-hit` then reads false and fires. **The bug the comment says was fixed is
-in the build.**
+Read, never cleared, by the click; cleared on the next mousedown/touchstart.
+FakeMap now dispatches clicks in one registration-ordered list with
+queryRenderedFeatures answering from the same hit set, so the test fails on the
+old code. `55959b9`.
 
-`test/TransitMap.test.tsx:37-38` asserts the opposite dispatch order, so it
-passes.
-
-Fix: clear the flag on the next `mousedown`/`touchstart`, not on the click.
 
 ### 17. `isStyleLoaded()` gates two one-shot effects
 
@@ -224,12 +213,12 @@ FeatureCollection, which is pushed through `setData`, re-uploading every GPU
 buffer. `laneIndex` runs twice per redraw. Only `laneApprox` and
 `stationFeatures` need `mpp` at all.
 
-### 20. The selected stop's tween restarts every 10 seconds
+### 20. DONE — the selected stop's tween survives a bus poll
 
-`selection` is a fresh object literal on every parent render
-(`src/ui/App.tsx:378`) and the app re-renders every 10s on the bus poll, so the
-grow tween is torn down and started again. With a stop card open, the dot
-visibly shrinks and re-grows every 10 seconds.
+Keyed on the stop ID, and `selectedRadius` is now the single owner of
+`circle-radius` -- `stopPaint` was writing a base value over the tween whenever
+the emphasis effect re-ran. `f845073`.
+
 
 ### 21. Walking times are estimates and nothing says so
 
@@ -333,11 +322,11 @@ never were. What still will not turn up: anything OSM lacks, and any query under
 three characters (`MIN_QUERY`). If this keeps biting, the answer is adding the
 place to OSM, or a second source — not a change to the filter.
 
-### 26. The results view names the destination twice
+### 26. DONE — the destination is named once
 
-Minor, pre-existing, spotted while verifying the search rebuild. With a
-destination set the sheet shows "To Faunce Arch" in the search bar and
-"TO FAUNCE ARCH" as an eyebrow directly beneath it.
+The results eyebrow duplicated the search bar directly above it. Removed from
+both call sites. `4674356`.
+
 
 ### 27. `test/fixtures/route-paths.json` is a stale capture
 
