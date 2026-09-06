@@ -251,26 +251,37 @@ accumulate — the value is in being correct cold, not in being a diary.
 
 ---
 
-### 23. Does the live board usually carry a prediction at all?
+### 23. Say WHY there is no shuttle, using the record we already keep
 
-The open question behind "why did no shuttle directions turn up". Measured
-2026-09-05, every gate BELOW the top of `planTrips`'s loop is open for Address J
+"Why did no directions turn up?" — answered 2026-09-05, and the planner is not
+at fault. Every gate below the top of `planTrips`'s loop is open for Address J
 -> RISD Fleet Library on the Express: Hillel House is 85m from one end and a
-candidate, Dyer & Hay is 290m from the other and a candidate, the single GTFS
-trip covers both (seq 1 and seq 3), and the observed legs between them carry
-twenty samples each. All three ride-construction paths can build it.
+candidate, Dyer & Hay 290m from the other and a candidate, the single GTFS trip
+covers both (seq 1 and seq 3), and the observed legs between them carry twenty
+samples each. All three ride-construction paths can build that ride.
 
-What is left is the first line of the loop — `board.get(boardStopId)`. The app
-builds `buildBoard(live, [])` by design, so with no live TripUpdate at the
-boarding stop nothing downstream runs and the rider gets a walk.
+What is missing is a live departure to hang it on, and the reason is service:
 
-So: how often does route 3302 actually publish a prediction? If usually, this
-was a gap and the copy at `App.tsx` already says the right thing. If almost
-never, the app is structurally unable to plan the Express, and the honest fix is
-architectural — plan from live VEHICLE POSITIONS plus observed leg times, which
-is a real bus in a real place with a measured duration, not a timetable claim.
-That changes what the app is willing to assert, so it is the owner's call.
-**Do not touch `MIN_LEG_SAMPLES`; it is not implicated.**
+```
+route 3302 Daytime Express  seen in 16 of 51 observed day-hour buckets
+  Mon,Tue,Wed,Thu,Fri only -- never a weekend
+  hours 7,8,9,11,13,14,15,16,17 -- never after 17h
+route 62487                 21 buckets, Mon-Fri, 7h-20h
+```
+
+Measured live at Sat 22:22: **0 tripUpdate entities, 0 vehicles.** No route has
+ever been seen in that day-hour. So the app declining to name a bus is correct,
+and there is no time gate and no arithmetic error to find.
+
+The defect is that it does not SAY so. The rider gets a walk and an empty
+result, while `public/service-history.json` already knows this route was only
+ever seen on weekday daytimes. That statement clears the non-negotiable on its
+own terms: observed, counted in days, past tense — "this route has only been
+seen running Mon-Fri, 7am-5pm" claims nothing about the future.
+
+`serviceHistory` is already surfaced on the route page and stop card. It is not
+surfaced on the results screen, which is the one place a rider is being handed a
+walk instead of a bus. That is the fix.
 
 ### 24. `stopRoutes()` gates candidates on GTFS trips alone
 
