@@ -542,7 +542,9 @@ export default function App() {
 
         {mode === "results" && !origin && (
           <>
-            <div className="eyebrow">To {dest!.label}</div>
+            {/* No eyebrow. The search bar pinned above already reads
+                "To <destination>", so this repeated it in caps directly
+                underneath -- the same fact twice, in two type styles. */}
             <h1 className="display" style={{ fontSize: 28, margin: "4px 0 8px" }}>
               Location needed
             </h1>
@@ -561,7 +563,6 @@ export default function App() {
 
         {mode === "results" && origin && (
           <>
-            {!pickingWhen && <div className="eyebrow">To {dest!.label}</div>}
             {/* The time control belongs WITH the results it changes. It used to
                 render only on the nearby screen, so the moment a rider picked
                 a destination it vanished -- leaving no way to say "arrive by"
