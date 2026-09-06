@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
-import { haversineMeters, nearestStops, decodePolyline6, parseWalkRoute , walkLegs , walkSeconds, walkRoute, resetValhalla, cooldownMs , parseOsrmRoute, stablePosition } from "../src/routing/walk";
+import { haversineMeters, nearestStops, decodePolyline6, parseWalkRoute , walkLegs , walkSeconds, walkRoute, resetValhalla, cooldownMs , parseOsrmRoute, stablePosition, walkMatrixMulti } from "../src/routing/walk";
 import type { Stop } from "../src/data/types";
 
 const s = (id: string, lat: number, lng: number): Stop => ({ id, name: id, lat, lng });
@@ -311,5 +311,36 @@ describe("stablePosition", () => {
       { lat: 41.833333, lng: -71.411111 },
       { lat: 41.820001, lng: -71.399999 },
     ]) expect(haversineMeters(p, stablePosition(p))).toBeLessThan(8);
+  });
+});
+
+/** When both routers are unreachable the app still ranks trips, on a
+ *  straight-line estimate. That is the right call -- showing nothing is worse
+ *  -- but the rider was then handed those minutes styled exactly like measured
+ *  ones. A `walkTimesAreEstimated()` flag existed for this and had zero
+ *  callers, which was the appearance of the honesty rather than the thing. */
+describe("walkMatrixMulti says when it fell back to an estimate", () => {
+  const original = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = original; resetValhalla(); });
+
+  const A = { lat: 41.826, lng: -71.400 };
+  const B = { lat: 41.830, lng: -71.405 };
+
+  it("reports measured when a router answers", async () => {
+    globalThis.fetch = (async () => ({
+      ok: true, status: 200,
+      json: async () => ({ durations: [[123]] }),
+    })) as never;
+    const got = await walkMatrixMulti([A], [B]);
+    expect(got.estimated).toBe(false);
+    expect(got.rows[0]![0]).toBe(123);
+  });
+
+  it("reports estimated when both routers are unreachable", async () => {
+    globalThis.fetch = (async () => { throw new TypeError("Failed to fetch"); }) as never;
+    const got = await walkMatrixMulti([A], [B]);
+    expect(got.estimated).toBe(true);
+    // Still answers, so trips can be ranked rather than the rider shown nothing.
+    expect(got.rows[0]![0]).toBeGreaterThan(0);
   });
 });

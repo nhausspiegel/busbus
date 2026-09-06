@@ -98,7 +98,7 @@ export async function planBetween(
   const toStops = near(destination);
   const targets = [...fromStops, ...toStops, destination];
 
-  const rows = await walkMatrixMulti([origin, destination], targets);
+  const { rows, estimated } = await walkMatrixMulti([origin, destination], targets);
 
   const walkFromOrigin = new Map<string, number>();
   fromStops.forEach((s, i) => {
@@ -116,7 +116,7 @@ export async function planBetween(
   // Last target is the destination itself, measured from the origin.
   const direct = rows[0]?.[targets.length - 1];
 
-  return planWithTransfers({
+  const found = planWithTransfers({
     feed, board, origin, destination,
     walkFromOrigin, walkToDestination,
     ...(liveTrips ? { liveTrips } : {}),
@@ -125,6 +125,12 @@ export async function planBetween(
     ...(arriveBy ? { arriveBy: Math.floor(arriveBy.getTime() / 1000) } : {}),
     now: Math.floor(now.getTime() / 1000),
   });
+  // Both routers were down, so every walking time here is a straight-line
+  // guess. Carried on the itinerary rather than announced globally, because it
+  // is a property of THIS answer -- and because a flag nobody reads is the
+  // appearance of the honesty rather than the thing, which is how the last one
+  // sat unused for months before being deleted.
+  return estimated ? found.map((i) => ({ ...i, walkEstimated: true })) : found;
 }
 
 /** Standalone entry point: loads the feeds itself. Used by scripts.

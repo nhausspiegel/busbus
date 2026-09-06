@@ -71,4 +71,7 @@ export interface Itinerary {
   totalWalkSeconds: number;
   transfers: number;
   allLive: boolean;        // false if any leg came from the timetable
+  /** True when both pedestrian routers were unreachable and every walking time
+   *  here is a straight-line estimate rather than a measured route. */
+  walkEstimated?: boolean;
 }

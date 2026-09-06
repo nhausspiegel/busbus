@@ -220,17 +220,17 @@ Keyed on the stop ID, and `selectedRadius` is now the single owner of
 the emphasis effect re-ran. `f845073`.
 
 
-### 21. Walking times are estimates and nothing says so
+### 21. DONE — a walking time says when it is an estimate
 
-`walk.ts` falls back to a straight-line estimate when both routers are down,
-and the rider is shown that number exactly like a routed one. A
-`walkTimesAreEstimated()` flag existed for this and had zero callers, so it was
-the appearance of the honesty rather than the thing; it is deleted, and the
-note now sits where the estimate is produced. Surfacing it is a `src/ui`
-change: the itinerary needs to say the walk is estimated when it is.
+`walkMatrixMulti` returns `{ rows, estimated }`, `planBetween` marks the
+itineraries it built from a fallback, and `ItineraryList` says so.
 
-(The other two entries here are resolved. `laneSnap` is live -- it is what
-places a station's beads on their lanes. `isWalkOnly` was deleted.)
+Read off the itineraries rather than passed in as a prop, deliberately. The
+previous attempt at this honesty was `walkTimesAreEstimated()`, a flag with
+zero callers -- the appearance of the thing. A caller-supplied boolean has the
+same failure mode one step later: forget it and the app silently claims the
+walk was measured. Derived from the data, it cannot be forgotten.
+
 
 ### 22. Documentation upkeep
 

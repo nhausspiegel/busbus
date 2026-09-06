@@ -99,8 +99,20 @@ export function ItineraryList({
   selected?: Itinerary | null;
   onSelect: (i: Itinerary) => void;
 }) {
+  // Both routers unreachable, so every walking time below is a straight line
+  // rather than a route. Read off the itineraries themselves, not passed in:
+  // the last version of this honesty was a caller-supplied flag, and a caller
+  // that forgets it silently claims the walk was measured.
+  const estimated = itineraries.some((i) => i.walkEstimated);
+
   return (
     <>
+    {estimated && (
+      <p style={{ margin: "0 0 10px", fontSize: 13, color: "var(--muted)" }}>
+        Both walking routers are unreachable, so the walking times below are
+        straight-line estimates rather than measured routes.
+      </p>
+    )}
     <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
       {itineraries.map((it, n) => {
         const first = it.rides[0];

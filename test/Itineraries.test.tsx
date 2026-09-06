@@ -319,3 +319,23 @@ describe("ItineraryDetail's departure line", () => {
   });
 });
 
+describe("when both walking routers are down", () => {
+  // The app still ranks trips on a straight-line estimate, which is right --
+  // showing nothing is worse. Handing the rider those minutes styled exactly
+  // like measured ones is not.
+  const walk: Itinerary = {
+    ...itinerary(ride()), rides: [], departTime: NOW,
+    arriveTime: NOW + 900, totalWalkSeconds: 900,
+  };
+
+  it("says the walking times are estimates", () => {
+    render(<ItineraryList itineraries={[{ ...walk, walkEstimated: true }]}
+                          feed={feed} now={NOW} onSelect={() => {}} />);
+    expect(screen.getByText(/straight-line estimates/i)).toBeTruthy();
+  });
+
+  it("says nothing when a router answered", () => {
+    render(<ItineraryList itineraries={[walk]} feed={feed} now={NOW} onSelect={() => {}} />);
+    expect(screen.queryByText(/straight-line estimates/i)).toBeNull();
+  });
+});

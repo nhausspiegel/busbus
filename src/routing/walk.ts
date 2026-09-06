@@ -161,10 +161,19 @@ export function nearestStops(from: LatLng, stops: Stop[], k: number): Stop[] {
  *  CORS headers, so the browser reports it as a CORS failure rather than a rate
  *  limit -- which is a genuinely confusing way to learn you are being rude.
  *  One request answers the whole search. */
+export interface WalkMatrix {
+  rows: (number | null)[][];
+  /** True when BOTH routers were unreachable and these came from a
+   *  straight-line estimate. The rider is entitled to know: it is the
+   *  difference between a measured walk and a guess about one, and it used to
+   *  be styled identically to a routed number. */
+  estimated: boolean;
+}
+
 export async function walkMatrixMulti(
   sources: LatLng[], targets: LatLng[],
-): Promise<(number | null)[][]> {
-  if (sources.length === 0 || targets.length === 0) return [];
+): Promise<WalkMatrix> {
+  if (sources.length === 0 || targets.length === 0) return { rows: [], estimated: false };
   const pts = [...sources, ...targets];
   const coords = pts.map((p) => `${p.lng},${p.lat}`).join(";");
   const srcIdx = sources.map((_, i) => i).join(";");
@@ -174,11 +183,11 @@ export async function walkMatrixMulti(
       `${OSRM_FOOT}/table/v1/driving/${coords}?sources=${srcIdx}&destinations=${dstIdx}`,
     ) as { durations?: (number | null)[][] };
     const rows = data?.durations ?? [];
-    return sources.map((_, i) =>
+    return { estimated: false, rows: sources.map((_, i) =>
       targets.map((__, j) => {
         const t = rows[i]?.[j];
         return typeof t === "number" ? t : null;
-      }));
+      })) };
   } catch {
     // Fall through to the other router rather than giving up on the question.
   }
@@ -189,16 +198,17 @@ export async function walkMatrixMulti(
       costing: "pedestrian",
     }) as { sources_to_targets?: { time?: number }[][] };
     const rows = data?.sources_to_targets ?? [];
-    return sources.map((_, i) =>
+    return { estimated: false, rows: sources.map((_, i) =>
       targets.map((__, j) => {
         const t = rows[i]?.[j]?.time;
         return typeof t === "number" ? t : null;
-      }));
+      })) };
   } catch {
     // Both routers are unreachable at once. Rank the trips on an estimate
     // rather than showing the rider nothing -- this only affects which
     // itinerary sorts first, and no line is ever drawn from it.
-    return sources.map((a) => targets.map((b) => estimateSeconds(a, b)));
+    return { estimated: true,
+             rows: sources.map((a) => targets.map((b) => estimateSeconds(a, b))) };
   }
 }
 
@@ -241,7 +251,7 @@ export function estimateSeconds(a: LatLng, b: LatLng): number {
 export async function walkMatrix(from: LatLng, to: Stop[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (to.length === 0) return out;
-  const row = (await walkMatrixMulti([from], to))[0] ?? [];
+  const row = (await walkMatrixMulti([from], to)).rows[0] ?? [];
   to.forEach((stop, i) => {
     const t = row[i];
     if (typeof t === "number") out.set(stop.id, t);
@@ -252,8 +262,9 @@ export async function walkMatrix(from: LatLng, to: Stop[]): Promise<Map<string, 
 /** Walking seconds between two points. Used to decide whether the rider
  *  should simply walk instead of waiting for a shuttle. */
 export async function walkSeconds(from: LatLng, to: LatLng): Promise<number | null> {
-  const row = await walkMatrixMulti([from], [to]).catch(() => []);
-  return row[0]?.[0] ?? null;
+  const row = (await walkMatrixMulti([from], [to])
+    .catch(() => ({ rows: [] as (number | null)[][] }))).rows[0] ?? [];
+  return row[0] ?? null;
 }
 
 /** One turn of a walking leg, as Valhalla words it. */
