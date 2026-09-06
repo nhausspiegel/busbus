@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { haversineMeters, nearestStops, decodePolyline6, parseWalkRoute , walkLegs , walkSeconds, walkRoute, resetValhalla, cooldownMs , parseOsrmRoute, stablePosition, walkMatrixMulti } from "../src/routing/walk";
 import type { Stop } from "../src/data/types";
@@ -428,6 +428,48 @@ describe("a router that answers 200 with nothing usable", () => {
     const got = await walkMatrixMulti([{ lat: 41.826, lng: -71.4 }], [{ lat: 41.83, lng: -71.405 }]);
     expect(hits.some((h) => /routed-foot/i.test(h))).toBe(true);
     expect(got.rows[0]![0]).toBe(321);
+    expect(got.estimated).toBe(false);
+  });
+});
+
+/**
+ * Slow is failed, for the matrix.
+ *
+ * The 8s deadline exists for a request that hangs forever, and it cannot see
+ * the failure that actually cost this app ten seconds a search: a router that
+ * answers 200, correctly, in ~8.8s under throttle. That sails under a
+ * hang-deadline and is invisible to any fallback keyed on failure. The matrix
+ * now abandons a slow router and asks the other one.
+ */
+describe("a router that is slow rather than broken", () => {
+  const original = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = original; resetValhalla(); vi.useRealTimers(); });
+
+  it("abandons it and asks the other one", async () => {
+    vi.useFakeTimers();
+    const hits: string[] = [];
+    globalThis.fetch = ((u: unknown, init?: { signal?: AbortSignal }) => {
+      const url = String((u as { url?: string })?.url ?? u);
+      hits.push(url);
+      if (/valhalla/i.test(url)) {
+        // Answers eventually, but far too late -- and honours the abort, which
+        // is what the deadline relies on.
+        return new Promise((_res, rej) => {
+          init?.signal?.addEventListener("abort", () => rej(new Error("aborted")));
+        });
+      }
+      return Promise.resolve({ ok: true, status: 200,
+                               json: async () => ({ durations: [[456]] }) });
+    }) as never;
+
+    const pending = walkMatrixMulti([{ lat: 41.826, lng: -71.4 }],
+                                    [{ lat: 41.83, lng: -71.405 }]);
+    await vi.advanceTimersByTimeAsync(2_600);      // past the matrix deadline
+    const got = await pending;
+
+    expect(hits[0]).toMatch(/valhalla/i);
+    expect(hits.some((h) => /routed-foot/i.test(h))).toBe(true);
+    expect(got.rows[0]![0]).toBe(456);
     expect(got.estimated).toBe(false);
   });
 });

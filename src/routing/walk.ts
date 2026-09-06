@@ -49,6 +49,21 @@ const FIRST_BACKOFF_MS = 2_000;
 const MAX_BACKOFF_MS = 60_000;
 /** How long to wait for a router before giving up on a request entirely. */
 const REQUEST_TIMEOUT_MS = 8_000;
+/**
+ * A tighter deadline for the MATRIX specifically.
+ *
+ * The 8s above exists for a request that hangs forever. It cannot catch the
+ * failure that actually cost this app ten seconds a search: a router that
+ * ANSWERS, correctly, slowly. FOSSGIS's table service returns 200 in a flat
+ * ~8.8s under throttle, which sails under an 8s hang-deadline in the browser
+ * and is invisible to any fallback keyed on failure.
+ *
+ * So the matrix treats slow as failed. A healthy router answers this in
+ * 137-588ms measured; 2.5s admits every healthy response with an order of
+ * magnitude to spare, and abandons a throttled one early enough to ask the
+ * other and still beat where this started.
+ */
+const MATRIX_TIMEOUT_MS = 2_500;
 
 /**
  * Cooldown state is PER HOST.
@@ -76,7 +91,8 @@ export function resetValhalla(): void {
   rest.clear();
 }
 
-async function ask(url: string, body?: unknown): Promise<unknown> {
+async function ask(url: string, body?: unknown,
+                   deadlineMs: number = REQUEST_TIMEOUT_MS): Promise<unknown> {
   const key = body === undefined ? url : `${url}|${JSON.stringify(body)}`;
   const hit = cache.get(key);
   if (hit) return hit;
@@ -92,7 +108,7 @@ async function ask(url: string, body?: unknown): Promise<unknown> {
     // the "Finding shuttles..." that never finishes. Backing off cannot help a
     // request that never comes back; only abandoning it can.
     const ctl = new AbortController();
-    const bell = setTimeout(() => ctl.abort(), REQUEST_TIMEOUT_MS);
+    const bell = setTimeout(() => ctl.abort(), deadlineMs);
     try {
       const res = await fetch(url, {
         signal: ctl.signal,
@@ -199,7 +215,7 @@ export async function walkMatrixMulti(
       sources: sources.map((p) => ({ lat: p.lat, lon: p.lng })),
       targets: targets.map((p) => ({ lat: p.lat, lon: p.lng })),
       costing: "pedestrian",
-    }) as { sources_to_targets?: { time?: number }[][] };
+    }, MATRIX_TIMEOUT_MS) as { sources_to_targets?: { time?: number }[][] };
     const rows = data?.sources_to_targets ?? [];
     const out = sources.map((_, i) =>
       targets.map((__, j) => {
@@ -217,6 +233,7 @@ export async function walkMatrixMulti(
   try {
     const data = await ask(
       `${OSRM_FOOT}/table/v1/driving/${coords}?sources=${srcIdx}&destinations=${dstIdx}`,
+      undefined, MATRIX_TIMEOUT_MS,
     ) as { durations?: (number | null)[][] };
     const rows = data?.durations ?? [];
     const out = sources.map((_, i) =>
