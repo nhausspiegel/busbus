@@ -87,3 +87,43 @@ describe("Sheet", () => {
     expect(screen.getByRole("region", { name: "Route" })).toBeTruthy();
   });
 });
+
+/** The on-screen keyboard does not change window.innerHeight on iOS -- it
+ *  changes visualViewport.height. The sheet sized itself from innerHeight, so
+ *  while typing it stayed exactly where it was and the keyboard covered all
+ *  but a row and a half of the suggestions. */
+describe("the keyboard", () => {
+  const setViewport = (visual: number) => {
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: {
+        height: visual,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      },
+    });
+  };
+
+  afterEach(() => {
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: undefined });
+    cleanup();
+  });
+
+  it("sizes the sheet to the visible viewport, not the window", () => {
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 });
+    setViewport(420);                       // keyboard up: 800 window, 420 visible
+    const { container } = render(
+      <Sheet detent="full" onDetentChange={() => {}} label="Route"><p>body</p></Sheet>);
+    const section = container.querySelector("section")!;
+    // 0.92 of the VISIBLE viewport, not of the window.
+    expect(section.style.height).toBe(`${0.92 * 420}px`);
+  });
+
+  it("falls back to the window when there is no visual viewport", () => {
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 });
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: undefined });
+    const { container } = render(
+      <Sheet detent="full" onDetentChange={() => {}} label="Route"><p>body</p></Sheet>);
+    expect(container.querySelector("section")!.style.height).toBe(`${0.92 * 800}px`);
+  });
+});

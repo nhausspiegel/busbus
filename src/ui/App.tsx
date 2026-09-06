@@ -83,12 +83,40 @@ export default function App() {
   const [leaveAt, setLeaveAt] = useState<Date | null>(null);
   /** Whether that time is a departure or a deadline. */
   const [whenMode, setWhenMode] = useState<WhenMode>("leave");
+  /** The rider is typing. Lifted out of SearchBar because typing is a view,
+   *  and `mode` could not see it: it stayed "nearby" through every keystroke. */
+  const [searching, setSearching] = useState(false);
 
   itinerariesRef.current = itineraries;
   chosenRef.current = chosen;
   historyRef.current = history;
 
-  const mode = resolveMode({ stopId, routeId, chosen: chosen !== null, dest: dest !== null });
+  const mode = resolveMode({ stopId, routeId, chosen: chosen !== null, dest: dest !== null,
+                             searching });
+
+  // The sheet rises for the keyboard and settles back afterwards. Done on the
+  // mode transition rather than in SearchBar's close handler because picking a
+  // result closes the field AND sets a destination in the same tick -- keying
+  // off the close alone stamped "peek" over pickDestination's "half".
+  const prevMode = useRef(mode);
+  useEffect(() => {
+    if (mode === "searching") setDetent("full");
+    else if (prevMode.current === "searching") setDetent(dest ? "half" : "peek");
+    prevMode.current = mode;
+  }, [mode, dest]);
+
+  const searchBar = (
+    <SearchBar
+      destination={dest ? { label: dest.label } : null}
+      onPick={(p: Place) => pickDestination(p.at, p.name)}
+      open={searching}
+      onOpenChange={setSearching}
+      onClear={() => {
+        setDest(null); setChosen(null); setStopId(null); setRouteId(null); setPreview(null);
+        setDetent("peek");
+      }}
+    />
+  );
   // Kept stable by VALUE, not identity. Geolocation hands back a fresh object
   // every report, even when the rider has not moved a metre, and `origin` is a
   // dependency of the planning effect. A new object restarts the plan, and a
@@ -410,20 +438,16 @@ export default function App() {
         </svg>
       </button>
 
+      {/* While searching the bar moves OUT of the pinned header and into the
+          body, so the field and its suggestions are one scrolling page that
+          drives the grabber. In the header they sat in a sibling div with no
+          pointer wiring, which is why swiping the list moved nothing. */}
       <Sheet
         detent={detent}
         onDetentChange={setDetent}
-        header={
-          <SearchBar
-            destination={dest ? { label: dest.label } : null}
-            onPick={(p: Place) => pickDestination(p.at, p.name)}
-            onClear={() => {
-            setDest(null); setChosen(null); setStopId(null); setRouteId(null); setPreview(null);
-            setDetent("peek");
-          }}
-          />
-        }
+        header={searching ? undefined : searchBar}
       >
+        {searching && searchBar}
         <AlertBanner alerts={alerts} feed={feed} />
 
         {/* Was set in four places and rendered in none, so a failed feed load
@@ -467,8 +491,6 @@ export default function App() {
 
         {mode === "nearby" && (
           <>
-            <WhenControl at={leaveAt} mode={whenMode}
-                         onChange={setLeaveAt} onModeChange={setWhenMode} />
             {/* The nearby board is hidden, not deleted -- the user found it
                 useless but may want it back. NearbyBoard.tsx and its tests are
                 untouched. To restore: re-import NearbyBoard and recreate
@@ -511,8 +533,13 @@ export default function App() {
                 or to plan for later without clearing the destination and
                 starting again, which is the one screen where the question
                 actually comes up. Apple Maps keeps it on the results too. */}
-            <WhenControl at={leaveAt} mode={whenMode}
-                         onChange={setLeaveAt} onModeChange={setWhenMode} />
+            {/* Only once there is a route to change. It used to render on the
+                initial screen and through every keystroke as well, because
+                `mode` was "nearby" in both. */}
+            {!planning && itineraries !== null && itineraries.length > 0 && (
+              <WhenControl at={leaveAt} mode={whenMode}
+                           onChange={setLeaveAt} onModeChange={setWhenMode} />
+            )}
             <h1 className="display" style={{ fontSize: 28, margin: "4px 0 12px" }}>
               {planning ? "Finding shuttles…"
                 : itineraries?.length ? "Soonest arrival first" : "No shuttle route"}

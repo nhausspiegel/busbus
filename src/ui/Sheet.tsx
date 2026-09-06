@@ -21,6 +21,13 @@ const MOMENTUM_SECONDS = 0.16;
 /** Past the top detent the sheet still moves, but grudgingly. */
 const RUBBER = 0.35;
 
+/** How tall the sheet may actually be: the part of the window the rider can
+ *  SEE. With a keyboard up those differ by ~340px on a phone. */
+function viewportHeight(): number {
+  if (typeof window === "undefined") return 800;
+  return window.visualViewport?.height ?? window.innerHeight;
+}
+
 export function Sheet({
   detent, onDetentChange, header, label, children,
 }: {
@@ -43,13 +50,24 @@ export function Sheet({
   const didDrag = useRef(false);
   const activePointer = useRef<number | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
-  const [vh, setVh] = useState(() => (typeof window === "undefined" ? 800 : window.innerHeight));
+  const [vh, setVh] = useState(() => viewportHeight());
   const [wide, setWide] = useState(() => (typeof window === "undefined" ? false : window.innerWidth >= 820));
 
   useEffect(() => {
-    const onResize = () => { setVh(window.innerHeight); setWide(window.innerWidth >= 820); };
+    const onResize = () => { setVh(viewportHeight()); setWide(window.innerWidth >= 820); };
     window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    // The on-screen keyboard does not fire `resize` and does not change
+    // innerHeight on iOS -- it shrinks the VISUAL viewport and nothing else.
+    // Sizing from innerHeight is why the sheet sat still while typing and the
+    // keyboard covered all but a row and a half of the suggestions.
+    const vv = window.visualViewport;
+    vv?.addEventListener("resize", onResize);
+    vv?.addEventListener("scroll", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      vv?.removeEventListener("resize", onResize);
+      vv?.removeEventListener("scroll", onResize);
+    };
   }, []);
 
   const height = dragPx ?? HEIGHT[detent] * vh;

@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { useState } from "react";
 import { render, screen, cleanup, act, fireEvent } from "@testing-library/react";
 
 const searchPlaces = vi.fn(async (_q: string, _signal?: AbortSignal) => [
@@ -9,7 +10,15 @@ vi.mock("../src/data/geocode", () => ({
   searchPlaces: (q: string, signal?: AbortSignal) => searchPlaces(q, signal),
 }));
 
-const { SearchBar } = await import("../src/ui/SearchBar");
+const { SearchBar: Raw } = await import("../src/ui/SearchBar");
+
+/** SearchBar's open state is owned by App, so tests supply the same wiring.
+ *  Without a host holding it, clicking "Where to?" would report the change and
+ *  render nothing -- which is exactly the bug this indirection exists for. */
+function SearchBar(props: Omit<Parameters<typeof Raw>[0], "open" | "onOpenChange">) {
+  const [open, setOpen] = useState(false);
+  return <Raw {...props} open={open} onOpenChange={setOpen} />;
+}
 
 /** Mirrors MIN_QUERY in the component. */
 const MIN_QUERY = 3;
@@ -98,6 +107,34 @@ describe("the search field is mostly field", () => {
     expect(close.textContent).toBe("");          // an icon, not a word
     fireEvent.click(close);
     expect(screen.getByText("Where to?")).toBeTruthy();
+  });
+
+  /** The destination branch was untested, and both of these were broken in it.
+   *  The x replaced the word "Cancel" on the CLOSE control and never reached
+   *  the CLEAR one beside it; and the branch rendered a plain div, so once a
+   *  route was on the map there was no way back into search at all. */
+  describe("with a destination already picked", () => {
+    const withDest = () => render(
+      <SearchBar destination={{ label: "Trader Joe's" }}
+                 onPick={() => {}} onClear={onClear} />);
+    let onClear = vi.fn();
+    beforeEach(() => { onClear = vi.fn(); });
+
+    it("clears with an icon rather than the word Clear", () => {
+      withDest();
+      const clear = screen.getByRole("button", { name: /clear destination/i });
+      expect(clear.textContent).toBe("");        // an icon, not a word
+      fireEvent.click(clear);
+      expect(onClear).toHaveBeenCalledTimes(1);
+    });
+
+    it("reopens search on a tap, without discarding the destination", () => {
+      // Clearing was the only way back in, and it threw the destination away.
+      withDest();
+      fireEvent.click(screen.getByText("Trader Joe's"));
+      expect(screen.getByLabelText("Search for a destination")).toBeTruthy();
+      expect(onClear).not.toHaveBeenCalled();
+    });
   });
 
   it("still searches when the rider presses Enter", async () => {

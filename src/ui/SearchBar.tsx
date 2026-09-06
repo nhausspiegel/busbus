@@ -18,13 +18,22 @@ const TYPING_PAUSE_MS = 450;
 const MIN_GAP_MS = 1_200;
 
 export function SearchBar({
-  destination, onPick, onClear,
+  destination, onPick, onClear, open, onOpenChange,
 }: {
   destination: { label: string } | null;
   onPick: (p: Place) => void;
   onClear: () => void;
+  /** Whether the field is open. OWNED BY THE CALLER, not by this component.
+   *
+   *  It was local state, which made typing invisible to App's mode machine.
+   *  Merely reporting it upward was not enough either: App moves this element
+   *  between the sheet's header and its body when searching starts, and that
+   *  remounts it -- local state resets to closed and the field vanishes the
+   *  instant it is asked for. */
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const setOpen = onOpenChange;
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Place[]>([]);
   const [busy, setBusy] = useState(false);
@@ -84,11 +93,21 @@ export function SearchBar({
   if (destination && !open) {
     return (
       <div style={bar}>
-        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
-                       whiteSpace: "nowrap", fontSize: 15 }}>
+        {/* A button, not a span. This was a plain div, so once a route was
+            drawn there was no way back into search -- the only exit was
+            Clear, which discarded the destination to get there. */}
+        <button onClick={() => setOpen(true)}
+                style={{ flex: 1, minWidth: 0, border: 0, background: "transparent",
+                         padding: 0, textAlign: "left", cursor: "pointer",
+                         overflow: "hidden", textOverflow: "ellipsis",
+                         whiteSpace: "nowrap", fontSize: 15, color: "var(--ink)" }}>
           To <strong>{destination.label}</strong>
-        </span>
-        <button onClick={onClear} style={ghostBtn} aria-label="Clear destination">Clear</button>
+        </button>
+        {/* Icon, to match the close control. It kept the word "Clear" when
+            the x landed on its neighbour. */}
+        <button onClick={onClear} style={iconBtn} aria-label="Clear destination">
+          <XGlyph />
+        </button>
       </div>
     );
   }
@@ -140,8 +159,12 @@ export function SearchBar({
 
       {msg && <p style={{ margin: 0, padding: "0 12px 10px", fontSize: 13, color: "var(--muted)" }}>{msg}</p>}
 
+      {/* No maxHeight and no scroll of its own. This was a 260px scroll region
+          pinned in the sheet's header, so swiping it moved nothing and the
+          keyboard hid all but a row and a half. It now sits in the sheet body
+          and runs off the bottom as one page. */}
       {results.length > 0 && (
-        <ul style={{ listStyle: "none", margin: 0, padding: 0, maxHeight: 260, overflowY: "auto",
+        <ul style={{ listStyle: "none", margin: 0, padding: 0,
                      borderTop: "1px solid var(--hairline)" }}>
           {results.map((p, i) => (
             <li key={i}>
@@ -168,7 +191,24 @@ const bar: React.CSSProperties = {
   padding: "11px 12px", boxSizing: "border-box",
 };
 
+/** One x, used by both the close and the clear control. They are different
+ *  buttons doing different jobs, which is how one of them kept a word label
+ *  for months after the other stopped having one. */
+function XGlyph() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"
+         stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <path d="M2 2l8 8M10 2l-8 8" />
+    </svg>
+  );
+}
+
 const ghostBtn: React.CSSProperties = {
   border: 0, background: "transparent", color: "var(--accent)",
   fontSize: 14, fontWeight: 600, cursor: "pointer", padding: "2px 4px", flexShrink: 0,
+};
+
+const iconBtn: React.CSSProperties = {
+  ...ghostBtn, display: "inline-flex", alignItems: "center", justifyContent: "center",
+  width: 26, height: 26, padding: 0, borderRadius: 999,
 };
