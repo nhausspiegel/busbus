@@ -263,15 +263,34 @@ samples each. All three ride-construction paths can build that ride.
 What is missing is a live departure to hang it on, and the reason is service:
 
 ```
-route 3302 Daytime Express  seen in 16 of 51 observed day-hour buckets
-  Mon,Tue,Wed,Thu,Fri only -- never a weekend
-  hours 7,8,9,11,13,14,15,16,17 -- never after 17h
+route 3302 Daytime Express  Mon-Fri only, hours 7-17, never a weekend
+  present in 16 of 16 sampled WEEKDAY-DAYTIME buckets = 100%
+  (16 of 51 buckets overall; the other 35 are nights and weekends)
 route 62487                 21 buckets, Mon-Fri, 7h-20h
 ```
 
-Measured live at Sat 22:22: **0 tripUpdate entities, 0 vehicles.** No route has
-ever been seen in that day-hour. So the app declining to name a bus is correct,
-and there is no time gate and no arithmetic error to find.
+Measured live at Sat 22:04-22:22, a point sample plus twelve at 60s intervals:
+**0 tripUpdate entities and 0 vehicles in all thirteen**, on every route.
+
+Mind the distinction that nearly produced a wrong answer here.
+`scripts/record-service.ts` fills `seen`/`days` from `fetchVehicles()` --
+vehiclePositions -- so those buckets record a bus reporting its POSITION. The
+board is built from tripUpdates. Position is necessary for a prediction, not
+sufficient, and citing one as the other is this project's standing trap.
+
+The evidence that tripUpdates does carry this route is separate and stronger:
+`legs` is filled from `fetchLiveDepartures()`, which reads tripUpdates, and
+route 3302 holds twenty samples on `7864|7865`. That leg cannot exist unless
+tripUpdates published a prediction AT Hillel House, the boarding stop, on every
+one of those occasions. (Twenty is a poll count, not twenty distinct buses --
+see the `legTrips` caveat in item 3 -- but it is not zero.)
+
+So the app declining to name a bus on a Saturday night is correct, and there is
+no time gate and no arithmetic error to find.
+
+Still unmeasured, and cheap to settle: a weekday 7h-17h poll of tripUpdates, to
+learn whether predictions are CONTINUOUSLY present during service or only
+intermittently. It does not change the fix below either way.
 
 The defect is that it does not SAY so. The rider gets a walk and an empty
 result, while `public/service-history.json` already knows this route was only
