@@ -1,5 +1,5 @@
 /** The map layer: route lines, stops, live buses, and the rider's own dot. */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { StaticFeed, LatLng } from "../data/types";
@@ -209,6 +209,23 @@ export function TransitMap({
   // selected whatever route or stop happened to be under the finger, leaving
   // the old page open on top of the new destination.
   const pressHandled = useRef(false);
+  /** Bumped when an effect bails because the style was mid-load, so it can run
+   *  again once the style settles.
+   *
+   *  isStyleLoaded() is false during any pan, zoom or tile fetch, and neither
+   *  gated effect has a dependency that fires a second time -- so a feed that
+   *  resolved mid-fetch left the routes undrawn for the life of the session,
+   *  and the four `catch { the next render rebuilds }` blocks described a
+   *  recovery that did not exist: effects do not re-run on render, `ready`
+   *  never increments after first load, and there is no styledata listener.
+   *  This is that listener. It advances only on an actual bail, so the happy
+   *  path costs nothing and there is no churn on every style event. */
+  const [styleRetry, setStyleRetry] = useState(0);
+  const retryOnStyle = useCallback(() => {
+    const m = map.current;
+    if (!m) return;
+    m.once("styledata", () => setStyleRetry((n) => n + 1));
+  }, []);
   const clearCb = useRef(onDeselect);
   clearCb.current = onDeselect;
   const placeCb = useRef(onPlaceClick);
@@ -571,7 +588,8 @@ export function TransitMap({
     // isStyleLoaded() is the authority: addSource/addLayer throw "Style is not
     // done loading" and that exception escapes the effect and unmounts the app.
     const m = map.current;
-    if (!m || !ready || !m.isStyleLoaded() || !feed) return;
+    if (!m || !ready || !feed) return;
+    if (!m.isStyleLoaded()) { retryOnStyle(); return; }
 
     // Route lines are added before the stops layer so a stop is never buried
     // under the line it belongs to.
@@ -649,7 +667,7 @@ export function TransitMap({
         m.on("mouseleave", "stops-hit", () => { m.getCanvas().style.cursor = ""; });
       }
     } catch { /* style churn; the next render rebuilds */ }
-  }, [feed, ready, activeRouteIds]);
+  }, [feed, ready, activeRouteIds, styleRetry]);
 
   // The lane gap and the corner radius are pixel quantities, so the geometry
   // they produce is only right for the zoom it was built at. Rebuilding it here
@@ -852,14 +870,15 @@ export function TransitMap({
   // the chosen itinerary, drawn over everything else
   useEffect(() => {
     const m = map.current;
-    if (!m || !ready || !m.isStyleLoaded()) return;
+    if (!m || !ready) return;
+    if (!m.isStyleLoaded()) { retryOnStyle(); return; }
 
     // MapLibre throws if the style is mid-reload, and an exception escaping an
     // effect unmounts the whole app -- a blank screen instead of a map.
     try {
       for (const id of OVERLAY_LAYERS) if (m.getLayer(id)) m.removeLayer(id);
       for (const id of OVERLAY_SOURCES) if (m.getSource(id)) m.removeSource(id);
-    } catch { return; }
+    } catch { retryOnStyle(); return; }
     if (!overlay) return;
 
     const feature = lineFeature;
@@ -901,7 +920,7 @@ export function TransitMap({
     // map. The ride line survived only because a separate effect pushes ride
     // geometry through overlayRef; the walk had no such second path, which is
     // exactly why the dotted line was the part that went missing.
-  }, [dark, ready, feed, overlay]);
+  }, [dark, ready, feed, overlay, styleRetry]);
 
   // One owner of emphasis, for every layer at once.
   //

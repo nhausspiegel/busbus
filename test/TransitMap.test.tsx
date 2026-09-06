@@ -59,7 +59,11 @@ class FakeMap {
     this.hit = [];
   }
 
-  isStyleLoaded() { return true; }
+  /** Controllable. It returned true unconditionally, so no test could see the
+   *  effects that bail when the style is mid-load -- which is precisely how
+   *  those two bails shipped with no way to recover. */
+  styleLoaded = true;
+  isStyleLoaded() { return this.styleLoaded; }
   getZoom() { return 14.2; }
   getSource(id: string) { return this.sources.get(id); }
   addSource(id: string, spec: { data: unknown }) {
@@ -681,5 +685,37 @@ describe("selecting a stop grows the dot instead of jumping", () => {
     settle(240);
     expect(selectedAt16()).toBeLessThan(start);
     expect(selectedAt16()).toBeCloseTo(4.5, 1);
+  });
+});
+
+/** isStyleLoaded() is false during ANY pan, zoom or tile fetch, and neither
+ *  gated effect had a dependency that could fire a second time. So a feed that
+ *  resolved while tiles were in flight left the routes undrawn for the whole
+ *  session, and the four `catch { the next render rebuilds }` blocks described
+ *  a recovery that does not exist: effects do not re-run on render, `ready`
+ *  never increments after load, and nothing listened to styledata.
+ *
+ *  FakeMap returned true unconditionally, which is exactly why this shipped. */
+describe("a style that is not ready yet", () => {
+  const props = {
+    feed, buses: [] as Bus[], me: null, destination: null, overlay: null,
+    focus: null, selection: null, activeRouteIds: new Set(["A", "B"]),
+  } as const;
+
+  it("draws the routes once the style settles, instead of never", () => {
+    map.styleLoaded = false;                    // tiles still in flight
+    render(<TransitMap {...props} />);
+    map.fire("load");
+    expect(map.getSource("routes")).toBeUndefined();   // nothing drawn, correctly
+
+    map.styleLoaded = true;
+    map.fire("styledata");                      // the style settles
+    expect(map.getSource("routes")).toBeTruthy();      // and the routes arrive
+  });
+
+  it("still draws normally when the style was ready all along", () => {
+    render(<TransitMap {...props} />);
+    map.fire("load");
+    expect(map.getSource("routes")).toBeTruthy();
   });
 });
