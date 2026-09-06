@@ -4,9 +4,54 @@ import { serviceDayStart, scheduledDepartures, buildBoard, groupLiveTrips } from
 import { nearestStops, walkMatrixMulti } from "./walk";
 import { stopRoutes } from "./routeDetail";
 import { planWithTransfers } from "./transfers";
-import type { LatLng, Itinerary, StaticFeed, DepartureBoard, Departure } from "../data/types";
+import type { LatLng, Itinerary, StaticFeed, DepartureBoard, Departure, Stop } from "../data/types";
 
 const CANDIDATE_STOPS = 8;
+/** Extra slots for stops only Passio knows about, ADDED to the eight rather
+ *  than competing for them. Competing is what let parking lots and monuments
+ *  take a real stop's place; adding cannot. */
+const RIDEABLE_STOPS = 3;
+
+/**
+ * The stops a ride can actually be planned to or from, in two groups.
+ *
+ * `served` is any stop a GTFS trip calls at. `rideable` is a stop only Passio's
+ * list knows about, admitted ONLY when an adjacent leg has been observed --
+ * because an observed leg is the one thing that can time a ride to it.
+ *
+ * The old rule was "has a GTFS trip", and its reasoning still holds: a stop
+ * with no times behind it must not take a candidate slot, which is how 6 of the
+ * 8 nearest to Barus & Holley came back parking lots, monuments and On Call
+ * points. What changed is that "no trip" stopped implying "no times" once
+ * legTimes existed. Eight stops on real routes were unplannable, among them
+ * Dyer & Pine, 306m from the RISD Fleet Library and on the Daytime Express.
+ *
+ * With no observed legs this returns an empty `rideable`, which is exactly the
+ * behaviour it replaces -- so a rider whose record is empty cannot be handed
+ * the old regression.
+ */
+export function candidateStops(
+  feed: StaticFeed,
+  legSecondsFor?: (routeId: string, from: string, to: string) => number | null,
+): { served: Stop[]; rideable: Stop[] } {
+  const serving = stopRoutes(feed);
+  const timed = new Set<string>();
+  if (legSecondsFor) {
+    for (const [routeId, order] of feed.routeStops ?? []) {
+      for (let i = 1; i < order.length; i++) {
+        const a = order[i - 1]!, b = order[i]!;
+        if (a === b) continue;
+        if (legSecondsFor(routeId, a, b) !== null) { timed.add(a); timed.add(b); }
+      }
+    }
+  }
+  const served: Stop[] = [], rideable: Stop[] = [];
+  for (const s of feed.stops.values()) {
+    if ((serving.get(s.id) ?? []).length > 0) served.push(s);
+    else if (timed.has(s.id)) rideable.push(s);
+  }
+  return { served, rideable };
+}
 
 /** Rank itineraries between two points, walking included as an option.
  *
@@ -39,10 +84,18 @@ export async function planBetween(
   // ("Soldiers Arch", "Lot 44/ Engineering", "On Call Stop 1", both Manning
   // Walk stops), leaving 2 slots to find a shuttle with. That is why rides
   // went missing from places that plainly have one.
-  const serving = stopRoutes(feed);
-  const all = [...feed.stops.values()].filter((s) => (serving.get(s.id) ?? []).length > 0);
-  const fromStops = nearestStops(origin, all, CANDIDATE_STOPS);
-  const toStops = nearestStops(destination, all, CANDIDATE_STOPS);
+  const { served, rideable } = candidateStops(feed, legSecondsFor);
+  // The eight nearest servable stops, PLUS up to three nearby stops that only
+  // Passio lists and that observed legs can time. Added, never substituted, so
+  // a real stop can never lose its slot to one of these.
+  const near = (p: LatLng) => {
+    const first = nearestStops(p, served, CANDIDATE_STOPS);
+    const seen = new Set(first.map((s) => s.id));
+    return [...first, ...nearestStops(p, rideable, RIDEABLE_STOPS)
+      .filter((s) => !seen.has(s.id))];
+  };
+  const fromStops = near(origin);
+  const toStops = near(destination);
   const targets = [...fromStops, ...toStops, destination];
 
   const rows = await walkMatrixMulti([origin, destination], targets);
