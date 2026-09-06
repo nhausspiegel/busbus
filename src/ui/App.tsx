@@ -105,9 +105,13 @@ export default function App() {
     prevMode.current = mode;
   }, [mode, dest]);
 
+  // Array once per feed, not once per keystroke.
+  const stopList = useMemo(() => (feed ? [...feed.stops.values()] : []), [feed]);
+
   const searchBar = (
     <SearchBar
       destination={dest ? { label: dest.label } : null}
+      stops={stopList}
       onPick={(p: Place) => pickDestination(p.at, p.name)}
       open={searching}
       onOpenChange={setSearching}

@@ -1,4 +1,5 @@
-import type { LatLng } from "./types";
+import type { LatLng, Stop } from "./types";
+import { estimateSeconds } from "../routing/walk";
 
 export interface Place { name: string; detail: string; at: LatLng }
 
@@ -59,17 +60,73 @@ export function toPlaces(features: PhotonFeature[]): Place[] {
 }
 
 /** Search for a place by name or address, prefix-first. */
-export async function searchPlaces(query: string, signal?: AbortSignal): Promise<Place[]> {
+/**
+ * Stops whose name contains the query, as places a rider can pick.
+ *
+ * The app has 70 named stops in memory and never offered one, so "Faunce"
+ * returned whatever OSM had. This is also the only fixable half of a POI not
+ * turning up: Photon indexes OSM, and what OSM lacks no geocoder can invent --
+ * but the stop list is ours.
+ */
+export function matchingStops(query: string, stops: Stop[]): Place[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  return stops
+    .filter((s) => s.name.toLowerCase().includes(q))
+    .map((s) => ({ name: s.name, detail: "Shuttle stop", at: { lat: s.lat, lng: s.lng } }));
+}
+
+/** How far from the network a place may be and still be worth offering. This
+ *  is a shuttle app: a rider is picking somewhere the bus or their legs reach. */
+export const MAX_WALK_TO_NETWORK_SECONDS = 20 * 60;
+
+/**
+ * Drop places no rider could walk to a stop from, nearest first.
+ *
+ * The bbox cannot do this job. It is a rectangle, and a rectangle drawn around
+ * Providence necessarily contains its neighbours -- measured 2026-09-05, the
+ * current box still admits Cranston, Pawtucket, Olneyville and the north end of
+ * Warwick Ave, and live Photon answered a Thayer St query with a restaurant in
+ * Cranston. Distance to the actual network is the question the box was standing
+ * in for.
+ *
+ * Timed with the planner's own walk model rather than a metre radius, so there
+ * is one notion of "how far is walkable" and not two.
+ *
+ * An empty stop list means the feed has not loaded yet. Filtering against a
+ * network of nothing would drop every result and read as "no such place", so it
+ * passes everything through and leaves the bbox as the only guard.
+ */
+export function withinWalkOfStops(
+  places: Place[], stops: Stop[], maxSeconds = MAX_WALK_TO_NETWORK_SECONDS,
+): Place[] {
+  if (stops.length === 0) return places;
+  return places
+    .map((p) => ({ p, secs: Math.min(...stops.map((s) => estimateSeconds(p.at, s))) }))
+    .filter((x) => x.secs <= maxSeconds)
+    .sort((a, b) => a.secs - b.secs)
+    .map((x) => x.p);
+}
+
+export async function searchPlaces(
+  query: string, stops: Stop[] = [], signal?: AbortSignal,
+): Promise<Place[]> {
   const q = query.trim();
   if (q.length < 3) return [];
   const url = new URL(PHOTON);
   url.searchParams.set("q", q);
-  url.searchParams.set("limit", "6");
+  // Asked wide, then trimmed by distance below. At 6 a far result could take a
+  // slot a nearby one needed -- "shah's halal" spent all six on other states.
+  url.searchParams.set("limit", "15");
   url.searchParams.set("lat", String(CAMPUS.lat));
   url.searchParams.set("lon", String(CAMPUS.lng));
   url.searchParams.set("bbox", BBOX);
   const res = await fetch(url, { signal });
   if (!res.ok) throw new Error(`Place search failed (${res.status})`);
   const data = await res.json();
-  return toPlaces(data?.features ?? []);
+  // Stops lead. They are exact, they are ours, and a rider naming one means it.
+  const found = withinWalkOfStops(toPlaces(data?.features ?? []), stops);
+  const named = matchingStops(q, stops);
+  const seen = new Set(named.map((p) => p.name.toLowerCase()));
+  return [...named, ...found.filter((p) => !seen.has(p.name.toLowerCase()))].slice(0, 6);
 }

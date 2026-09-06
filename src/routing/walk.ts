@@ -226,7 +226,10 @@ const WALK_M_PER_S = 1.35;
 /** Street grids and buildings, so real walking is longer than the crow flies. */
 const DETOUR = 1.35;
 
-function estimateSeconds(a: LatLng, b: LatLng): number {
+/** Exported so place search can ask the same question the planner does: how
+ *  long would this actually take on foot? A bare metre radius would be a second
+ *  walk model to keep in step with this one. */
+export function estimateSeconds(a: LatLng, b: LatLng): number {
   return Math.round((haversineMeters(a, b) * DETOUR) / WALK_M_PER_S);
 }
 

@@ -1,6 +1,7 @@
 /** Destination entry: type a place, or tap the map. */
 import { useEffect, useRef, useState } from "react";
 import { searchPlaces, type Place } from "../data/geocode";
+import type { Stop } from "../data/types";
 
 /** Shortest query worth sending. Below this every result is noise anyway. */
 const MIN_QUERY = 3;
@@ -18,9 +19,12 @@ const TYPING_PAUSE_MS = 450;
 const MIN_GAP_MS = 1_200;
 
 export function SearchBar({
-  destination, onPick, onClear, open, onOpenChange,
+  destination, stops = [], onPick, onClear, open, onOpenChange,
 }: {
   destination: { label: string } | null;
+  /** The shuttle network, so results too far from it can be dropped and the
+   *  stops themselves can be offered. Empty until the GTFS feed resolves. */
+  stops?: Stop[];
   onPick: (p: Place) => void;
   onClear: () => void;
   /** Whether the field is open. OWNED BY THE CALLER, not by this component.
@@ -53,7 +57,7 @@ export function SearchBar({
     abort.current = ctl;
     setBusy(true); setMsg(null);
     try {
-      const found = await searchPlaces(term, ctl.signal);
+      const found = await searchPlaces(term, stops, ctl.signal);
       setResults(found);
       if (found.length === 0)
         // Not "nothing exists": a partial word matching nothing yet is not

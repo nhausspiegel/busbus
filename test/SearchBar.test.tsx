@@ -3,11 +3,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { useState } from "react";
 import { render, screen, cleanup, act, fireEvent } from "@testing-library/react";
 
-const searchPlaces = vi.fn(async (_q: string, _signal?: AbortSignal) => [
+const searchPlaces = vi.fn(async (_q: string, _stops?: unknown, _signal?: AbortSignal) => [
   { name: "Thayer Street", detail: "College Hill, Providence", at: { lat: 41.83, lng: -71.4 } },
 ]);
 vi.mock("../src/data/geocode", () => ({
-  searchPlaces: (q: string, signal?: AbortSignal) => searchPlaces(q, signal),
+  searchPlaces: (q: string, stops?: unknown, signal?: AbortSignal) => searchPlaces(q, stops, signal),
 }));
 
 const { SearchBar: Raw } = await import("../src/ui/SearchBar");
@@ -144,6 +144,9 @@ describe("the search field is mostly field", () => {
     fireEvent.change(input, { target: { value: "thayer street" } });
     fireEvent.submit(input.closest("form")!);
     await act(async () => { vi.advanceTimersByTime(50); });
-    expect(searchPlaces).toHaveBeenCalledWith("thayer street", expect.anything());
+    // The stop list rides along now: results are filtered to what a rider can
+    // walk to a stop from, and the stops themselves are offered as places.
+    expect(searchPlaces).toHaveBeenCalledWith(
+      "thayer street", expect.any(Array), expect.anything());
   });
 });
