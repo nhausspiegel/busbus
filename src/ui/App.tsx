@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./theme.css";
-import { TransitMap, CAMPUS, type Overlay } from "./TransitMap";
+import { TransitMap, type Overlay } from "./TransitMap";
 import { Sheet, type Detent } from "./Sheet";
 import { SearchBar } from "./SearchBar";
 import { ItineraryList, ItineraryDetail, type WalkDirections } from "./Itineraries";
@@ -138,11 +138,18 @@ export default function App() {
   // on their own, which change the walk-matrix cache key and so send a real
   // request to a volunteer router. Snapping is what makes re-planning on every
   // board poll free.
-  const snapped = me ? stablePosition(me) : CAMPUS;
+  // No location, no origin -- not the middle of campus. Directions measured
+  // from a guessed starting point are a guess about the rider's whole journey:
+  // every walking time, every "leave by", and which stop is even nearest. The
+  // app said so in a line of grey text under the results, which is disclosure,
+  // not honesty. Null here rather than a fallback so the type forces every
+  // downstream path to confront it, including the ones that would otherwise
+  // quietly send a volunteer router a walk matrix from a place nobody is.
+  const snapped = me ? stablePosition(me) : null;
   const origin = useMemo(
     () => snapped,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [snapped.lat, snapped.lng]);
+    [snapped?.lat, snapped?.lng]);
 
   useEffect(() => { void fetchServiceHistory().then(setHistory); }, [refreshKey]);
 
@@ -231,7 +238,7 @@ export default function App() {
     if (!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(
       (p) => { setMe({ lat: p.coords.latitude, lng: p.coords.longitude }); setNotice(null); },
-      () => setNotice("Location is off, so this is showing stops near campus instead."),
+      () => setNotice("Location is off. Directions need it — everything else still works."),
       { enableHighAccuracy: true, timeout: 8000 },
     );
   }, []);
@@ -253,7 +260,7 @@ export default function App() {
   // can be a dependency: it was one before, hit Valhalla every thirty seconds,
   // and a throttled response told riders "No shuttle route".
   useEffect(() => {
-    if (!feed || !dest) { setItineraries(null); return; }
+    if (!feed || !dest || !origin) { setItineraries(null); return; }
     let cancelled = false;
     const gen = ++planGen.current;
     // The spinner is for having nothing to show, not for having something a
@@ -336,8 +343,10 @@ export default function App() {
     // straight guess stayed on screen permanently. That was the bug behind
     // "sometimes it just stays a straight line".
     const legs: { from: LatLng; to: LatLng }[] = [];
-    if (walkOnly && dest) legs.push({ from: origin, to: dest.at });
-    else if (boardStop) legs.push({ from: origin, to: boardStop });
+    if (origin) {
+      if (walkOnly && dest) legs.push({ from: origin, to: dest.at });
+      else if (boardStop) legs.push({ from: origin, to: boardStop });
+    }
     if (!walkOnly && alightStop && dest) legs.push({ from: alightStop, to: dest.at });
 
     // No provisional line at all. Valhalla answers in about 130ms, so drawing
@@ -531,7 +540,26 @@ export default function App() {
                        now={planNow} history={history} onBack={() => setRouteId(null)} />
         )}
 
-        {mode === "results" && (
+        {mode === "results" && !origin && (
+          <>
+            <div className="eyebrow">To {dest!.label}</div>
+            <h1 className="display" style={{ fontSize: 28, margin: "4px 0 8px" }}>
+              Location needed
+            </h1>
+            <p style={{ color: "var(--muted)", fontSize: 14, margin: "0 0 14px" }}>
+              Directions start from where you are. This device has not shared its
+              location, so there is nothing to measure a walk or a departure from.
+            </p>
+            <button onClick={locate}
+                    style={{ border: 0, borderRadius: 12, padding: "12px 0", width: "100%",
+                             background: "var(--accent)", color: "var(--raised)",
+                             fontSize: 16, fontWeight: 600, cursor: "pointer" }}>
+              Share my location
+            </button>
+          </>
+        )}
+
+        {mode === "results" && origin && (
           <>
             {!pickingWhen && <div className="eyebrow">To {dest!.label}</div>}
             {/* The time control belongs WITH the results it changes. It used to
@@ -572,7 +600,6 @@ export default function App() {
             )}
             {!pickingWhen && itineraries && itineraries.length > 0 && (
               <ItineraryList itineraries={itineraries} feed={feed} now={planNow} realNow={now}
-                             originKnown={me !== null}
                              selected={preview}
                              onSelect={(i) => { setChosen(i); setPreview(i); setDetent("half"); }} />
             )}

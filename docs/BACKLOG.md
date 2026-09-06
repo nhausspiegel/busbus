@@ -341,6 +341,16 @@ destination set the sheet shows "To Faunce Arch" in the search bar and
 
 ## Done, and the rule each one established
 
+**Routefinding requires a real location.** The origin fell back to the middle of
+campus when location was denied, and said so in grey text under the results.
+Disclosure is not honesty: every walking time, every "leave by" and which stop
+is even nearest all rest on that guess, and the app also sent a volunteer
+router a walk matrix from a place nobody was standing. `origin` is now
+`LatLng | null`, so the type forces every downstream path to face it rather than
+one view remembering to. Rule: **do not compute an answer from a premise the
+rider never supplied -- decline, and say what is missing.**
+
+
 Newest first. Each line is the rule, not the change.
 
 **2026-08-30**
