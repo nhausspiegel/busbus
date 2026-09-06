@@ -86,6 +86,9 @@ export default function App() {
   /** The rider is typing. Lifted out of SearchBar because typing is a view,
    *  and `mode` could not see it: it stayed "nearby" through every keystroke. */
   const [searching, setSearching] = useState(false);
+  /** The Date & Time screen is open. It takes the sheet over, as in Maps --
+   *  wedged above the results it read as a calendar someone left lying there. */
+  const [pickingWhen, setPickingWhen] = useState(false);
 
   itinerariesRef.current = itineraries;
   chosenRef.current = chosen;
@@ -530,7 +533,7 @@ export default function App() {
 
         {mode === "results" && (
           <>
-            <div className="eyebrow">To {dest!.label}</div>
+            {!pickingWhen && <div className="eyebrow">To {dest!.label}</div>}
             {/* The time control belongs WITH the results it changes. It used to
                 render only on the nearby screen, so the moment a rider picked
                 a destination it vanished -- leaving no way to say "arrive by"
@@ -542,12 +545,16 @@ export default function App() {
                 `mode` was "nearby" in both. */}
             {!planning && itineraries !== null && itineraries.length > 0 && (
               <WhenControl at={leaveAt} mode={whenMode}
-                           onChange={setLeaveAt} onModeChange={setWhenMode} />
+                           onChange={setLeaveAt} onModeChange={setWhenMode}
+                           onExpandedChange={(o) => {
+                             setPickingWhen(o); setDetent(o ? "full" : "half");
+                           }} />
             )}
+            {!pickingWhen && (
             <h1 className="display" style={{ fontSize: 28, margin: "4px 0 12px" }}>
               {planning ? "Finding shuttles…"
                 : itineraries?.length ? "Soonest arrival first" : "No shuttle route"}
-            </h1>
+            </h1>)}
             {/* The old copy here named service hours -- "weekdays 7am-7pm",
                 "suspended for the summer". Nothing in reach can support that:
                 calendar.txt is one row running every route daily through 2027,
@@ -556,14 +563,14 @@ export default function App() {
                 refuses, written as prose, and it asserts a bus is NOT running,
                 which is no safer than asserting one is. Say only what the
                 board can show. */}
-            {!planning && itineraries?.length === 0 && (
+            {!pickingWhen && !planning && itineraries?.length === 0 && (
               <p style={{ color: "var(--muted)", fontSize: 14, margin: 0 }}>
                 {board.size === 0
                   ? "No shuttle anywhere is reporting a position right now, so there is nothing to plan a ride with."
                   : "No reporting shuttle gets you there, and it is too far to walk."}
               </p>
             )}
-            {itineraries && itineraries.length > 0 && (
+            {!pickingWhen && itineraries && itineraries.length > 0 && (
               <ItineraryList itineraries={itineraries} feed={feed} now={planNow} realNow={now}
                              originKnown={me !== null}
                              selected={preview}
@@ -574,7 +581,7 @@ export default function App() {
                 board cannot make. It is built from buses reporting now, and a
                 bus that will run at eight tomorrow is not reporting yet. Say
                 that, rather than letting the silence speak for it. */}
-            {!planning && leaveAt && itineraries?.length
+            {!pickingWhen && !planning && leaveAt && itineraries?.length
               && itineraries.every((i) => i.rides.length === 0) && (
               <p style={{ color: "var(--muted)", fontSize: 13, margin: "12px 0 0" }}>
                 Only buses reporting right now can be planned with, so no shuttle can be
