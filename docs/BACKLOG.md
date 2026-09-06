@@ -191,20 +191,35 @@ queryRenderedFeatures answering from the same hit set, so the test fails on the
 old code. `55959b9`.
 
 
-### 17. `isStyleLoaded()` gates two one-shot effects
+### 17. FIXED ON A BRANCH, not merged — `isStyleLoaded()` gates two one-shot effects
 
-`TransitMap.tsx:517` (routes) and `:798` (overlay). `isStyleLoaded()` is false
-during any pan, zoom or tile fetch, and neither effect has a dep that can fire
-again -- so if `feed` resolves mid-fetch the routes never draw, and the walking
-legs arrive during the 650ms `fitBounds`.
+One defect, fixed together on **`map-reliability`** (`6229fe0`), rebased on
+main, tsc clean, 420 tests. An effect that bails on a mid-load style registers
+a one-shot `styledata` handler that bumps a retry counter in its deps, so it
+runs once the style settles; the counter advances only on an actual bail, so
+the happy path costs nothing.
 
-`FakeMap.isStyleLoaded()` returns true unconditionally, so no test can see it.
+NOT merged deliberately: it changes WHETHER route lines appear, which wants
+looking at on a real map first. `git checkout map-reliability` and load :5173.
 
-### 18. Four `catch { /* the next render rebuilds */ }` blocks cannot rebuild
+FakeMap's `isStyleLoaded()` returned true unconditionally, which is why this
+shipped; it is controllable now and the new test fails against the old code.
 
-Effects do not re-run on render, and `ready` never increments after first load:
-there is no `styledata` listener and no `setStyle` call anywhere in `src/`. The
-comment describes a recovery that does not exist.
+
+### 18. FIXED ON A BRANCH, not merged — four `catch` blocks cannot rebuild
+
+One defect, fixed together on **`map-reliability`** (`6229fe0`), rebased on
+main, tsc clean, 420 tests. An effect that bails on a mid-load style registers
+a one-shot `styledata` handler that bumps a retry counter in its deps, so it
+runs once the style settles; the counter advances only on an actual bail, so
+the happy path costs nothing.
+
+NOT merged deliberately: it changes WHETHER route lines appear, which wants
+looking at on a real map first. `git checkout map-reliability` and load :5173.
+
+FakeMap's `isStyleLoaded()` returned true unconditionally, which is why this
+shipped; it is controllable now and the new test fails against the old code.
+
 
 ### 19. The lane geometry is rebuilt and re-uploaded on every zoom step
 
