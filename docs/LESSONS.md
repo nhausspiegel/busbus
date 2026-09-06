@@ -78,6 +78,21 @@ New instance? Add it here under its pattern. Only a NEW root pattern goes in
   are two different stops 11m apart, so one of them vanished from the app.
   Strip the suffix you actually mean to strip, and keep every name that survives.
 
+- Measuring a file in the working tree instead of the one the app serves. The
+  observed-leg record is written by CI onto `main` every fifteen minutes; the
+  branch I was on had not been fetched for five days. I reported "the recorder
+  is dead, 0 of 22 legs usable, the observed-durations architecture has never
+  produced a value" as measured fact. The live file had been written four
+  minutes earlier and carried 21 usable legs of 39, with 8 of the Express's 9 at
+  twenty samples each. `git fetch` before any claim about data CI maintains, and
+  say which ref a number came from.
+- Probing for a symptom with a selector that matches something else. Verifying a
+  panel had taken the sheet over, I tested the sheet's text against
+  `/TO FAUNCE ARCH/i` -- which the search bar above it also matches -- and again
+  read a destination as "lost" because the field replaces its label by design.
+  Twice in one session a green or red probe was measuring the wrong element.
+  Assert on the element, not on text that several elements can produce.
+
 ## 2. "Do not stop" means do not stop WORKING -- a diff is not evidence of progress
 
 - Shipping a run of "fixes" each measured against something other than the

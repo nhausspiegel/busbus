@@ -68,13 +68,19 @@ is structural and there is nothing to filter. A schematic cannot sit truthfully
 on a street basemap — the Underground has none — and pulls against the Apple
 Maps behaviour also asked for. Different renderer, worth doing deliberately.
 
-### 3. The Express's stop-to-stop times need observations
+### 3. DONE — the Express's stop-to-stop times have arrived
 
-`src/data/legTimes.ts` learns leg durations from realtime and the planner uses
-them (`legSecondsFor` in `src/routing/plan.ts`), but nothing is claimed under
-five samples per leg and **no shuttle has reported yet** — measured 2026-08-29,
-one charter bus and zero trip predictions. Nothing to do but wait for service;
-check `public/service-history.json` for a populated `legs` map.
+Measured 2026-09-05 against `origin/main`'s record (NOT the working tree, which
+was five days stale — see `docs/LESSONS.md`): route 3302 has 9 recorded legs, 8
+of them at twenty samples against a floor of five, and the chain a rider needs
+from Hillel House to Dyer & Hay is covered. Route 62487 has 13 usable of 27. The
+Stadium Loop still has none.
+
+Caveat before trusting a duration from this: `e4e7da1` made sampling per-trip so
+fifteen-minute polls stop inflating counts, and it is on `render-node`, NOT
+deployed. The live record has no `legTrips` key, so those twenties are poll
+counts. The floor is being cleared by a metric this project has already called
+dishonest. Deploy that first.
 
 Known asymmetry while that lands: `transfers.ts` builds the FIRST leg from
 `trip1.stops` directly, so a route whose GTFS trip omits its stops can be the
@@ -244,6 +250,64 @@ prose. Re-true both whenever a "Still to do" item ships, and delete rather than
 accumulate — the value is in being correct cold, not in being a diary.
 
 ---
+
+### 23. Does the live board usually carry a prediction at all?
+
+The open question behind "why did no shuttle directions turn up". Measured
+2026-09-05, every gate BELOW the top of `planTrips`'s loop is open for Address J
+-> RISD Fleet Library on the Express: Hillel House is 85m from one end and a
+candidate, Dyer & Hay is 290m from the other and a candidate, the single GTFS
+trip covers both (seq 1 and seq 3), and the observed legs between them carry
+twenty samples each. All three ride-construction paths can build it.
+
+What is left is the first line of the loop — `board.get(boardStopId)`. The app
+builds `buildBoard(live, [])` by design, so with no live TripUpdate at the
+boarding stop nothing downstream runs and the rider gets a walk.
+
+So: how often does route 3302 actually publish a prediction? If usually, this
+was a gap and the copy at `App.tsx` already says the right thing. If almost
+never, the app is structurally unable to plan the Express, and the honest fix is
+architectural — plan from live VEHICLE POSITIONS plus observed leg times, which
+is a real bus in a real place with a measured duration, not a timetable claim.
+That changes what the app is willing to assert, so it is the owner's call.
+**Do not touch `MIN_LEG_SAMPLES`; it is not implicated.**
+
+### 24. `stopRoutes()` gates candidates on GTFS trips alone
+
+`routeDetail.ts`'s `stopRoutes()` builds its servable set only from
+`feed.trips`, and `trip.ts:42-43` uses it to decide which stops may take one of
+the eight candidate slots. Measured 2026-09-05: 36 of 70 stops are eligible; 44
+would be if `feed.routeStops` were folded in. Eight stops that sit on a real
+route can never be planned to or from — including Dyer & Pine/Public Health,
+306m from the RISD Fleet Library and on the Express.
+
+**The exclusion is deliberate and the reasoning still partly holds** — read
+`routePaths.ts`'s `withRouteStops` comment before touching it. A stop with no
+trip behind it has no times to ride on, and letting those compete for slots is
+how 6 of the 8 nearest to Barus & Holley became parking lots and monuments.
+What changed since: `plan.ts` path 3 can now time such a stop from observed
+legs. So the fix is NOT "fold in routeStops" — it is "a stop is a candidate if
+it has a trip OR its route's adjacent legs are observed", and it belongs in
+`trip.ts` where the candidates are chosen, not in `stopRoutes` whose other
+callers want the current behaviour. Held pending item 23.
+
+### 25. Shah's Halal is not in OpenStreetMap
+
+Not an app defect. Checked against Overpass 2026-09-05: OSM carries 31 named
+food POIs on that block of Thayer — East Side Pockets, Kabob and Curry,
+Chinatown on Thayer — and zero matching `/shah|halal/i` anywhere on College
+Hill. Photon indexes OSM, so no geocoder built on it can return what OSM lacks.
+
+The fixable half shipped: the 70 shuttle stops are now searchable, which they
+never were. What still will not turn up: anything OSM lacks, and any query under
+three characters (`MIN_QUERY`). If this keeps biting, the answer is adding the
+place to OSM, or a second source — not a change to the filter.
+
+### 26. The results view names the destination twice
+
+Minor, pre-existing, spotted while verifying the search rebuild. With a
+destination set the sheet shows "To Faunce Arch" in the search bar and
+"TO FAUNCE ARCH" as an eyebrow directly beneath it.
 
 ## Done, and the rule each one established
 
