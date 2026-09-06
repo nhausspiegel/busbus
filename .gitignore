@@ -1,7 +1,11 @@
 __pycache__/
 *.pyc
 .venv/
-node_modules/
+# No trailing slash, deliberately: `node_modules/` matches only a DIRECTORY,
+# so a SYMLINK named node_modules slips past it and `git add -A` commits it.
+# That happened -- a self-referential link got committed and broke `npm`'s
+# predev script with "Too many levels of symbolic links".
+node_modules
 dist/
 
 # local tooling, not project files
