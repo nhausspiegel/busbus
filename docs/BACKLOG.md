@@ -401,6 +401,47 @@ that followed. Until then no number here should be trusted to better than the
 factor of three above. Do NOT "fix" it by scaling the measurement to match the
 timetable; that is fitting observation to a placeholder.
 
+### 30. The sheet grabber drags choppily — NOT reproduced, do not guess again
+
+Reported as 20-30fps while the rest of the app is smooth. I could not confirm
+it, and the two obvious explanations both failed under measurement.
+
+What is true: each `pointermove` calls `setDragPx`, so there is one React render
+and one full inline-style rewrite per pointer event, driving `height` -- a
+layout property -- with no frame coalescing. Measured 41 style-attribute writes
+for 40 dispatched pointermove events.
+
+What is NOT true, or at least not measured: that this is expensive. Forcing
+style+layout after each write, 120 iterations on the real sheet (86 descendant
+nodes): **median under 0.1ms, 2.1ms total for 40 frames**. Writing `transform`
+instead measured 1.2ms total. Layout is not the bottleneck at this size.
+
+The remaining suspect is PAINT -- the 28px-blur box-shadow (`theme.css:21`)
+re-rasterising over the map canvas each frame. That cannot be measured from the
+Claude Code browser pane: the tab reports `visibilityState: "hidden"` and
+requestAnimationFrame does not fire (0 frames in 1500ms), so nothing paints and
+fps is unobservable. Fronting the tab does not change it.
+
+**The obvious fix has a hazard, and it is why this was not attempted blind.**
+Swapping `height` for `transform: translateY` makes the sheet a fixed-height box
+whose bottom is pushed off-screen at the peek and half detents. The sheet's
+height IS its scroll viewport (`flex: 1` on the scroller), so content between
+the visible edge and the full height would render below the screen and be
+unreachable. Any transform-based fix has to keep the scroll viewport clipped to
+the visible region, which puts layout back per frame.
+
+To settle it, one of:
+- the owner reports whether it still chops with the sheet nearly EMPTY (peek, no
+  itineraries). Same layout, far less paint -- that separates paint from layout
+  in one observation;
+- a Chrome performance profile of a drag on the real device, which names the
+  frame cost directly;
+- a device/refresh-rate detail: 20-30fps on a 120Hz screen is a different
+  problem from 20-30fps on a 60Hz one.
+
+Do not "fix" this by rewriting to transform without one of the above. The
+measurement that would justify it does not exist yet.
+
 ## Done, and the rule each one established
 
 **Routefinding requires a real location.** The origin fell back to the middle of
