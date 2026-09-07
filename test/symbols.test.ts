@@ -99,3 +99,40 @@ describe("the lozenge and the bar are one shape", () => {
     expect(tickPaint(state({ dark: false }), false)["line-color"]).toBe("#FFFFFF");
   });
 });
+
+/**
+ * A WALKING itinerary must narrow the map too.
+ *
+ * Dimming was inferred from `ridden` -- the routes the chosen trip uses. A
+ * walk-only trip rides nothing, so `ridden` is empty, `servesAny([])` returns
+ * null and every layer fell back to full strength: the rider was handed a walk
+ * across a map still shouting five equally bright bus routes at them. The
+ * intent was always "a chosen trip narrows the map the same way selecting a
+ * route does"; this makes that true when the trip has no bus in it.
+ */
+describe("an itinerary with no bus in it", () => {
+  it("dims the stops", () => {
+    expect(stopPaint(state({ itinerary: true }))["circle-opacity"]).toBe(DIM);
+    expect(stopBasePaint(state({ itinerary: true }))["circle-opacity"]).toBe(DIM);
+  });
+
+  it("dims the route lines", () => {
+    expect(routeLinePaint(state({ itinerary: true }))["line-opacity"]).toBe(DIM);
+  });
+
+  it("dims the station ticks", () => {
+    expect(tickPaint(state({ itinerary: true }), false)["line-opacity"]).toBe(DIM);
+  });
+
+  it("still lights the ridden route when the trip HAS a bus", () => {
+    // The bus case must not regress into dimming everything.
+    const s = state({ itinerary: true, ridden: ["62487"] });
+    expect(JSON.stringify(stopPaint(s)["circle-opacity"])).toContain("62487");
+    expect(routeLinePaint(s)["line-opacity"]).toBe(DIM);
+  });
+
+  it("changes nothing when no itinerary is showing", () => {
+    expect(stopPaint(state())["circle-opacity"]).toBe(1);
+    expect(routeLinePaint(state())["line-opacity"]).toBe(1);
+  });
+});

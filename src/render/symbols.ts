@@ -31,6 +31,14 @@ export interface MapState {
   routeFocus: string | null;
   /** Routes the chosen itinerary rides. */
   ridden: string[];
+  /** An itinerary is on the map at all -- WALKING included.
+   *
+   *  Dimming used to be inferred from `ridden`, which is empty for a walk-only
+   *  trip, so a rider handed a walk got it across a map still shouting five
+   *  equally bright bus routes. The intent was always that a chosen trip
+   *  narrows the map the way selecting a route does; this is what makes that
+   *  true when the trip has no bus in it. */
+  itinerary: boolean;
   /** Stops the itinerary boards and alights at, by their bead id. */
   ends: string[];
   /** How far the selected stop has grown into place, 0 to 1. */
@@ -39,6 +47,7 @@ export interface MapState {
 
 export const IDLE: MapState = {
   dark: false, stopFocus: null, routeFocus: null, ridden: [], ends: [], grow: 0,
+  itinerary: false,
 };
 
 /** True for a feature carrying any of `routes` in its pipe-delimited list. */
@@ -53,7 +62,10 @@ function servesAny(routes: string[]): ExpressionSpecification | null {
 function stopEmphasis(s: MapState): ExpressionSpecification | number {
   if (s.stopFocus) return ["case", ["==", ["get", "id"], s.stopFocus], 1, DIM];
   const lit = servesAny(s.routeFocus ? [s.routeFocus] : s.ridden);
-  return lit ? ["case", lit, 1, DIM] : 1;
+  if (lit) return ["case", lit, 1, DIM];
+  // Nothing to light, but a trip IS showing: recede everything rather than
+  // leaving the whole network at full strength behind a walking line.
+  return s.itinerary ? DIM : 1;
 }
 
 /** The dot: solid, in its line's colour, sitting on the lozenge.
@@ -129,7 +141,9 @@ export function routeLinePaint(s: MapState): Record<string, unknown> {
   let opacity: ExpressionSpecification | number = 1;
   if (s.routeFocus)
     opacity = ["case", ["==", ["get", "routeId"], s.routeFocus], 1, DIM];
-  else if (s.stopFocus === null && s.ridden.length) opacity = DIM;
+  // A trip is showing: the lines it does not use recede. `ridden` alone missed
+  // the walk-only case, where there are no ridden routes to contrast against.
+  else if (s.stopFocus === null && (s.ridden.length || s.itinerary)) opacity = DIM;
   return {
     "line-opacity-transition": { duration: EMPHASIS_MS, delay: 0 },
     "line-width-transition": { duration: EMPHASIS_MS, delay: 0 },

@@ -276,6 +276,8 @@ export function TransitMap({
     ridden: overlayRef.current?.rides.map((r) => r.routeId) ?? [],
     ends: rideEnds(overlayRef.current, stationRep),
     grow: growRef.current,
+      // Walking counts. An itinerary with no bus in it still narrows the map.
+      itinerary: overlayRef.current !== null,
   });
   const selectionRef = useRef<Selection | null>(null);
   selectionRef.current = selection ?? null;
@@ -966,7 +968,11 @@ export function TransitMap({
     try {
       apply("routes-line", routeLinePaint(st));
       if (m.getLayer("routes-case"))
-        m.setPaintProperty("routes-case", "line-opacity", selection ? 0.3 : 0.9);
+        // The white casing has to recede with the line it wraps. Keyed on
+        // `selection` alone it stayed at 0.9 over a dimmed 0.38 line, so an
+        // itinerary left the network outlined at full strength.
+        m.setPaintProperty("routes-case", "line-opacity",
+                           (selection || overlayRef.current) ? 0.3 : 0.9);
       apply("stops", stopPaint(st));
       // stopPaint carries a base circle-radius and the tween writes an animated
       // one, so both owned the property and whichever effect ran last won. This
