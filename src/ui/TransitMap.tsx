@@ -224,7 +224,14 @@ export function TransitMap({
   const retryOnStyle = useCallback(() => {
     const m = map.current;
     if (!m) return;
-    m.once("styledata", () => setStyleRetry((n) => n + 1));
+    // `idle`, not `styledata`. isStyleLoaded() is false because TILES are in
+    // flight and the camera is moving; `styledata` fires on style MUTATION and
+    // says nothing about either. Armed on the wrong event, the retry landed
+    // only when something else happened to touch the style -- the bus poll's
+    // setPaintProperty -- which is why the walking line appeared eventually
+    // rather than at once. `idle` is MapLibre's own name for the condition
+    // being waited on: no camera transition, every requested tile loaded.
+    m.once("idle", () => setStyleRetry((n) => n + 1));
   }, []);
   const clearCb = useRef(onDeselect);
   clearCb.current = onDeselect;

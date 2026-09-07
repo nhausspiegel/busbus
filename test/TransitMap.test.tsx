@@ -709,7 +709,7 @@ describe("a style that is not ready yet", () => {
     expect(map.getSource("routes")).toBeUndefined();   // nothing drawn, correctly
 
     map.styleLoaded = true;
-    map.fire("styledata");                      // the style settles
+    map.fire("idle");                           // camera settled, tiles loaded
     expect(map.getSource("routes")).toBeTruthy();      // and the routes arrive
   });
 
@@ -717,5 +717,46 @@ describe("a style that is not ready yet", () => {
     render(<TransitMap {...props} />);
     map.fire("load");
     expect(map.getSource("routes")).toBeTruthy();
+  });
+});
+
+/**
+ * The dotted walking line, arriving while the camera is still moving.
+ *
+ * This is the real production ordering and no existing test had it. Picking an
+ * itinerary sets overlay twice: `{walks: [], rides}` at once, then the routed
+ * walks ~130-300ms later. The first set changes `focus`, which starts a 650ms
+ * fitBounds; the second lands mid-animation, when isStyleLoaded() is false
+ * because tiles are in flight, and the overlay effect bails.
+ *
+ * The retry has to be armed on the event that actually signals the condition.
+ * `styledata` fires on style MUTATION; tiles loading and a camera settling fire
+ * `idle`. Waiting on the wrong one meant the line appeared only when something
+ * else happened to mutate the style -- the bus poll's setPaintProperty -- which
+ * is exactly "not at first" rather than "never".
+ */
+describe("a walking line that arrives mid-camera-move", () => {
+  const props = {
+    feed, buses: [] as Bus[], me: null, destination: null,
+    selection: null, activeRouteIds: new Set(["A", "B"]),
+  } as const;
+  const walks = [{ path: [{ lat: 41.82, lng: -71.40 }, { lat: 41.83, lng: -71.41 }],
+                   provisional: false }];
+
+  it("draws once the map settles, not only when something else touches the style", () => {
+    const r = render(<TransitMap {...props} overlay={{ walks: [], rides: [] }} focus={null} />);
+    map.fire("load");
+    // the routed walks arrive while tiles are still loading
+    map.styleLoaded = false;
+    act(() => {
+      r.rerender(<TransitMap {...props} overlay={{ walks, rides: [] }}
+                             focus={[{ lat: 41.82, lng: -71.40 }]} />);
+    });
+    expect(map.getSource("itin-walk")).toBeUndefined();   // bailed, correctly
+
+    map.styleLoaded = true;
+    map.fire("idle");                                     // camera settled, tiles in
+    expect(map.getSource("itin-walk")).toBeTruthy();
+    expect(map.getLayer("itin-walk")).toBeTruthy();
   });
 });
